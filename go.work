@@ -1,0 +1,11 @@
+go 1.27.1
+
+use (
+	./services/bmkg
+	./services/pvmbg
+	./services/aggregator
+	./services/client-api
+	./services/auth
+	./services/notification-consumer
+	./services/dashboard-consumer
+)

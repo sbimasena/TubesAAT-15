@@ -19,3 +19,5 @@ Inisialisasi repositori untuk sistem koordinasi bencana terdistribusi yang mengi
 - `tests/`: skenario lintas layanan
 
 Setiap layanan memiliki modul Go sendiri. Jalankan `go test ./...` dari direktori layanan untuk mengompilasi dan menguji modul tersebut. Entrypoint saat ini masih berupa placeholder; perilaku layanan belum diimplementasikan.
+
+Compose saat ini mencakup tujuh kontainer aplikasi. Kontainer Canonical Store dan message broker akan ditambahkan setelah teknologinya dipilih. Entrypoint placeholder langsung selesai, sehingga layanan belum berjalan aktif.

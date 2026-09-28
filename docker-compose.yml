@@ -1,0 +1,41 @@
+# Tambahkan layanan Canonical Store dan message broker setelah teknologinya dipilih.
+# Port Aggregator dan Auth belum dipetakan karena masih TBD.
+services:
+  bmkg:
+    build: ./services/bmkg
+    ports:
+      - "${BMKG_PORT:-8081}:8081"
+    environment:
+      BMKG_API_KEY: ${BMKG_API_KEY:-example}
+
+  pvmbg:
+    build: ./services/pvmbg
+    ports:
+      - "${PVMBG_PORT:-8082}:8082"
+    environment:
+      PVMBG_TOKEN: ${PVMBG_TOKEN:-example}
+
+  aggregator:
+    build: ./services/aggregator
+    environment:
+      BMKG_BASE_URL: ${BMKG_BASE_URL:-http://bmkg:8081}
+      PVMBG_BASE_URL: ${PVMBG_BASE_URL:-http://pvmbg:8082}
+      BMKG_API_KEY: ${BMKG_API_KEY:-example}
+      PVMBG_TOKEN: ${PVMBG_TOKEN:-example}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-3}
+
+  client-api:
+    build: ./services/client-api
+    ports:
+      - "${CLIENT_API_PORT:-8080}:8080"
+
+  auth:
+    build: ./services/auth
+    environment:
+      ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-60}
+
+  notification-consumer:
+    build: ./services/notification-consumer
+
+  dashboard-consumer:
+    build: ./services/dashboard-consumer

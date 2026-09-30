@@ -91,6 +91,7 @@ func (s *Server) withRequestLogging(next http.Handler) http.Handler {
 			correlationID = newCorrelationID()
 		}
 		w.Header().Set("X-Correlation-ID", correlationID)
+		r.Header.Set("X-Correlation-ID", correlationID)
 		wrapped := &statusWriter{ResponseWriter: w}
 		started := time.Now()
 		next.ServeHTTP(wrapped, r)

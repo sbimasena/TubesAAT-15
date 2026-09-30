@@ -24,14 +24,16 @@ func main() {
 	interval := positiveSecondsFromEnv("POLL_INTERVAL_SECONDS", 3)
 	bmkgKey := requiredEnv(logger, "BMKG_API_KEY")
 	pvmbgToken := requiredEnv(logger, "PVMBG_TOKEN")
+	bmkgBaseURL := requiredEnv(logger, "BMKG_BASE_URL")
+	pvmbgBaseURL := requiredEnv(logger, "PVMBG_BASE_URL")
 	if bmkgKey == pvmbgToken {
 		logger.Error("upstream credentials must be different", "variables", "BMKG_API_KEY,PVMBG_TOKEN")
 		os.Exit(1)
 	}
 	repository := store.NewMemoryRepository(10000)
 	publisher := ingest.NewLogPublisher(logger)
-	bmkg := source.NewBMKGClient(envOr("BMKG_BASE_URL", "http://bmkg:8081"), bmkgKey, logger)
-	pvmbg := source.NewPVMBGClient(envOr("PVMBG_BASE_URL", "http://pvmbg:8082"), pvmbgToken, logger)
+	bmkg := source.NewBMKGClient(bmkgBaseURL, bmkgKey, logger)
+	pvmbg := source.NewPVMBGClient(pvmbgBaseURL, pvmbgToken, logger)
 	manager := ingest.NewManager(bmkg, pvmbg, repository, publisher, interval, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

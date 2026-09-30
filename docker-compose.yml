@@ -6,23 +6,32 @@ services:
     ports:
       - "${BMKG_PORT:-8081}:8081"
     environment:
-      BMKG_API_KEY: ${BMKG_API_KEY:-example}
+      BMKG_API_KEY: ${BMKG_API_KEY:-dev-bmkg-key}
+      BMKG_GENERATE_INTERVAL_SECONDS: ${BMKG_GENERATE_INTERVAL_SECONDS:-15}
 
   pvmbg:
     build: ./services/pvmbg
     ports:
       - "${PVMBG_PORT:-8082}:8082"
     environment:
-      PVMBG_TOKEN: ${PVMBG_TOKEN:-example}
+      PVMBG_TOKEN: ${PVMBG_TOKEN:-dev-pvmbg-token}
+      PVMBG_DELAY_MS: ${PVMBG_DELAY_MS:-750}
+      PVMBG_GENERATE_INTERVAL_SECONDS: ${PVMBG_GENERATE_INTERVAL_SECONDS:-15}
 
   aggregator:
     build: ./services/aggregator
+    ports:
+      - "${AGGREGATOR_PORT:-8083}:8083"
     environment:
+      AGGREGATOR_PORT: 8083
       BMKG_BASE_URL: ${BMKG_BASE_URL:-http://bmkg:8081}
       PVMBG_BASE_URL: ${PVMBG_BASE_URL:-http://pvmbg:8082}
-      BMKG_API_KEY: ${BMKG_API_KEY:-example}
-      PVMBG_TOKEN: ${PVMBG_TOKEN:-example}
+      BMKG_API_KEY: ${BMKG_API_KEY:-dev-bmkg-key}
+      PVMBG_TOKEN: ${PVMBG_TOKEN:-dev-pvmbg-token}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-3}
+    depends_on:
+      - bmkg
+      - pvmbg
 
   client-api:
     build: ./services/client-api

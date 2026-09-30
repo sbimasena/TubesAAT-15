@@ -1,23 +1,35 @@
 # Sistem Koordinasi Bencana IF4031 M1
 
-Inisialisasi repositori untuk sistem koordinasi bencana terdistribusi yang mengintegrasikan data BMKG dan PVMBG untuk BNPB.
+Proof of concept for a distributed disaster-coordination platform that integrates BMKG seismic events and PVMBG volcanic reports for BNPB.
 
-## Teknologi
+## Stack
 
-- Backend: Go 1.27.1
-- Kontainer: Docker
-- Orkestrasi lokal: Docker Compose (kontainer Canonical Store dan broker menunggu keputusan teknologi)
-- Router HTTP, Canonical Store, dan message broker: TBD
+- Go 1.27.1, with one Go module per service
+- `net/http` for service APIs
+- Docker Compose for local orchestration
+- PostgreSQL and RabbitMQ are the intended canonical store and broker; they are not included in the current Compose file yet
 
-## Struktur Repositori
+## Start the Member A flow
 
-- `services/`: tujuh layanan Go yang dapat dibangun secara mandiri
-- `clients/`: klien CLI untuk media, tim lapangan, dan operasi internal
-- `infrastructure/`: catatan keputusan Canonical Store dan message broker
-- `docs/`: dokumentasi arsitektur dan API
-- `scripts/`: skrip pengembangan
-- `tests/`: skenario lintas layanan
+Run the source mocks and Aggregator:
 
-Setiap layanan memiliki modul Go sendiri. Jalankan `go test ./...` dari direktori layanan untuk mengompilasi dan menguji modul tersebut. Entrypoint saat ini masih berupa placeholder; perilaku layanan belum diimplementasikan.
+```sh
+docker compose up --build bmkg pvmbg aggregator
+```
 
-Compose saat ini mencakup tujuh kontainer aplikasi. Kontainer Canonical Store dan message broker akan ditambahkan setelah teknologinya dipilih. Entrypoint placeholder langsung selesai, sehingga layanan belum berjalan aktif.
+The Aggregator polls each source independently every 3 seconds. Query canonical events at `http://localhost:8083/hazards`; check its source status at `http://localhost:8083/health`.
+
+The BMKG mock requires `X-BMKG-Key`. PVMBG data and admin endpoints require `Authorization: Bearer <PVMBG_TOKEN>`. Local Compose defaults use distinct development credentials (`dev-bmkg-key` and `dev-pvmbg-token`); copy `.env.example` to `.env` to adjust the polling interval, mock generation intervals, credentials, or PVMBG delay.
+
+Trigger PVMBG schema evolution at runtime:
+
+```sh
+curl -X POST http://localhost:8082/admin/schema-version \
+  -H 'Authorization: Bearer dev-pvmbg-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"version":2}'
+```
+
+This emits a v2 report with `confidence_level` without restarting PVMBG. Older v1 reports remain unchanged, and the Aggregator retains the new field in `HazardEvent.attributes`.
+
+The current Aggregator uses a bounded in-memory repository and logs that broker publishing is not configured. Its repository and publisher are interfaces for connecting Member C's PostgreSQL and RabbitMQ setup. Other service entrypoints remain placeholders pending their owners' work.

@@ -230,7 +230,12 @@ func (c *catalog) setOutage(w http.ResponseWriter, r *http.Request) {
 
 func requirePVMBGToken(token string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		provided := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		parts := strings.Fields(r.Header.Get("Authorization"))
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			http.Error(w, "invalid PVMBG credential", http.StatusUnauthorized)
+			return
+		}
+		provided := parts[1]
 		if len(provided) != len(token) || subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
 			http.Error(w, "invalid PVMBG credential", http.StatusUnauthorized)
 			return

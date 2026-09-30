@@ -128,13 +128,13 @@ func (m *Manager) pollBMKG(ctx context.Context, correlationID string) {
 	events, eventErr := m.bmkg.FetchSeismicEvents(ctx, eventSince, correlationID)
 	warnings, warningErr := m.bmkg.FetchTsunamiWarnings(ctx, warningSince, correlationID)
 	if eventErr != nil && warningErr != nil {
-		m.setFailure("BMKG", fmt.Errorf("seismic: %v; warnings: %w", eventErr, warningErr))
+		m.setFailure("BMKG", correlationID, fmt.Errorf("seismic: %v; warnings: %w", eventErr, warningErr))
 		return
 	}
 	if eventErr != nil {
-		m.setFailure("BMKG", eventErr)
+		m.setFailure("BMKG", correlationID, eventErr)
 	} else if warningErr != nil {
-		m.setFailure("BMKG", warningErr)
+		m.setFailure("BMKG", correlationID, warningErr)
 	} else {
 		m.setSuccess("BMKG")
 	}
@@ -194,7 +194,7 @@ func (m *Manager) pollPVMBG(ctx context.Context, correlationID string) {
 
 	reports, err := m.pvmbg.FetchVolcanicReports(ctx, since, correlationID)
 	if err != nil {
-		m.setFailure("PVMBG", err)
+		m.setFailure("PVMBG", correlationID, err)
 		return
 	}
 	m.setSuccess("PVMBG")
@@ -250,7 +250,7 @@ func (m *Manager) setSuccess(sourceName string) {
 	m.mu.Unlock()
 }
 
-func (m *Manager) setFailure(sourceName string, err error) {
+func (m *Manager) setFailure(sourceName, correlationID string, err error) {
 	m.mu.Lock()
 	status := m.status[sourceName]
 	status.Available = false
@@ -258,7 +258,7 @@ func (m *Manager) setFailure(sourceName string, err error) {
 	m.status[sourceName] = status
 	m.mu.Unlock()
 	if m.logger != nil {
-		m.logger.Warn("source poll failed", "source", sourceName, "error", err)
+		m.logger.Warn("source poll failed", "source", sourceName, "correlation_id", correlationID, "error", err)
 	}
 }
 

@@ -22,7 +22,6 @@ import (
 
 const (
 	defaultPort       = "8082"
-	defaultToken      = "dev-pvmbg-token"
 	maxCatalogRecords = 1000
 )
 
@@ -62,7 +61,7 @@ func (w *statusWriter) Write(payload []byte) (int, error) {
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	token := envOr("PVMBG_TOKEN", defaultToken)
+	token := requiredEnv(logger, "PVMBG_TOKEN")
 	servicePort := envOr("PVMBG_PORT", defaultPort)
 	delay := configuredDelay()
 	data := newCatalog(time.Now().UTC())
@@ -299,6 +298,15 @@ func envOr(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func requiredEnv(logger *slog.Logger, key string) string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		logger.Error("required environment variable is missing", "name", key)
+		os.Exit(1)
+	}
+	return value
 }
 
 func configuredDelay() time.Duration {

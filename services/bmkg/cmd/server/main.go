@@ -22,7 +22,6 @@ import (
 
 const (
 	defaultPort       = "8081"
-	defaultAPIKey     = "dev-bmkg-key"
 	maxCatalogRecords = 1000
 )
 
@@ -70,7 +69,7 @@ func (w *statusWriter) Write(payload []byte) (int, error) {
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	apiKey := envOr("BMKG_API_KEY", defaultAPIKey)
+	apiKey := requiredEnv(logger, "BMKG_API_KEY")
 	servicePort := envOr("BMKG_PORT", defaultPort)
 	data := newCatalog(time.Now().UTC())
 
@@ -331,6 +330,15 @@ func envOr(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func requiredEnv(logger *slog.Logger, key string) string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		logger.Error("required environment variable is missing", "name", key)
+		os.Exit(1)
+	}
+	return value
 }
 
 func durationFromEnv(key string, fallback time.Duration) time.Duration {

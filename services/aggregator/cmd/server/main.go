@@ -22,10 +22,16 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	port := envOr("AGGREGATOR_PORT", "8083")
 	interval := positiveSecondsFromEnv("POLL_INTERVAL_SECONDS", 3)
+	bmkgKey := requiredEnv(logger, "BMKG_API_KEY")
+	pvmbgToken := requiredEnv(logger, "PVMBG_TOKEN")
+	if bmkgKey == pvmbgToken {
+		logger.Error("upstream credentials must be different", "variables", "BMKG_API_KEY,PVMBG_TOKEN")
+		os.Exit(1)
+	}
 	repository := store.NewMemoryRepository(10000)
 	publisher := ingest.NewLogPublisher(logger)
-	bmkg := source.NewBMKGClient(envOr("BMKG_BASE_URL", "http://bmkg:8081"), envOr("BMKG_API_KEY", "dev-bmkg-key"), logger)
-	pvmbg := source.NewPVMBGClient(envOr("PVMBG_BASE_URL", "http://pvmbg:8082"), envOr("PVMBG_TOKEN", "dev-pvmbg-token"), logger)
+	bmkg := source.NewBMKGClient(envOr("BMKG_BASE_URL", "http://bmkg:8081"), bmkgKey, logger)
+	pvmbg := source.NewPVMBGClient(envOr("PVMBG_BASE_URL", "http://pvmbg:8082"), pvmbgToken, logger)
 	manager := ingest.NewManager(bmkg, pvmbg, repository, publisher, interval, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -62,6 +68,15 @@ func envOr(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func requiredEnv(logger *slog.Logger, key string) string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		logger.Error("required environment variable is missing", "name", key)
+		os.Exit(1)
+	}
+	return value
 }
 
 func positiveSecondsFromEnv(key string, fallback int) time.Duration {

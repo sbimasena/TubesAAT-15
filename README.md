@@ -30,7 +30,7 @@ Ruang lingkup sesuai konteks proyek:
 - API Klien menerapkan otorisasi di sisi server serta membatasi field yang boleh diterima tiap klien.
 - Ketahanan permintaan klien hilir dan perilaku degradasi ditangani bersama Anggota A dan C.
 
-Penanggung jawab pada konteks proyek: koordinasi P2 dan P3. **Status pada cabang ini:** direktori `services/client-api` dan `services/auth` masih berupa kerangka; endpoint, token, scope, dan alur refresh belum diimplementasikan.
+Penanggung jawab pada konteks proyek: koordinasi P2 dan P3. **Status pada cabang ini:** Auth dan API Klien sudah memiliki server HTTP, pemeriksaan kesehatan, validasi konfigurasi, dan log terstruktur. API Klien memiliki adapter HTTP ke Aggregator serta endpoint integrasi sementara yang nonaktif secara bawaan. Identitas, login, JWT, token penyegar, scope, dan pembatasan field belum diimplementasikan.
 
 ### Anggota C — Infrastruktur, Penyimpanan, dan Pesan
 
@@ -187,5 +187,5 @@ ID hazard dibuat deterministik dari sumber dan ID referensi sumber. Ini membuat 
 
 - Repositori Aggregator saat ini hanya menyimpan sampai 10.000 peristiwa di memori proses. Data hilang saat kontainer dimulai ulang.
 - Adapter penerbit saat ini menulis log bahwa peristiwa akan dikirim; belum ada pengiriman ke RabbitMQ.
-- PostgreSQL dan RabbitMQ belum didefinisikan pada Compose cabang ini. Layanan Auth, API Klien, dan kedua layanan konsumen masih berupa kerangka dengan fungsi utama kosong, sehingga alur fungsionalnya belum tersedia.
+- PostgreSQL dan RabbitMQ belum didefinisikan pada Compose cabang ini. Auth dan API Klien sudah dapat dijalankan secara mandiri dengan konfigurasi lingkungan yang lengkap, tetapi belum menyediakan autentikasi dan otorisasi. Kedua layanan konsumen masih berupa kerangka dengan fungsi utama kosong.
 - Karena itu pemeriksaan di atas memverifikasi alur mock → Aggregator, bukan persistensi tahan restart atau distribusi pesan broker.

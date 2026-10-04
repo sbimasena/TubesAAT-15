@@ -1,4 +1,4 @@
-# Consumer akan diimplementasikan pada tahap 3.
+# Auth dan Client API menunggu implementasi anggota B.
 services:
   bmkg:
     build: ./services/bmkg
@@ -100,9 +100,39 @@ services:
 
   notification-consumer:
     build: ./services/notification-consumer
+    environment:
+      BROKER_URL: ${BROKER_URL:?Set BROKER_URL in .env}
+    depends_on:
+      message-broker:
+        condition: service_healthy
+    networks:
+      - events
+    volumes:
+      - notification-data:/data
+    healthcheck:
+      test: ["CMD", "/service", "--healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
 
   dashboard-consumer:
     build: ./services/dashboard-consumer
+    environment:
+      BROKER_URL: ${BROKER_URL:?Set BROKER_URL in .env}
+    depends_on:
+      message-broker:
+        condition: service_healthy
+    networks:
+      - events
+    volumes:
+      - dashboard-data:/data
+    healthcheck:
+      test: ["CMD", "/service", "--healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
 
 networks:
   storage:
@@ -112,3 +142,5 @@ networks:
 volumes:
   canonical-data:
   broker-data:
+  notification-data:
+  dashboard-data:

@@ -1,5 +1,4 @@
-# Tambahkan layanan Canonical Store dan message broker setelah teknologinya dipilih.
-# Port Aggregator dan Auth belum dipetakan karena masih TBD.
+# RabbitMQ dan consumer akan dihubungkan pada tahap berikutnya.
 services:
   bmkg:
     build: ./services/bmkg
@@ -29,9 +28,39 @@ services:
       BMKG_API_KEY: ${BMKG_API_KEY:-dev-bmkg-key}
       PVMBG_TOKEN: ${PVMBG_TOKEN:-dev-pvmbg-token}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-3}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env; see .env.example}
     depends_on:
-      - bmkg
-      - pvmbg
+      bmkg:
+        condition: service_started
+      pvmbg:
+        condition: service_started
+      canonical-store:
+        condition: service_healthy
+    networks:
+      - default
+      - storage
+    healthcheck:
+      test: ["CMD", "/service", "--healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  canonical-store:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hazards}
+      POSTGRES_USER: ${POSTGRES_USER:-aggregator}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - canonical-data:/var/lib/postgresql/data
+    networks:
+      - storage
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   client-api:
     build: ./services/client-api
@@ -48,3 +77,10 @@ services:
 
   dashboard-consumer:
     build: ./services/dashboard-consumer
+
+networks:
+  storage:
+    internal: true
+
+volumes:
+  canonical-data:

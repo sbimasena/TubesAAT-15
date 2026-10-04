@@ -1,4 +1,4 @@
-# RabbitMQ dan consumer akan dihubungkan pada tahap berikutnya.
+# Consumer akan diimplementasikan pada tahap 3.
 services:
   bmkg:
     build: ./services/bmkg
@@ -29,6 +29,7 @@ services:
       PVMBG_TOKEN: ${PVMBG_TOKEN:-dev-pvmbg-token}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-3}
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env; see .env.example}
+      BROKER_URL: ${BROKER_URL:?Set BROKER_URL in .env; see .env.example}
     depends_on:
       bmkg:
         condition: service_started
@@ -36,9 +37,12 @@ services:
         condition: service_started
       canonical-store:
         condition: service_healthy
+      message-broker:
+        condition: service_healthy
     networks:
       - default
       - storage
+      - events
     healthcheck:
       test: ["CMD", "/service", "--healthcheck"]
       interval: 5s
@@ -62,6 +66,28 @@ services:
       timeout: 3s
       retries: 10
 
+  message-broker:
+    image: rabbitmq:4.2-management-alpine
+    hostname: message-broker
+    command: ["/bin/sh", "/etc/rabbitmq/start-with-topology.sh"]
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-hazard}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?Set RABBITMQ_DEFAULT_PASS in .env}
+    ports:
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - broker-data:/var/lib/rabbitmq
+      - ./infrastructure/message-broker/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - ./infrastructure/message-broker/start-with-topology.sh:/etc/rabbitmq/start-with-topology.sh:ro
+    networks:
+      - events
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/topology-ready && rabbitmq-diagnostics -q ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
   client-api:
     build: ./services/client-api
     ports:
@@ -81,6 +107,8 @@ services:
 networks:
   storage:
     internal: true
+  events: {}
 
 volumes:
   canonical-data:
+  broker-data:

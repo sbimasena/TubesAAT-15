@@ -14,6 +14,7 @@ import (
 
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/httpapi"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/ingest"
+	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/messaging"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/source"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/store"
 )
@@ -38,6 +39,7 @@ func main() {
 	pvmbgToken := requiredEnv(logger, "PVMBG_TOKEN")
 	bmkgBaseURL := requiredEnv(logger, "BMKG_BASE_URL")
 	pvmbgBaseURL := requiredEnv(logger, "PVMBG_BASE_URL")
+	brokerURL := requiredEnv(logger, "BROKER_URL")
 	if bmkgKey == pvmbgToken {
 		logger.Error("upstream credentials must be different", "variables", "BMKG_API_KEY,PVMBG_TOKEN")
 		os.Exit(1)
@@ -59,6 +61,11 @@ func main() {
 	go func() {
 		defer close(pollersDone)
 		manager.Run(ctx)
+	}()
+	publisherDone := make(chan struct{})
+	go func() {
+		defer close(publisherDone)
+		messaging.Run(ctx, repository, brokerURL, "hazard.events", logger)
 	}()
 
 	api := httpapi.NewServer(repository, manager, logger)
@@ -86,6 +93,7 @@ func main() {
 	}
 	stop()
 	<-pollersDone
+	<-publisherDone
 }
 
 func envOr(key, fallback string) string {

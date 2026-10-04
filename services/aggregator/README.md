@@ -21,17 +21,23 @@ Schema evolution supports new valid JSON properties while the existing identity 
 
 Polling cursors advance after the transaction commits. Failed writes retain the cursor so the next cycle can retry, including warnings already cached by the preceding failed cycle. Cursors remain in memory for M1; after restart, Aggregator rebuilds them from available upstream history while PostgreSQL deduplicates replayed data.
 
-**Stage 1 boundary:** outbox messages remain pending. The RabbitMQ worker, publisher confirms, and consumers are implemented in later stages; this stage does not claim broker delivery. There is no automatic retention/cleanup of canonical records or outbox rows yet.
+## RabbitMQ outbox publisher (stage 2)
+
+`BROKER_URL` is required. One background worker reads up to 50 pending snapshots in message-ID order. It targets only the pre-provisioned durable fanout exchange `hazard.events`, publishes persistent JSON with `mandatory=true`, and waits for a positive publisher confirm without a return before setting `published_at`. AMQP `MessageId` is the outbox ID; `CorrelationId` and `X-Correlation-ID` retain the polling ID. Headers include `schema_version=1` and `hazard_revision`.
+
+Connection/setup/publish operations are bounded to five seconds. The worker retries every three seconds, reconnects after publish failure, and immediately drains another full batch. Cancellation closes socket I/O as well as interrupting the confirm wait. Broker failures leave rows pending while ingestion and HTTP queries continue; `/health` checks storage/upstream availability and does **not** certify broker delivery. Publisher logs show connection failures, batch size (up to 50, not total pending count), confirmed IDs, correlation IDs, and numeric latency.
+
+An accepted message followed by a crash or failed database mark is published again with the same ID/body. Delivery is at-least-once for existing bindings, with healthy retained volumes and eventual recovery. Mandatory routing proves at least one queue is bound, not that both subscriptions still exist. Queue deletion/purge or lost volumes can lose already-marked messages. One Aggregator replica is supported; concurrent workers would need row leases. There is no automatic retention/cleanup of records or outbox rows. Consumers and their durable deduplication are stage 3.
 
 ## Storage checks
 
 From the repository root, start the development stack and run the Aggregator checks on its own storage network:
 
 ```sh
-docker compose --env-file .env.example up --build -d canonical-store bmkg pvmbg aggregator
+docker compose --env-file .env.example up --build -d canonical-store message-broker bmkg pvmbg aggregator
 docker compose --env-file .env.example -f docker-compose.yml -f tests/compose-storage.yml run --build --rm --no-deps aggregator
 ```
 
-The test override builds the Aggregator's builder stage and uses a temporary PostgreSQL schema, removed after testing. Existing canonical records are untouched. It checks duplicate polling, revisions and immutable snapshots, old/new JSONB fields without migration, filters, atomic rollback, concurrent deduplication, and reopening the repository. Without `TEST_DATABASE_URL`, local `go test ./...` skips the database integration check; the Compose command above runs it against real PostgreSQL.
+The test override builds the Aggregator's builder stage and uses a temporary PostgreSQL schema, removed after testing. Existing canonical records are untouched. It checks duplicate polling, revisions and immutable snapshots, old/new JSONB fields without migration, filters, atomic rollback, concurrent deduplication, and reopening the repository. With `TEST_BROKER_URL`, it also uses a private exchange/queue to check the actual publisher, persistent message metadata, cancelled publish, accepted-but-unmarked retry, and mandatory returns. Test resources are removed on normal completion. Without `TEST_DATABASE_URL`, local `go test ./...` skips the database integration check; the Compose command above runs it against real PostgreSQL.
 
-Configure source URLs, credentials, database URL, listen port, and polling interval through environment variables. `BMKG_BASE_URL`, `PVMBG_BASE_URL`, `BMKG_API_KEY`, `PVMBG_TOKEN`, and `DATABASE_URL` are required. The upstream credentials must differ; the Aggregator exits on missing configuration or reused credentials. Do not use the Compose example credentials outside local development.
+Configure source URLs, credentials, database URL, listen port, and polling interval through environment variables. `BMKG_BASE_URL`, `PVMBG_BASE_URL`, `BMKG_API_KEY`, `PVMBG_TOKEN`, `DATABASE_URL`, and `BROKER_URL` are required. The upstream credentials must differ; the Aggregator exits on missing configuration or reused credentials. Do not use the Compose example credentials outside local development.

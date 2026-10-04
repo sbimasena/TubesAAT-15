@@ -2,7 +2,10 @@ module github.com/sbimasena/TubesAAT-15/services/aggregator
 
 go 1.27.1
 
-require github.com/jackc/pgx/v5 v5.11.0
+require (
+	github.com/jackc/pgx/v5 v5.11.0
+	github.com/rabbitmq/amqp091-go v1.15.0
+)
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect

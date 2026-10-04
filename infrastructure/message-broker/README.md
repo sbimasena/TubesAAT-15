@@ -1,0 +1,24 @@
+# RabbitMQ — tahap 2
+
+Compose menjalankan `rabbitmq:4.2-management-alpine`, hostname tetap `message-broker`, dan volume `broker-data` untuk identitas node/data. AMQP port 5672 hanya pada jaringan `events`; management UI dipetakan ke `127.0.0.1:15672`. Jaringan ini terpisah dari `storage` PostgreSQL, tetapi bukan jaringan Docker `internal` agar UI lokal dapat diakses. Gunakan kredensial contoh hanya untuk development.
+
+`start-with-topology.sh` menjalankan entrypoint resmi dan menunggu node selesai boot sebelum `rabbitmqctl import_definitions`. Import setelah boot memungkinkan RabbitMQ membuat user dari environment terlebih dahulu: import definitions saat boot pada node kosong akan melewati pembuatan user default. [Dokumentasi import](https://www.rabbitmq.com/docs/definitions).
+
+Readiness `/tmp/topology-ready` dibuat setelah import sukses; healthcheck memeriksa file dan ping node. Aggregator menunggu broker healthy pada startup Compose. Volume yang sama mempertahankan user lama: mengubah environment password tidak otomatis mengganti user pada volume yang sudah ada.
+
+## Topology
+
+`definitions.json` memuat exchange fanout durable `hazard.events`, queue durable classic `notification` dan `dashboard`, serta binding independen. Queue tidak exclusive/auto-delete dan tidak punya TTL/max-length. Producer hanya memeriksa exchange, tanpa mendeklarasikan atau mengetahui nama queue. Kedua consumer tahap 3 membaca queue masing-masing dengan manual ack/prefetch satu; queue menampung backlog jika consumer offline. Jurnal idempotensi berada pada volume khusus consumer, terpisah dari broker.
+
+Pesan persistent dengan positive publisher confirm dan volume yang dipertahankan dapat bertahan restart. Mandatory return menandakan tidak ada route; confirm tidak membuktikan consumer selesai atau kedua queue masih terikat. Satu node/classic queue tidak memberi replikasi atau high availability. Pesan yang sudah di-ack dihapus; subscriber baru tidak menerima sejarah sebelum binding. [Confirms dan acknowledgement](https://www.rabbitmq.com/docs/confirms).
+
+## Review
+
+```sh
+docker compose --env-file .env.example up -d message-broker aggregator
+docker compose --env-file .env.example exec -T message-broker rabbitmqctl list_queues name durable messages_ready messages_unacknowledged
+docker compose --env-file .env.example logs --tail 50 aggregator
+python3 scripts/check-stage-2.py
+```
+
+Skrip tahap 2 memakai `.env.example`, memerlukan kedua consumer offline, memeriksa pesan dengan requeue, stop/start broker, dan menyimpan hasil sanitasi di `docs/evidence/anggota-c/stage-2/broker-recovery.json`. Ia tidak purge/delete queue atau volume. Pesan yang diinspeksi menjadi redelivered; ini memang diperbolehkan oleh kontrak at-least-once.

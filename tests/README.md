@@ -35,3 +35,17 @@ Override menjalankan race detector pada dua modul mandiri, menggunakan file seme
 Skrip memakai broker nyata/konfigurasi `.env.example`: producer serta dashboard tetap berjalan ketika notifikasi offline; event yang sama dibaca notifikasi sesudah restart. Replay satu ID producer dilakukan sebelum/sesudah restart consumer, lalu jumlah hasil pada setiap jurnal diperiksa tetap satu. Replay aplikasi ini dapat memiliki redelivered=false; crash sebelum ack disimulasikan pada tes journal. Restart broker memeriksa health unavailable dan reconnect tanpa restart consumer/producer. Semua layanan yang dihentikan dipulihkan; volume dan queue tidak dihapus. Tujuh layanan harus sudah berjalan dan menghasilkan event mock periodik. Output: `docs/evidence/anggota-c/stage-3/`.
 
 Skrip tahap 2 secara khusus mengharuskan consumer offline; untuk stack aktif tahap 3 gunakan skrip tahap 3.
+
+## Demo P4/P5 tahap 4
+
+```sh
+python3 scripts/check-p4.py
+python3 scripts/check-stage-3.py --output docs/evidence/anggota-c/stage-4/fanout-downtime.json
+python3 scripts/check-p5-third.py
+```
+
+Tujuh layanan fungsional harus sudah berjalan. P4 melakukan rebuild PVMBG saja, membaca v1/v2 JSONB sesudah restart Aggregator/DB, serta memakai `tests/compose-probes.yml` untuk probe jaringan dengan image PostgreSQL tanpa password database. Probe merupakan container operator dengan jaringan setara peran layanan, **bukan** request dari kode Client API yang belum ada.
+
+P5 memakai program `services/dashboard-consumer/cmd/review` pada container tersendiri/queue baru melalui `tests/compose-review.yml`. Producer dan kedua consumer dasar tidak dibuild/restart pada demo subscriber ketiga. Queue sementara exclusive/non-durable dibersihkan setelah selesai. Program memakai client AMQP yang sudah terpasang pada modul dashboard; tidak memanggil handler/logic dashboard. Build/testing demo ini tidak memerlukan modul aplikasi tambahan.
+
+Skrip tahap 3 sekarang memakai `demo_support.py` dan argumen `--output`; pemeriksaan nyata tahap 4 menjalankan ulang alur tersebut, sehingga bukti historis tahap 3 tetap disimpan. Laporan: `docs/anggota-c-p4-p5-report.md`.

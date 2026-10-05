@@ -21,13 +21,13 @@ Schema evolution supports new valid JSON properties while the existing identity 
 
 Polling cursors advance after the transaction commits. Failed writes retain the cursor so the next cycle can retry, including warnings already cached by the preceding failed cycle. Cursors remain in memory for M1; after restart, Aggregator rebuilds them from available upstream history while PostgreSQL deduplicates replayed data.
 
-## RabbitMQ outbox publisher (stage 2)
+## RabbitMQ outbox publisher
 
 `BROKER_URL` is required. One background worker reads up to 50 pending snapshots in message-ID order. It targets only the pre-provisioned durable fanout exchange `hazard.events`, publishes persistent JSON with `mandatory=true`, and waits for a positive publisher confirm without a return before setting `published_at`. AMQP `MessageId` is the outbox ID; `CorrelationId` and `X-Correlation-ID` retain the polling ID. Headers include `schema_version=1` and `hazard_revision`.
 
 Connection/setup/publish operations are bounded to five seconds. The worker retries every three seconds, reconnects after publish failure, and immediately drains another full batch. Cancellation closes socket I/O as well as interrupting the confirm wait. Broker failures leave rows pending while ingestion and HTTP queries continue; `/health` checks storage/upstream availability and does **not** certify broker delivery. Publisher logs show connection failures, batch size (up to 50, not total pending count), confirmed IDs, correlation IDs, and numeric latency.
 
-An accepted message followed by a crash or failed database mark is published again with the same ID/body. Delivery is at-least-once for existing bindings, with healthy retained volumes and eventual recovery. Mandatory routing proves at least one queue is bound, not that both subscriptions still exist. Queue deletion/purge or lost volumes can lose already-marked messages. One Aggregator replica is supported; concurrent workers would need row leases. There is no automatic retention/cleanup of records or outbox rows. Stage 3 consumers now acknowledge after syncing their own JSONL journals and deduplicate IDs across restart; neither accesses PostgreSQL.
+An accepted message followed by a crash or failed database mark is published again with the same ID/body. Delivery is at-least-once for existing bindings, with healthy retained volumes and eventual recovery. Mandatory routing proves at least one queue is bound, not that both subscriptions still exist. Queue deletion/purge or lost volumes can lose already-marked messages. One Aggregator replica is supported; concurrent workers would need row leases. There is no automatic retention/cleanup of records or outbox rows. Notification and dashboard consumers acknowledge after syncing their own JSONL journals and deduplicate IDs across restart; neither accesses PostgreSQL.
 
 ## Storage checks
 

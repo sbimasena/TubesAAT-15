@@ -6,4 +6,4 @@ Pengaturan contoh ada pada `.env.example`: `POSTGRES_DB`, `POSTGRES_USER`, `POST
 
 Aggregator menjalankan migrasi embedded `services/aggregator/internal/store/migrations/001_canonical.sql` saat startup. `schema_migrations` mencatat versi 1. Tabel `hazard_events` menyimpan kolom kanonis dan `attributes JSONB`; tabel `hazard_outbox` menyimpan snapshot event dalam transaksi yang sama. Penambahan field PVMBG `confidence_level` hanya menambah key JSONB tanpa migrasi.
 
-Restart container mempertahankan volume. Kehilangan atau penghapusan volume menghilangkan data; jangan memakai `docker compose down -v` untuk demo persistence. Outbox masih pending pada tahap 1; pengiriman RabbitMQ ditambahkan pada tahap 2.
+Restart container mempertahankan volume. Kehilangan atau penghapusan volume menghilangkan data; jangan memakai `docker compose down -v` untuk demo persistence. Worker Aggregator mengirim snapshot outbox ke RabbitMQ setelah commit; saat broker tidak tersedia, row tetap pending sampai pengiriman berhasil dikonfirmasi.

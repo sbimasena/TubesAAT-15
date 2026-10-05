@@ -9,7 +9,7 @@ import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
-from demo_support import compose, healthy, now, run, settings, sql, wait_for
+from demo_support import compose, healthy, now, run, settings, sql, states, wait_for
 
 folder = Path("docs/evidence/anggota-c/stage-4")
 folder.mkdir(parents=True, exist_ok=True)
@@ -25,15 +25,6 @@ def request(port, endpoint, body=None, headers=None):
     with urllib.request.urlopen(request, timeout=5) as response:
         return {"status": response.status, "correlation_id": response.headers.get("X-Correlation-ID"),
                 "body": json.load(response)}
-
-
-def states():
-    result = {}
-    for line in run("ps", "--all", "--format", "{{.Service}} {{.ID}}").splitlines():
-        service, identity = line.split()
-        state = json.loads(subprocess.check_output(["docker", "inspect", "--format", "{{json .State}}", identity], text=True))
-        result[service] = {"id": identity, "running": state["Running"], "started_at": state["StartedAt"]}
-    return result
 
 
 def migrations():

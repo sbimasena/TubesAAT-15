@@ -34,4 +34,4 @@ docker compose --env-file .env.example -f docker-compose.yml -f tests/compose-co
 python3 scripts/check-stage-3.py
 ```
 
-Tes memakai file sementara, fake acknowledgement untuk menguji urutan IO/ack, dan race detector. Skrip runtime memakai broker nyata serta tujuh container yang sudah berjalan; menghentikan notifikasi/broker sementara, menguji retry ID yang sama lintas restart, dan memulihkan layanan tanpa menghapus volume. Bukti ada pada `docs/evidence/anggota-c/stage-3/`.
+Tes memakai file sementara, fake acknowledgement untuk menguji urutan IO/ack, dan race detector. Skrip runtime memakai broker nyata serta tujuh container yang sudah berjalan; menghentikan notifikasi/broker sementara, menguji retry ID yang sama lintas restart, dan memulihkan layanan tanpa menghapus volume. Gunakan `--output <file.json>` untuk menentukan lokasi hasil pemeriksaan.

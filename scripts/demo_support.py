@@ -53,6 +53,16 @@ def healthy(service):
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
 
+def states():
+    result = {}
+    for line in run("ps", "--all", "--format", "{{.Service}} {{.ID}}").splitlines():
+        service, identity = line.split()
+        state = json.loads(subprocess.check_output(
+            ["docker", "inspect", "--format", "{{json .State}}", identity], text=True))
+        result[service] = {"id": identity, "running": state["Running"], "started_at": state["StartedAt"]}
+    return result
+
+
 def journal(service):
     with tempfile.TemporaryDirectory(prefix="tubesaat-stage3-") as folder:
         path = Path(folder) / "events.jsonl"
@@ -74,5 +84,4 @@ def logs(service, since):
         except json.JSONDecodeError:
             pass
     return records
-
 

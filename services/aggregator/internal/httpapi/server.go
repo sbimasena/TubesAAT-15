@@ -33,9 +33,15 @@ func (s *Server) Handler() http.Handler {
 	return s.withRequestLogging(mux)
 }
 
-func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "ok", "service": "aggregator", "sources": s.manager.Status(),
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	available := s.repository.Ping(r.Context()) == nil
+	status, code := "ok", http.StatusOK
+	if !available {
+		status, code = "degraded", http.StatusServiceUnavailable
+	}
+	writeJSON(w, code, map[string]any{
+		"status": status, "service": "aggregator", "sources": s.manager.Status(),
+		"storage": map[string]bool{"available": available},
 	})
 }
 
@@ -45,10 +51,10 @@ func (s *Server) listHazards(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	events, err := s.repository.List(r.Context(), filter)
+	events, err := s.repository.List(r.Context(), filter, r.Header.Get("X-Correlation-ID"))
 	if err != nil {
 		s.logger.Error("canonical query failed", "correlation_id", r.Header.Get("X-Correlation-ID"), "error", err)
-		http.Error(w, "canonical query failed", http.StatusInternalServerError)
+		http.Error(w, "canonical store unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

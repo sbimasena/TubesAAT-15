@@ -1,0 +1,5 @@
+# Only recreate PVMBG; keep Aggregator, storage, and consumers running.
+services:
+  pvmbg:
+    environment:
+      PVMBG_DELAY_MS: "3000"

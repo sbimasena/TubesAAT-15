@@ -1,0 +1,18 @@
+# Readiness probes use the same networks as application roles, without DB credentials.
+x-probe: &probe
+  image: postgres:17-alpine
+  entrypoint: ["pg_isready", "-h", "canonical-store", "-p", "5432", "-t", "2"]
+  environment:
+    PGUSER: ${POSTGRES_USER:-aggregator}
+    PGDATABASE: ${POSTGRES_DB:-hazards}
+  profiles: ["demo"]
+services:
+  probe-aggregator:
+    <<: *probe
+    networks: [storage]
+  probe-client:
+    <<: *probe
+    networks: [default]
+  probe-consumer:
+    <<: *probe
+    networks: [events]

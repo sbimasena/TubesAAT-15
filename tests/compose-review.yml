@@ -1,0 +1,12 @@
+# Temporary, independent third subscriber; normal producer/services are not rebuilt.
+services:
+  review-subscriber:
+    image: tubesaat-review-subscriber
+    build:
+      context: ./services/dashboard-consumer
+      target: builder
+    entrypoint: ["go", "run", "./cmd/review"]
+    environment:
+      BROKER_URL: ${BROKER_URL:?Set BROKER_URL in .env}
+    networks:
+      - events

@@ -16,6 +16,7 @@ Pekerjaan yang sudah tersedia pada cabang ini:
 - Kolom PVMBG tambahan, termasuk `confidence_level`, diteruskan ke `HazardEvent.attributes`.
 - API Aggregator menyediakan pemeriksaan kesehatan, daftar hazard, dan filter sumber, tipe hazard, waktu, serta jumlah hasil.
 - Log dan permintaan menggunakan correlation ID.
+- Status sumber membedakan fetch upstream dan siklus ingestion yang sudah tersimpan melalui `last_ingested_at`, `ingestion_error`, `stale`, serta `stale_since`. Kegagalan parsial tidak ditandai fresh.
 
 Penanggung jawab pada konteks proyek: P1 dan bagian Aggregator/upstream dari P2.
 
@@ -30,7 +31,7 @@ Ruang lingkup sesuai konteks proyek:
 - API Klien menerapkan otorisasi di sisi server serta membatasi field yang boleh diterima tiap klien.
 - Ketahanan permintaan klien hilir dan perilaku degradasi ditangani bersama Anggota A dan C.
 
-Penanggung jawab pada konteks proyek: koordinasi P2 dan P3. **Status pada cabang ini:** direktori `services/client-api` dan `services/auth` masih berupa kerangka; endpoint, token, scope, dan alur refresh belum diimplementasikan.
+Penanggung jawab pada konteks proyek: koordinasi P2 dan P3. **Status pada cabang ini:** direktori `services/client-api` dan `services/auth` masih berupa kerangka; endpoint, token, scope, dan alur refresh belum diimplementasikan di `main`. Fondasi HTTP Auth/API Klien dan adapter API Aggregator sedang diajukan pada [PR #2](https://github.com/sbimasena/TubesAAT-15/pull/2); login, token, dan scope masih menjadi tahap berikutnya Anggota B.
 
 ### Anggota C — Infrastruktur, Penyimpanan, dan Pesan
 
@@ -45,11 +46,10 @@ Penanggung jawab pada konteks proyek: P4 dan P5. PostgreSQL, adapter Aggregator,
 
 ### Pekerjaan integrasi tim berikutnya
 
-1. Review integrasi persistence PostgreSQL, cursor polling, dan outbox antara A–C.
-2. Review pengujian independensi container, fleksibilitas storage, serta fanout event (P4/P5).
-3. Anggota B mengimplementasikan Auth dan API Klien sesuai kontrak API Aggregator serta scope tiap klien.
-4. Review hasil uji beban/outage Aggregator (P2) dan perbaikan startup broker pada volume kosong; ulangi uji clone HEAD sesudah commit fix.
-5. Seluruh tim memeriksa alur ujung ke ujung, freshness pada Client API, otorisasi, dan beban setelah layanan B siap.
+1. Anggota B meninjau kontrak freshness Aggregator dan melanjutkan fondasi API Klien/Auth pada PR #2.
+2. Anggota B menerapkan login, token akses/penyegar, scope, pembatasan field Media, dan respons data stale pada API Klien.
+3. Anggota A dan C menjaga pemeriksaan integrasi skema, persistence/outbox, fanout, dan recovery tetap lolos setelah perubahan.
+4. Seluruh tim menjalankan uji ujung ke ujung dan beban setelah Auth/API Klien siap; bukti tujuh layanan A/C belum membuktikan sembilan layanan lengkap.
 
 ## Teknologi dan batas arsitektur
 
@@ -61,7 +61,18 @@ Penanggung jawab pada konteks proyek: P4 dan P5. PostgreSQL, adapter Aggregator,
 
 ## Menjalankan stack development
 
-Kredensial di `.env` harus berbeda untuk BMKG dan PVMBG. Untuk menjalankan mock dan Aggregator memakai kredensial development contoh:
+Prasyarat: Docker Engine yang aktif, Docker Compose, dan Python 3. Panduan pemeriksaan tidak membutuhkan `jq`.
+
+Pada macOS, buka Docker Desktop dan tunggu sampai engine berjalan:
+
+```sh
+open -a Docker
+docker info
+```
+
+Jika `docker info` menampilkan `Cannot connect to the Docker daemon`, tunggu proses startup Docker Desktop lalu ulangi. Compose baru bisa membangun atau menjalankan kontainer setelah daemon bisa diakses.
+
+Kredensial BMKG dan PVMBG harus berbeda. Perintah berikut memakai `.env.example`, termasuk konfigurasi PostgreSQL/RabbitMQ, tanpa mengubah `.env` lokal:
 
 ```sh
 docker compose --env-file .env.example up --build -d canonical-store message-broker bmkg pvmbg aggregator notification-consumer dashboard-consumer
@@ -76,7 +87,22 @@ docker compose --env-file .env.example ps
 curl -sS http://localhost:8083/health | python3 -m json.tool
 ```
 
-Pada respons kesehatan Aggregator, tunggu sampai `sources.BMKG.available` dan `sources.PVMBG.available` bernilai `true`. Polling bawaan berjalan setiap 3 detik.
+Pada respons kesehatan Aggregator, tunggu sampai `storage.available` dan `sources.BMKG.available`/`sources.PVMBG.available` bernilai `true`, serta kedua sumber memiliki `stale=false`. Polling bawaan berjalan setiap 3 detik.
+
+Metadata sumber memiliki arti berikut:
+
+| Field | Arti |
+|---|---|
+| `available` | Fetch sumber terakhir berhasil; untuk BMKG, kedua endpoint harus berhasil. |
+| `last_success_at` | Waktu fetch upstream terakhir yang berhasil, sebelum commit database. |
+| `last_error` | Kegagalan fetch upstream terakhir; hilang setelah fetch berhasil. |
+| `last_ingested_at` | Waktu siklus lengkap terakhir yang berhasil dinormalisasi dan disimpan. Polling kosong juga memeriksa transaksi storage. |
+| `ingestion_error` | Kesalahan penyimpanan/normalisasi/korelasi; hilang setelah siklus lengkap berhasil. |
+| `stale` | Belum ada siklus ingestion sukses, ada kegagalan, atau siklus sukses terakhir sudah melewati ambang waktu. |
+| `stale_since` | Awal periode stale, termasuk waktu ambang freshness terlewati jika lebih awal. Hilang setelah recovery. |
+| `stale_after_seconds` | Ambang freshness pipeline: nilai terbesar antara 15 detik dan tiga interval polling. |
+
+Freshness ini menjelaskan kondisi pipeline polling, bukan umur setiap peristiwa atau kepastian pengiriman broker. Umur rekaman dapat dilihat dari `occurred_at`/`ingested_at`; status outbox/consumer diperiksa secara terpisah. Gangguan upstream tetap memungkinkan API mengembalikan data PostgreSQL terakhir dengan metadata stale; gangguan database menghasilkan HTTP 503.
 
 Lihat beberapa rekaman bahaya dan status sumber tanpa `jq`:
 
@@ -189,6 +215,18 @@ ID hazard dibuat deterministik dari sumber dan ID referensi sumber. PostgreSQL m
 - Auth dan API Klien masih berupa kerangka. Bukti ownership lengkap melalui Client API menunggu pekerjaan B.
 - Jalankan pemeriksaan persistence/outbox sesuai [README Aggregator](services/aggregator/README.md). Recovery broker, fanout, downtime, idempotensi consumer, serta penambahan subscriber ketiga sudah diuji.
 
+## Memeriksa pekerjaan terbaru Anggota A setelah integrasi Anggota C
+
+```sh
+python3 scripts/check-ingestion.py --output /tmp/tubesaat-ingestion-check.json
+```
+
+Skrip memeriksa rekaman v1 tetap utuh, laporan v2 memiliki `confidence_level` yang sama dengan PVMBG, dan snapshot kanonis sampai ke jurnal kedua consumer. Setelah itu skrip mengaktifkan gangguan PVMBG, memastikan BMKG tetap fresh dan data vulkanik tersimpan tetap terbaca, lalu memeriksa recovery. ID kontainer dan waktu startup harus tetap sama. Skrip menggunakan tujuh layanan yang sudah berjalan dengan `.env.example`, tanpa `jq`.
+
+Skrip menambah satu laporan v2 beserta data/outbox/jurnal hasilnya. Pada akhir pemeriksaan, PVMBG dikembalikan ke skema v1 dan outage=false. Volume/queue tidak dihapus. Hasil `PASS` dan rincian pemeriksaan ditulis ke berkas output. Jangan menjalankannya bersamaan dengan demo yang mengubah status sumber.
+
+Uji Go dan uji database/broker nyata dapat dijalankan sesuai [README Aggregator](services/aggregator/README.md).
+
 ## Pemeriksaan fanout, downtime, dan idempotensi consumer
 
 ```sh
@@ -213,9 +251,9 @@ Pengujian P4 memeriksa rebuild layanan secara mandiri, record JSONB sebelum/sesu
 
 ```sh
 python3 scripts/check-p2.py
-python3 scripts/check-clean-clone.py --with-working-broker-fix
+python3 scripts/check-clean-clone.py
 ```
 
 Native k6/lsof diperlukan untuk P2. Tujuh layanan development harus sudah berjalan. Skrip menguji 50 VU selama 60 detik, mencatat socket TCP nyata, memperlambat PVMBG ke 3 detik, memeriksa data tersimpan/status sumber saat outage dan recovery tanpa restart Aggregator. PVMBG dipulihkan ke delay `.env.example`, schema v2, outage=false. Pengujian mengukur throughput, p50/p95/p99, error rate, dan jumlah respons 429 langsung pada Aggregator. Detail parameter dan threshold ada di [panduan pengujian](tests/README.md).
 
-Skrip clone memakai project/volume terpisah, port 18081/18082/18083/25672, serta menghapus hanya resource uji. Opsi patch menandai startup fix yang belum di-commit; sesudah pengguna commit, jalankan tanpa opsi. Auth/Client API tetap perlu implementasi dan verifikasi B.
+Skrip clone memakai project/volume terpisah, port 18081/18082/18083/25672, serta menghapus hanya resource uji. Perbaikan startup broker sudah tersedia pada `main`; gunakan pemeriksaan HEAD tanpa opsi patch. Auth/Client API tetap perlu implementasi dan verifikasi B.

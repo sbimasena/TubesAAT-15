@@ -37,11 +37,21 @@ Hasil JSON mencatat ID pesan, correlation ID, dan timestamp selama pengujian. Co
 
 ```sh
 python3 scripts/check-p2.py
-python3 scripts/check-clean-clone.py --with-working-broker-fix
+python3 scripts/check-clean-clone.py
 ```
 
 - P2 memerlukan native k6/lsof. Merecreate PVMBG dengan delay 3 detik, menjalankan 50 VU/60 detik serta mengambil tiga sampel 50 socket TCP, lalu melakukan outage 503/recovery. Aggregator, storage, dan consumer tetap berjalan. Delay kembali ke `.env.example`, schema v2/outage=false pada `finally`. Jangan menjalankan demo lainnya bersamaan.
-- Clone menggunakan commit HEAD dan project/volume baru pada port 18081/18082/18083/25672. Opsi patch hanya untuk verifikasi startup fix yang belum di-commit; patch/SHA256 ditandai pada hasil. Setelah pengguna commit bootstrap fix, jalankan tanpa opsi untuk bukti HEAD bersih. Hanya project uji yang dihapus; volume utama tetap.
+- Clone menggunakan commit HEAD dan project/volume baru pada port 18081/18082/18083/25672. Perbaikan bootstrap broker sudah berada pada main; perintah default memeriksa HEAD tanpa patch kerja. Hanya project uji yang dihapus; volume utama tetap.
 - Untuk menguji bootstrap yang diperbaiki pada volume broker lama dan reconnect consumer, pakai skrip yang sudah ada: `python3 scripts/check-stage-3.py --output /tmp/broker-recovery.json`.
 
 Parameter beban, definisi latensi, dan threshold dijelaskan di [panduan pengujian](../tests/README.md). Integrasi autentikasi/load Client API belum bisa dibuktikan sampai layanan B tersedia.
+
+## Pemeriksaan ingestion dan freshness Anggota A
+
+```sh
+python3 scripts/check-ingestion.py --output /tmp/tubesaat-ingestion-check.json
+```
+
+Memerlukan tujuh layanan A/C yang berjalan dengan `.env.example`. Skrip membandingkan rekaman PVMBG v1/v2 dengan API kanonis dan kedua jurnal consumer, lalu memeriksa data tersimpan, status stale, independensi BMKG, dan recovery saat outage PVMBG. Identitas/waktu startup kontainer harus tetap sama. Kontainer one-off untuk pengujian dikecualikan dari pemeriksaan identitas layanan utama.
+
+Skrip tidak menghentikan kontainer atau menghapus volume/queue. Ia menambah laporan v2 dan snapshot/outbox/jurnal hasilnya, lalu memulihkan PVMBG ke skema v1 serta outage=false. Jangan jalankan bersamaan dengan demo yang mengubah status sumber. Hasil dan timestamp ditulis ke berkas output; tidak memerlukan `jq`. Freshness menunjukkan keberhasilan pipeline polling/commit, bukan umur tiap rekaman atau publisher confirm.

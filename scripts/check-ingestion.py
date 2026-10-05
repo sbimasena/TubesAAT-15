@@ -8,6 +8,7 @@ import argparse
 from datetime import datetime
 import json
 import subprocess
+import time
 from pathlib import Path
 import urllib.request
 
@@ -136,6 +137,16 @@ try:
         return False
 
     wait_for(degraded, "PVMBG outage should mark only PVMBG stale")
+    # A successful fetch already in flight when outage is enabled may still commit.
+    # Once a failed poll is observed, subsequent failed polls must not advance ingestion.
+    time.sleep(float(settings["POLL_INTERVAL_SECONDS"]) + 1)
+    repeated = health()
+    failed_status = evidence["outage_health"]["sources"]["PVMBG"]
+    repeated_status = repeated["sources"]["PVMBG"]
+    assert not repeated_status["available"] and repeated_status["stale"]
+    assert repeated_status["last_ingested_at"] == failed_status["last_ingested_at"]
+    assert repeated_status["stale_since"] == failed_status["stale_since"]
+    evidence["repeated_outage_health"] = repeated
     assert canonical(new_id) == new_hazard, "stored volcanic data must remain readable during outage"
     admin("outage", {"enabled": False})
     wait_for(ready, "PVMBG should become fresh after a successful committed retry")

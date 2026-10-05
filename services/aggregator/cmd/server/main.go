@@ -14,11 +14,24 @@ import (
 
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/httpapi"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/ingest"
+	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/messaging"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/source"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/store"
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--healthcheck" {
+		client := &http.Client{Timeout: 4 * time.Second}
+		response, err := client.Get("http://127.0.0.1:" + envOr("AGGREGATOR_PORT", "8083") + "/health")
+		if err != nil {
+			os.Exit(1)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			os.Exit(1)
+		}
+		return
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	port := envOr("AGGREGATOR_PORT", "8083")
 	interval := positiveSecondsFromEnv("POLL_INTERVAL_SECONDS", 3)
@@ -26,19 +39,34 @@ func main() {
 	pvmbgToken := requiredEnv(logger, "PVMBG_TOKEN")
 	bmkgBaseURL := requiredEnv(logger, "BMKG_BASE_URL")
 	pvmbgBaseURL := requiredEnv(logger, "PVMBG_BASE_URL")
+	brokerURL := requiredEnv(logger, "BROKER_URL")
 	if bmkgKey == pvmbgToken {
 		logger.Error("upstream credentials must be different", "variables", "BMKG_API_KEY,PVMBG_TOKEN")
 		os.Exit(1)
 	}
-	repository := store.NewMemoryRepository(10000)
-	publisher := ingest.NewLogPublisher(logger)
-	bmkg := source.NewBMKGClient(bmkgBaseURL, bmkgKey, logger)
-	pvmbg := source.NewPVMBGClient(pvmbgBaseURL, pvmbgToken, logger)
-	manager := ingest.NewManager(bmkg, pvmbg, repository, publisher, interval, logger)
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go manager.Run(ctx)
+	startupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	repository, err := store.OpenPostgres(startupCtx, requiredEnv(logger, "DATABASE_URL"), logger)
+	cancel()
+	if err != nil {
+		logger.Error("canonical store initialization failed", "error", err)
+		os.Exit(1)
+	}
+	defer repository.Close()
+	bmkg := source.NewBMKGClient(bmkgBaseURL, bmkgKey, logger)
+	pvmbg := source.NewPVMBGClient(pvmbgBaseURL, pvmbgToken, logger)
+	manager := ingest.NewManager(bmkg, pvmbg, repository, interval, logger)
+	pollersDone := make(chan struct{})
+	go func() {
+		defer close(pollersDone)
+		manager.Run(ctx)
+	}()
+	publisherDone := make(chan struct{})
+	go func() {
+		defer close(publisherDone)
+		messaging.Run(ctx, repository, brokerURL, "hazard.events", logger)
+	}()
 
 	api := httpapi.NewServer(repository, manager, logger)
 	server := &http.Server{
@@ -63,6 +91,9 @@ func main() {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
+	stop()
+	<-pollersDone
+	<-publisherDone
 }
 
 func envOr(key, fallback string) string {

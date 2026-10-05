@@ -14,25 +14,6 @@ import (
 
 const cacheLimit = 5000
 
-type EventPublisher interface {
-	Publish(context.Context, domain.HazardEvent) error
-}
-
-type LogPublisher struct {
-	logger *slog.Logger
-}
-
-func NewLogPublisher(logger *slog.Logger) *LogPublisher {
-	return &LogPublisher{logger: logger}
-}
-
-func (p *LogPublisher) Publish(_ context.Context, event domain.HazardEvent) error {
-	if p.logger != nil {
-		p.logger.Warn("broker publisher is not configured; event was not sent", "hazard_id", event.HazardID)
-	}
-	return nil
-}
-
 type SourceStatus struct {
 	Available   bool       `json:"available"`
 	LastSuccess *time.Time `json:"last_success_at,omitempty"`
@@ -40,12 +21,11 @@ type SourceStatus struct {
 }
 
 type Manager struct {
-	bmkg      *source.BMKGClient
-	pvmbg     *source.PVMBGClient
-	repo      store.Repository
-	publisher EventPublisher
-	interval  time.Duration
-	logger    *slog.Logger
+	bmkg     *source.BMKGClient
+	pvmbg    *source.PVMBGClient
+	repo     store.Repository
+	interval time.Duration
+	logger   *slog.Logger
 
 	mu              sync.RWMutex
 	eventCursor     time.Time
@@ -56,7 +36,7 @@ type Manager struct {
 	status          map[string]SourceStatus
 }
 
-func NewManager(bmkg *source.BMKGClient, pvmbg *source.PVMBGClient, repo store.Repository, publisher EventPublisher, interval time.Duration, logger *slog.Logger) *Manager {
+func NewManager(bmkg *source.BMKGClient, pvmbg *source.PVMBGClient, repo store.Repository, interval time.Duration, logger *slog.Logger) *Manager {
 	if interval <= 0 {
 		interval = 3 * time.Second
 	}
@@ -64,7 +44,6 @@ func NewManager(bmkg *source.BMKGClient, pvmbg *source.PVMBGClient, repo store.R
 		bmkg:            bmkg,
 		pvmbg:           pvmbg,
 		repo:            repo,
-		publisher:       publisher,
 		interval:        interval,
 		logger:          logger,
 		eventsByID:      make(map[string]domain.SeismicEvent),
@@ -121,8 +100,9 @@ func (m *Manager) runPoller(ctx context.Context, name string, poll func(context.
 func (m *Manager) pollBMKG(ctx context.Context, correlationID string) {
 	started := time.Now()
 	m.mu.RLock()
-	eventSince := overlap(m.eventCursor)
-	warningSince := overlap(m.warningCursor)
+	eventCursor, warningCursor := m.eventCursor, m.warningCursor
+	eventSince := overlap(eventCursor)
+	warningSince := overlap(warningCursor)
 	m.mu.RUnlock()
 
 	events, eventErr := m.bmkg.FetchSeismicEvents(ctx, eventSince, correlationID)
@@ -144,8 +124,8 @@ func (m *Manager) pollBMKG(ctx context.Context, correlationID string) {
 	if eventErr == nil {
 		for _, event := range events {
 			m.eventsByID[event.EventID] = event
-			if event.OccurredAt.After(m.eventCursor) {
-				m.eventCursor = event.OccurredAt
+			if event.OccurredAt.After(eventCursor) {
+				eventCursor = event.OccurredAt
 			}
 			touched[event.EventID] = struct{}{}
 		}
@@ -155,10 +135,11 @@ func (m *Manager) pollBMKG(ctx context.Context, correlationID string) {
 			previous, exists := m.warningsByEvent[warning.EventID]
 			if !exists || warning.IssuedAt.After(previous.IssuedAt) {
 				m.warningsByEvent[warning.EventID] = warning
-				touched[warning.EventID] = struct{}{}
 			}
-			if warning.IssuedAt.After(m.warningCursor) {
-				m.warningCursor = warning.IssuedAt
+			// Retry cached warnings too: the preceding database transaction may have failed.
+			touched[warning.EventID] = struct{}{}
+			if warning.IssuedAt.After(warningCursor) {
+				warningCursor = warning.IssuedAt
 			}
 		}
 	}
@@ -167,6 +148,8 @@ func (m *Manager) pollBMKG(ctx context.Context, correlationID string) {
 	for eventID := range touched {
 		event, ok := m.eventsByID[eventID]
 		if !ok {
+			// Keep unresolved warnings in the polling window until their event can be stored.
+			warningCursor = m.warningCursor
 			continue
 		}
 		warning, hasWarning := m.warningsByEvent[eventID]
@@ -183,13 +166,19 @@ func (m *Manager) pollBMKG(ctx context.Context, correlationID string) {
 		}
 		return
 	}
-	m.persistAndPublish(ctx, "BMKG", correlationID, canonical)
+	if err := m.persist(ctx, "BMKG", correlationID, canonical); err != nil {
+		return
+	}
+	m.mu.Lock()
+	m.eventCursor, m.warningCursor = eventCursor, warningCursor
+	m.mu.Unlock()
 }
 
 func (m *Manager) pollPVMBG(ctx context.Context, correlationID string) {
 	started := time.Now()
 	m.mu.RLock()
-	since := overlap(m.reportCursor)
+	reportCursor := m.reportCursor
+	since := overlap(reportCursor)
 	m.mu.RUnlock()
 
 	reports, err := m.pvmbg.FetchVolcanicReports(ctx, since, correlationID)
@@ -208,12 +197,8 @@ func (m *Manager) pollPVMBG(ctx context.Context, correlationID string) {
 			continue
 		}
 		canonical = append(canonical, event)
-		if report.ReportedAt.After(since) {
-			m.mu.Lock()
-			if report.ReportedAt.After(m.reportCursor) {
-				m.reportCursor = report.ReportedAt
-			}
-			m.mu.Unlock()
+		if report.ReportedAt.After(reportCursor) {
+			reportCursor = report.ReportedAt
 		}
 	}
 	if len(canonical) == 0 {
@@ -222,25 +207,26 @@ func (m *Manager) pollPVMBG(ctx context.Context, correlationID string) {
 		}
 		return
 	}
-	m.persistAndPublish(ctx, "PVMBG", correlationID, canonical)
+	if err := m.persist(ctx, "PVMBG", correlationID, canonical); err != nil {
+		return
+	}
+	m.mu.Lock()
+	m.reportCursor = reportCursor
+	m.mu.Unlock()
 }
 
-func (m *Manager) persistAndPublish(ctx context.Context, sourceName, correlationID string, events []domain.HazardEvent) {
-	newEvents, err := m.repo.Upsert(ctx, events)
+func (m *Manager) persist(ctx context.Context, sourceName, correlationID string, events []domain.HazardEvent) error {
+	changedEvents, err := m.repo.Upsert(ctx, events, correlationID)
 	if err != nil {
 		if m.logger != nil {
 			m.logger.Error("canonical store write failed", "source", sourceName, "correlation_id", correlationID, "error", err)
 		}
-		return
-	}
-	for _, event := range newEvents {
-		if err := m.publisher.Publish(ctx, event); err != nil && m.logger != nil {
-			m.logger.Error("event publish failed", "hazard_id", event.HazardID, "correlation_id", correlationID, "error", err)
-		}
+		return err
 	}
 	if m.logger != nil {
-		m.logger.Info("canonical events ingested", "source", sourceName, "correlation_id", correlationID, "events", len(newEvents))
+		m.logger.Info("canonical events and outbox committed", "source", sourceName, "correlation_id", correlationID, "events", len(changedEvents))
 	}
+	return nil
 }
 
 func (m *Manager) setSuccess(sourceName string) {

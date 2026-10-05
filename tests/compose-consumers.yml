@@ -1,0 +1,20 @@
+# Run the same acknowledgement/journal checks in each independent consumer module.
+services:
+  notification-consumer:
+    image: tubesaat-notification-test
+    build:
+      context: ./services/notification-consumer
+      target: builder
+    entrypoint: ["go", "test", "-race", "-v", "./..."]
+    volumes: !reset []
+    healthcheck:
+      disable: true
+  dashboard-consumer:
+    image: tubesaat-dashboard-test
+    build:
+      context: ./services/dashboard-consumer
+      target: builder
+    entrypoint: ["go", "test", "-race", "-v", "./..."]
+    volumes: !reset []
+    healthcheck:
+      disable: true

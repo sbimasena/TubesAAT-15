@@ -1,5 +1,4 @@
-# Tambahkan layanan Canonical Store dan message broker setelah teknologinya dipilih.
-# Port Aggregator dan Auth belum dipetakan karena masih TBD.
+# Auth dan Client API menunggu implementasi anggota B.
 services:
   bmkg:
     build: ./services/bmkg
@@ -29,9 +28,65 @@ services:
       BMKG_API_KEY: ${BMKG_API_KEY:-dev-bmkg-key}
       PVMBG_TOKEN: ${PVMBG_TOKEN:-dev-pvmbg-token}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-3}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env; see .env.example}
+      BROKER_URL: ${BROKER_URL:?Set BROKER_URL in .env; see .env.example}
     depends_on:
-      - bmkg
-      - pvmbg
+      bmkg:
+        condition: service_started
+      pvmbg:
+        condition: service_started
+      canonical-store:
+        condition: service_healthy
+      message-broker:
+        condition: service_healthy
+    networks:
+      - default
+      - storage
+      - events
+    healthcheck:
+      test: ["CMD", "/service", "--healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  canonical-store:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hazards}
+      POSTGRES_USER: ${POSTGRES_USER:-aggregator}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - canonical-data:/var/lib/postgresql/data
+    networks:
+      - storage
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  message-broker:
+    image: rabbitmq:4.2-management-alpine
+    hostname: message-broker
+    command: ["/bin/sh", "/etc/rabbitmq/start-with-topology.sh"]
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-hazard}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?Set RABBITMQ_DEFAULT_PASS in .env}
+    ports:
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - broker-data:/var/lib/rabbitmq
+      - ./infrastructure/message-broker/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - ./infrastructure/message-broker/start-with-topology.sh:/etc/rabbitmq/start-with-topology.sh:ro
+    networks:
+      - events
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/topology-ready && rabbitmq-diagnostics -q ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
 
   client-api:
     build: ./services/client-api
@@ -45,6 +100,47 @@ services:
 
   notification-consumer:
     build: ./services/notification-consumer
+    environment:
+      BROKER_URL: ${BROKER_URL:?Set BROKER_URL in .env}
+    depends_on:
+      message-broker:
+        condition: service_healthy
+    networks:
+      - events
+    volumes:
+      - notification-data:/data
+    healthcheck:
+      test: ["CMD", "/service", "--healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
 
   dashboard-consumer:
     build: ./services/dashboard-consumer
+    environment:
+      BROKER_URL: ${BROKER_URL:?Set BROKER_URL in .env}
+    depends_on:
+      message-broker:
+        condition: service_healthy
+    networks:
+      - events
+    volumes:
+      - dashboard-data:/data
+    healthcheck:
+      test: ["CMD", "/service", "--healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+networks:
+  storage:
+    internal: true
+  events: {}
+
+volumes:
+  canonical-data:
+  broker-data:
+  notification-data:
+  dashboard-data:

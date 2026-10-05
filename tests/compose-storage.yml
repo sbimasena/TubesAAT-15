@@ -1,0 +1,14 @@
+# Overrides the Aggregator container to run its own checks on the storage network.
+# Uses an isolated temporary schema; existing canonical records are untouched.
+services:
+  aggregator:
+    image: tubesaat-aggregator-storage-test
+    build:
+      context: ./services/aggregator
+      target: builder
+    entrypoint: ["go", "test", "-v", "./..."]
+    environment:
+      TEST_DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      TEST_BROKER_URL: ${BROKER_URL:?Set BROKER_URL in .env}
+    healthcheck:
+      disable: true

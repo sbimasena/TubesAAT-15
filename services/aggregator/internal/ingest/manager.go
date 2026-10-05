@@ -198,12 +198,14 @@ func (m *Manager) pollPVMBG(ctx context.Context, correlationID string) {
 			m.logger.Info("PVMBG poll complete", "correlation_id", correlationID, "events", 0, "latency_ms", elapsedMS(started))
 		}
 	}
-	m.mu.Lock()
-	m.reportCursor = reportCursor
-	m.mu.Unlock()
 	if mappingErr == nil {
+		m.mu.Lock()
+		m.reportCursor = reportCursor
+		m.mu.Unlock()
 		m.setIngested("PVMBG")
 	}
+	// Keep the old cursor after a mapping failure so a later valid report
+	// cannot move the invalid record outside the retry window.
 }
 
 func (m *Manager) persist(ctx context.Context, sourceName, correlationID string, events []domain.HazardEvent) error {

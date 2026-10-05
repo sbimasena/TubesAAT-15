@@ -30,7 +30,7 @@ Ambang waktu juga mendeteksi poller yang berhenti menyelesaikan siklus, walaupun
 
 ID hazard dibuat deterministik dari sumber dan ID referensi sehingga replay polling idempoten. Nama/koordinat gunung api berasal dari tabel referensi statis Aggregator. Kolom tambahan PVMBG, termasuk `confidence_level`, disimpan dalam `attributes`.
 
-Penambahan properti JSON valid didukung selama kolom identitas dan pemetaan mempertahankan nama/tipe. Menghapus atau mengganti nama `report_id`, `volcano_id`, `alert_level`, atau `reported_at`, serta memakai `volcano_id` tanpa referensi koordinat, tidak didukung. Rekaman tersebut gagal dinormalisasi dan status ingestion menunjukkan kesalahan.
+Penambahan properti JSON valid didukung selama kolom identitas dan pemetaan mempertahankan nama/tipe. Menghapus atau mengganti nama `report_id`, `volcano_id`, `alert_level`, atau `reported_at`, serta memakai `volcano_id` tanpa referensi koordinat, tidak didukung. Rekaman tersebut gagal dinormalisasi dan status ingestion menunjukkan kesalahan. Jika ada laporan PVMBG yang gagal dipetakan, cursor ditahan agar laporan baru tidak mengeluarkan kegagalan itu dari jendela retry; rekaman valid tetap disimpan secara idempoten.
 
 ## PostgreSQL dan outbox atomik
 

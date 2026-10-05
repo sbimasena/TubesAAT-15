@@ -178,3 +178,76 @@ func (concurrentRepository) List(context.Context, store.Filter, string) ([]domai
 	return nil, nil
 }
 func (concurrentRepository) Ping(context.Context) error { return nil }
+
+func TestInvalidReportKeepsCursorUntilMappingRecovers(t *testing.T) {
+	now := time.Now().UTC()
+	var repaired atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		volcano := "unknown"
+		if repaired.Load() {
+			volcano = "V-001"
+		}
+		reports := []domain.VolcanicReport{
+			{ReportID: "older-invalid", VolcanoID: volcano, AlertLevel: "SIAGA", ReportedAt: now.Add(-5 * time.Minute)},
+			{ReportID: "newer-valid", VolcanoID: "V-001", AlertLevel: "SIAGA", ReportedAt: now},
+		}
+		since, _ := time.Parse(time.RFC3339Nano, r.URL.Query().Get("since"))
+		filtered := make([]domain.VolcanicReport, 0)
+		for _, report := range reports {
+			if since.IsZero() || !report.ReportedAt.Before(since) {
+				filtered = append(filtered, report)
+			}
+		}
+		json.NewEncoder(w).Encode(filtered)
+	}))
+	defer server.Close()
+	repo := &retryRepository{}
+	manager := NewManager(nil, source.NewPVMBGClient(server.URL, "token", nil), repo, time.Second, nil)
+	for range 2 {
+		manager.pollPVMBG(context.Background(), "unmapped-retry")
+		status := manager.Status()["PVMBG"]
+		if !status.Stale || status.IngestionError == "" || !manager.reportCursor.IsZero() || len(repo.events) != 1 {
+			t.Fatalf("invalid historical records must remain visible to retries while valid data is saved: %+v", status)
+		}
+	}
+	repaired.Store(true)
+	manager.pollPVMBG(context.Background(), "mapping-recovered")
+	status := manager.Status()["PVMBG"]
+	if status.Stale || status.IngestionError != "" || !manager.reportCursor.Equal(now) || len(repo.events) != 2 {
+		t.Fatalf("repaired mapping should commit both records and release the cursor: %+v", status)
+	}
+}
+
+func TestFailedFetchPreservesLastIngestedUntilRecovery(t *testing.T) {
+	var outage atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if outage.Load() {
+			http.Error(w, "outage", http.StatusServiceUnavailable)
+			return
+		}
+		json.NewEncoder(w).Encode([]any{})
+	}))
+	defer server.Close()
+	manager := NewManager(nil, source.NewPVMBGClient(server.URL, "token", nil), &retryRepository{}, time.Second, nil)
+	manager.pollPVMBG(context.Background(), "healthy")
+	last := manager.Status()["PVMBG"].LastIngested
+	outage.Store(true)
+	var since *time.Time
+	for range 2 {
+		manager.pollPVMBG(context.Background(), "outage")
+		status := manager.Status()["PVMBG"]
+		if status.Available || !status.Stale || status.LastError == "" || !status.LastIngested.Equal(*last) {
+			t.Fatalf("failed fetch changed committed freshness: %+v", status)
+		}
+		if since != nil && !status.StaleSince.Equal(*since) {
+			t.Fatal("repeated failure reset stale_since")
+		}
+		since = status.StaleSince
+	}
+	outage.Store(false)
+	manager.pollPVMBG(context.Background(), "recovered")
+	status := manager.Status()["PVMBG"]
+	if status.Stale || !status.Available || status.StaleSince != nil || !status.LastIngested.After(*last) {
+		t.Fatalf("successful committed recovery should update freshness: %+v", status)
+	}
+}

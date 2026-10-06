@@ -31,7 +31,7 @@ Ruang lingkup sesuai konteks proyek:
 - API Klien menerapkan otorisasi di sisi server serta membatasi field yang boleh diterima tiap klien.
 - Ketahanan permintaan klien hilir dan perilaku degradasi ditangani bersama Anggota A dan C.
 
-Penanggung jawab pada konteks proyek: koordinasi P2 dan P3. **Status pada cabang ini:** Auth dan API Klien sudah memiliki server HTTP, pemeriksaan kesehatan, validasi konfigurasi, dan log terstruktur. API Klien memiliki adapter HTTP ke Aggregator serta endpoint integrasi sementara yang nonaktif secara bawaan. Identitas, login, JWT, token penyegar, scope, dan pembatasan field belum diimplementasikan.
+Penanggung jawab pada konteks proyek: koordinasi P2 dan P3. **Status pada cabang ini:** Auth dan API Klien sudah memiliki server HTTP, pemeriksaan kesehatan, validasi konfigurasi, dan log terstruktur. API Klien memiliki adapter HTTP ke Aggregator serta endpoint integrasi sementara yang nonaktif secara bawaan. Login tiga identitas dengan Argon2id, JWT ber-TTL pendek, rotasi refresh token, sesi memori, introspeksi tanpa cache, dan `GET /hazards` dengan otorisasi server sudah terhubung. Media menerima tujuh field Ringkasan; token lama ditolak setelah refresh. Restart Auth memerlukan login ulang. Metadata sumber publik, galat JSON, dan batas konkurensi/429 sudah tersedia; checkpoint outage/recovery serta burst singkat lolos. Uji P2 berkelanjutan dan integrasi deployment akhir masih perlu diselesaikan.
 
 ### Anggota C — Infrastruktur, Penyimpanan, dan Pesan
 
@@ -46,10 +46,12 @@ Penanggung jawab pada konteks proyek: P4 dan P5. PostgreSQL, adapter Aggregator,
 
 ### Pekerjaan integrasi tim berikutnya
 
-1. Anggota B meninjau kontrak freshness Aggregator dan melanjutkan fondasi API Klien/Auth pada PR #2.
-2. Anggota B menerapkan login, token akses/penyegar, scope, pembatasan field Media, dan respons data stale pada API Klien.
+1. Anggota B meninjau hasil checkpoint Auth/API Klien dengan kontrak Aggregator M1 yang sudah disepakati.
+2. Anggota B menjalankan uji P2 berkelanjutan melalui API Klien, termasuk metrik latensi, galat, 429, serta outage/recovery di bawah beban.
 3. Anggota A dan C menjaga pemeriksaan integrasi skema, persistence/outbox, fanout, dan recovery tetap lolos setelah perubahan.
 4. Seluruh tim menjalankan uji ujung ke ujung dan beban setelah Auth/API Klien siap; bukti tujuh layanan A/C belum membuktikan sembilan layanan lengkap.
+
+Untuk checkpoint fondasi Auth/API Klien bersama stack A/C, gunakan overlay dan skrip pada [README API Klien](services/client-api/README.md#checkpoint-stage-23). Kontrak baca Aggregator telah disepakati untuk M1. **NOT FINAL:** The Auth checkpoint port is 8084 and the dependency timeout is 5000 ms; final deployment/load values remain open.
 
 ## Teknologi dan batas arsitektur
 
@@ -245,7 +247,7 @@ python3 scripts/check-stage-3.py --output /tmp/fanout-downtime.json
 python3 scripts/check-p5-third.py
 ```
 
-Pengujian P4 memeriksa rebuild layanan secara mandiri, record JSONB sebelum/sesudah penambahan field tanpa migrasi, serta isolasi akses storage. Pengujian P5 memeriksa fanout, backlog saat consumer offline, dan penerimaan oleh subscriber ketiga tanpa perubahan producer. Request Client API → Aggregator dan sembilan container fungsional masih menunggu B. Lihat [panduan skrip](scripts/README.md) untuk efek restart/cleanup dan demo binding secara manual.
+Pengujian P4 memeriksa rebuild layanan secara mandiri, record JSONB sebelum/sesudah penambahan field tanpa migrasi, serta isolasi akses storage. Pengujian P5 memeriksa fanout, backlog saat consumer offline, dan penerimaan oleh subscriber ketiga tanpa perubahan producer. Request Client API → Aggregator tersedia melalui endpoint terlindungi B; verifikasi stack sembilan container fungsional masih perlu diselesaikan bersama tim. Lihat [panduan skrip](scripts/README.md) untuk efek restart/cleanup dan demo binding secara manual.
 
 ## Uji beban dan outage Aggregator (P2)
 
@@ -256,4 +258,10 @@ python3 scripts/check-clean-clone.py
 
 Native k6/lsof diperlukan untuk P2. Tujuh layanan development harus sudah berjalan. Skrip menguji 50 VU selama 60 detik, mencatat socket TCP nyata, memperlambat PVMBG ke 3 detik, memeriksa data tersimpan/status sumber saat outage dan recovery tanpa restart Aggregator. PVMBG dipulihkan ke delay `.env.example`, schema v2, outage=false. Pengujian mengukur throughput, p50/p95/p99, error rate, dan jumlah respons 429 langsung pada Aggregator. Detail parameter dan threshold ada di [panduan pengujian](tests/README.md).
 
-Skrip clone memakai project/volume terpisah, port 18081/18082/18083/25672, serta menghapus hanya resource uji. Perbaikan startup broker sudah tersedia pada `main`; gunakan pemeriksaan HEAD tanpa opsi patch. Auth/Client API tetap perlu implementasi login/token/scope, wiring Compose, dan verifikasi B.
+Skrip clone memakai project/volume terpisah, port 18081/18082/18083/25672, serta menghapus hanya resource uji. Perbaikan startup broker sudah tersedia pada `main`; gunakan pemeriksaan HEAD tanpa opsi patch. Auth/Client API memakai overlay B untuk checkpoint; wiring Compose akhir dan verifikasi deployment penuh tetap perlu koordinasi dengan C.
+
+## Checkpoint Auth dan otorisasi Anggota B
+
+Panduan konfigurasi dan pemeriksaan HTTP tersedia pada [README Auth](services/auth/README.md) dan [README API Klien](services/client-api/README.md#checkpoint-stage-4). Jalankan `scripts/check-member-b-auth.py` dengan file lingkungan lokal; opsi `--natural-expiry` memeriksa TTL asli 60 detik, refresh tanpa login ulang, dan penolakan token lama. Ini pemeriksaan downstream milik B, bukan bukti seluruh P2/P3 atau stack sembilan layanan.
+
+Stage 5 menambahkan metadata sumber aman pada `/hazards`, galat JSON terkontrol, dan batas konkurensi awal 64 dengan respons 429. Query penyimpanan yang berhasil tetap 200 saat upstream mati atau filter kosong; kegagalan penyimpanan menghasilkan 503. Checker `scripts/check-member-b-resilience.py` memeriksa outage/recovery, log lintas layanan, dan burst singkat pada project uji eksplisit. Baca [panduan Stage 5](services/client-api/README.md#checkpoint-stage-5) untuk opsi yang menghentikan/memulihkan layanan; uji P2 berkelanjutan tetap terpisah.

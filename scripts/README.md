@@ -1,5 +1,11 @@
 # Skrip Pengujian dan Demo
 
+Checkpoint fondasi B memakai konfigurasi lokal dan overlay khusus: lihat [README API Klien](../services/client-api/README.md#checkpoint-stage-23). `check-member-b.py` memeriksa Auth/API Klien dan alur HTTP ke Aggregator; opsi `--check-lifecycle` menghentikan/menjalankan kembali hanya kedua service B. Ini bukan tes penerimaan P2/P3.
+
+Checkpoint Stage 4 memakai `check-member-b-auth.py`: login tiga identitas, scope, penolakan field mentah, rotasi/replay, serta penolakan access token lama. Opsi `--natural-expiry` menunggu TTL nyata sebelum refresh tanpa login ulang. Skrip membutuhkan Auth/API Klien/Aggregator dengan data kedua sumber; tidak mengubah lifecycle atau status sumber. Baca [panduan Stage 4](../services/client-api/README.md#checkpoint-stage-4). Uji ini belum mencakup silang kredensial upstream, beban P2, atau fanout.
+
+Checkpoint Stage 5 memakai `check-member-b-resilience.py` pada project uji yang dipilih lewat `--project-name`. Pemeriksaan dasar mencakup proyeksi sumber aman, filter kosong 200, galat JSON, serta trace/redaksi log. `--exercise-outages` mengubah flag outage PVMBG dan menghentikan/menjalankan kembali PostgreSQL/Auth pada project tersebut, lalu memulihkan flag/layanan tanpa menghapus volume. `--burst-connections` menguji burst singkat dan mencatat 200/429 yang teramati; ini bukan beban P2 60 detik. Baca [panduan Stage 5](../services/client-api/README.md#checkpoint-stage-5). Jangan jalankan bersamaan dengan demo lain yang mengubah sumber atau lifecycle.
+
 Jalankan dari root repositori dengan Python 3 stdlib/Docker dan konfigurasi development `.env.example`. Skrip memakai network/volume stack yang sudah berjalan; tidak menghapus Canonical Store atau jurnal. Kredensial dibaca untuk request tetapi tidak dicatat ke bukti. Jangan jalankan skenario outage secara bersamaan.
 
 ```sh
@@ -44,7 +50,7 @@ python3 scripts/check-clean-clone.py
 - Clone menggunakan commit HEAD dan project/volume baru pada port 18081/18082/18083/25672. Perbaikan bootstrap broker sudah berada pada main; perintah default memeriksa HEAD tanpa patch kerja. Hanya project uji yang dihapus; volume utama tetap.
 - Untuk menguji bootstrap yang diperbaiki pada volume broker lama dan reconnect consumer, pakai skrip yang sudah ada: `python3 scripts/check-stage-3.py --output /tmp/broker-recovery.json`.
 
-Parameter beban, definisi latensi, dan threshold dijelaskan di [panduan pengujian](../tests/README.md). Integrasi autentikasi/load Client API belum bisa dibuktikan sampai layanan B tersedia.
+Parameter beban, definisi latensi, dan threshold dijelaskan di [panduan pengujian](../tests/README.md). Autentikasi, outage/recovery, dan burst singkat API Klien sudah memiliki checker pada cabang B; pengukuran P2 berkelanjutan melalui API publik masih perlu dijalankan.
 
 ## Pemeriksaan ingestion dan freshness Anggota A
 

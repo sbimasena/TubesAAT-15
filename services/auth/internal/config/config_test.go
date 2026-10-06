@@ -8,8 +8,9 @@ import (
 
 func validEnv() map[string]string {
 	return map[string]string{
-		"AUTH_PORT": "8084", "JWT_SIGNING_SECRET": "local-test-only-secret",
+		"AUTH_PORT": "8084", "JWT_SIGNING_SECRET": strings.Repeat("test", 8),
 		"REFRESH_TOKEN_TTL_SECONDS": "3600",
+		"AUTH_INTERNAL_SECRET":      strings.Repeat("internal-test", 3),
 		"MEDIA_CLIENT_ID":           "media", "MEDIA_CLIENT_PASSWORD": "media-test-password",
 		"FIELD_TEAM_CLIENT_ID": "field-team", "FIELD_TEAM_CLIENT_PASSWORD": "field-test-password",
 		"INTERNAL_OPS_CLIENT_ID": "internal-ops", "INTERNAL_OPS_CLIENT_PASSWORD": "ops-test-password",
@@ -44,5 +45,15 @@ func TestLoadRejectsInvalidRefreshTTL(t *testing.T) {
 	values["REFRESH_TOKEN_TTL_SECONDS"] = "0"
 	if _, err := loadMap(values); err == nil {
 		t.Fatal("expected invalid refresh TTL to be rejected")
+	}
+}
+
+func TestLoadRejectsWeakOrReusedInternalSecret(t *testing.T) {
+	for _, value := range []string{"", "short", strings.Repeat("test", 8)} {
+		env := validEnv()
+		env["AUTH_INTERNAL_SECRET"] = value
+		if _, err := loadMap(env); err == nil {
+			t.Fatal("missing/weak/reused internal credential accepted")
+		}
 	}
 }

@@ -22,6 +22,7 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	for _, name := range []string{
 		"JWT_SIGNING_SECRET",
+		"AUTH_INTERNAL_SECRET",
 		"MEDIA_CLIENT_ID", "MEDIA_CLIENT_PASSWORD",
 		"FIELD_TEAM_CLIENT_ID", "FIELD_TEAM_CLIENT_PASSWORD",
 		"INTERNAL_OPS_CLIENT_ID", "INTERNAL_OPS_CLIENT_PASSWORD",
@@ -29,6 +30,12 @@ func Load(getenv func(string) string) (Config, error) {
 		if strings.TrimSpace(getenv(name)) == "" {
 			return Config{}, fmt.Errorf("%s must be set", name)
 		}
+	}
+	if len(getenv("JWT_SIGNING_SECRET")) < 32 {
+		return Config{}, fmt.Errorf("JWT_SIGNING_SECRET must contain at least 32 bytes")
+	}
+	if len(getenv("AUTH_INTERNAL_SECRET")) < 32 || getenv("AUTH_INTERNAL_SECRET") == getenv("JWT_SIGNING_SECRET") {
+		return Config{}, fmt.Errorf("AUTH_INTERNAL_SECRET must contain at least 32 bytes and differ from JWT_SIGNING_SECRET")
 	}
 	accessTTL, err := positiveSeconds(getenv("ACCESS_TOKEN_TTL_SECONDS"), 60, "ACCESS_TOKEN_TTL_SECONDS")
 	if err != nil {

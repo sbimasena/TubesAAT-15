@@ -6,15 +6,52 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-const validResponse = `{"data":[],"count":0,"sources":{"BMKG":{"available":true}}}`
+const validResponse = `{"data":[],"count":0,"sources":{"BMKG":{"available":true,"stale":false,"last_ingested_at":"2026-10-06T00:00:00Z","stale_after_seconds":15},"PVMBG":{"available":false,"stale":true,"stale_since":"2026-10-06T00:00:00Z","stale_after_seconds":15}}}`
+
+func TestListPreservesCommittedFreshnessAndAdditiveFields(t *testing.T) {
+	// Stored data remains readable during an outage; retain internal freshness metadata.
+	const payload = `{"data":[{"hazard_id":"PVMBG-1","attributes":{"confidence_level":0.9}}],"count":1,"sources":{"BMKG":{"available":true,"last_ingested_at":"2026-10-05T01:00:00Z","stale":false,"stale_after_seconds":15},"PVMBG":{"available":false,"last_success_at":"2026-10-05T00:59:00Z","last_ingested_at":"2026-10-05T00:59:00Z","last_error":"outage","ingestion_error":"mapping failed","stale":true,"stale_since":"2026-10-05T01:00:00Z","stale_after_seconds":15,"future_field":"preserved"}}}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(payload))
+	}))
+	defer upstream.Close()
+	client, err := NewClient(upstream.URL, time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.List(context.Background(), nil, "freshness-test")
+	if err != nil || string(response) != payload {
+		t.Fatalf("freshness or additive fields changed: %s (%v)", response, err)
+	}
+}
+
+func TestListDoesNotFollowRedirects(t *testing.T) {
+	var redirectedCalls atomic.Int64
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirectedCalls.Add(1)
+		_, _ = w.Write([]byte(validResponse))
+	}))
+	defer target.Close()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer upstream.Close()
+	client, _ := NewClient(upstream.URL, time.Second, nil)
+	_, err := client.List(context.Background(), nil, "redirect-test")
+	var requestErr *RequestError
+	if !errors.As(err, &requestErr) || requestErr.Kind != ErrorUpstreamStatus || requestErr.Status != 302 || redirectedCalls.Load() != 0 {
+		t.Fatal("Aggregator redirect followed or misclassified")
+	}
+}
 
 func TestListForwardsSupportedFiltersAndCorrelationID(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != provisionalPath || r.URL.Query().Get("source") != "BMKG" || r.URL.Query().Get("limit") != "5" {
+		if r.URL.Path != hazardsPath || r.URL.Query().Get("source") != "BMKG" || r.URL.Query().Get("limit") != "5" {
 			t.Errorf("unexpected request URL: %s", r.URL.String())
 		}
 		if r.URL.Query().Has("unsupported") {

@@ -2,7 +2,6 @@ package aggregator
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +12,7 @@ import (
 	"time"
 )
 
-const provisionalPath = "/internal/v1/hazards"
+const hazardsPath = "/internal/v1/hazards"
 const maxResponseBytes = 10 << 20
 
 type ErrorKind string
@@ -49,13 +48,14 @@ func NewClient(baseURL string, timeout time.Duration, logger *slog.Logger) (*Cli
 	if timeout <= 0 {
 		return nil, fmt.Errorf("Aggregator timeout must be positive")
 	}
-	return &Client{base: base, http: &http.Client{Timeout: timeout}, logger: logger}, nil
+	return &Client{base: base, http: &http.Client{Timeout: timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}, logger: logger}, nil
 }
 
-// List forwards only the four filters supported by the observed Aggregator API.
-// NOT FINAL: the API contract awaits Member A's agreement; canonical mapping remains in Aggregator.
+// List forwards only the four filters supported by the agreed Aggregator API.
+// Canonical mapping remains in Aggregator; this adapter preserves additive response fields.
 func (c *Client) List(ctx context.Context, filters url.Values, correlationID string) ([]byte, error) {
-	endpoint := c.base.ResolveReference(&url.URL{Path: provisionalPath})
+	endpoint := c.base.ResolveReference(&url.URL{Path: hazardsPath})
 	query := url.Values{}
 	for _, key := range []string{"source", "hazard_type", "since", "limit"} {
 		if value := filters.Get(key); value != "" {
@@ -112,27 +112,15 @@ func classifyError(err error) ErrorKind {
 }
 
 func validEnvelope(data []byte) bool {
-	var envelope map[string]json.RawMessage
-	if err := json.Unmarshal(data, &envelope); err != nil || envelope == nil {
-		return false
-	}
-	var rows []json.RawMessage
-	if err := json.Unmarshal(envelope["data"], &rows); err != nil || rows == nil {
-		return false
-	}
-	var count int
-	if err := json.Unmarshal(envelope["count"], &count); err != nil || count < 0 {
-		return false
-	}
-	var sources map[string]json.RawMessage
-	return json.Unmarshal(envelope["sources"], &sources) == nil && sources != nil
+	_, err := DecodeEnvelope(data)
+	return err == nil
 }
 
 func (c *Client) logCall(id string, started time.Time, status int, kind ErrorKind) {
 	if c.logger == nil {
 		return
 	}
-	attrs := []any{"service", "client-api", "target", "aggregator", "operation", provisionalPath,
+	attrs := []any{"service", "client-api", "target", "aggregator", "operation", hazardsPath,
 		"correlation_id", id, "latency_ms", float64(time.Since(started).Microseconds()) / 1000,
 		"status", status}
 	if kind != "" {

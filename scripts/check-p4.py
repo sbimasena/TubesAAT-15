@@ -6,25 +6,18 @@ Uses the selected local environment, preserves volumes, leaves PVMBG in schema v
 import json
 from pathlib import Path
 import subprocess
-import urllib.error
-import urllib.parse
-import urllib.request
-from demo_support import options, compose, healthy, now, run, settings, sql, states, wait_for
+from demo_support import (options, compose, healthy, now, run, settings, sql, states, wait_for,
+                          http_call, client_read, login, sessions, logs, redact)
 
 folder = Path(options.evidence_dir or "docs/evidence/anggota-c/stage-4")
 folder.mkdir(parents=True, exist_ok=True)
 
 
 def request(port, endpoint, body=None, headers=None):
-    headers = dict(headers or {})
-    headers["X-Correlation-ID"] = "p4-review-" + str(port)
-    if body is not None:
-        headers["Content-Type"] = "application/json"
-    request = urllib.request.Request("http://127.0.0.1:" + str(port) + endpoint,
-        data=None if body is None else json.dumps(body).encode(), headers=headers)
-    with urllib.request.urlopen(request, timeout=5) as response:
-        return {"status": response.status, "correlation_id": response.headers.get("X-Correlation-ID"),
-                "body": json.load(response)}
+    token = (headers or {}).get("Authorization", "").removeprefix("Bearer ") or None
+    response = http_call(port, endpoint, body, token)
+    assert response["status"] == 200
+    return response
 
 
 def migrations():
@@ -42,12 +35,28 @@ def snapshots(ids):
     return json.loads(sql("SELECT json_agg(t ORDER BY hazard_id) FROM (SELECT * FROM hazard_events WHERE hazard_id IN (" + quoted + ")) t"))
 
 
+query_ids = []
+summary_fields = {"hazard_id", "source", "hazard_type", "severity", "area_name", "occurred_at", "ingested_at"}
+
+
 def read_together(ids):
     response = request(settings["AGGREGATOR_PORT"], "/internal/v1/hazards?source=PVMBG&limit=1000")
     records = [r for r in response["body"]["data"] if r["hazard_id"] in ids]
     assert len(records) == 2, "v1/v2 must be readable together through Aggregator"
-    return {"status": response["status"], "correlation_id": response["correlation_id"],
-            "records": sorted(records, key=lambda r: r["hazard_id"])}
+    records = sorted(records, key=lambda r: r["hazard_id"])
+    stored = {r["hazard_id"]: r for r in snapshots(ids)}
+    assert all(r["attributes"] == stored[r["hazard_id"]]["attributes"] for r in records)
+    result = {"aggregator": {"status": response["status"], "records": records}}
+    for role in ("FIELD_TEAM", "INTERNAL_OPS", "MEDIA"):
+        response = client_read("/hazards?source=PVMBG&limit=1000", role)
+        assert response["status"] == 200
+        selected = sorted((r for r in response["body"]["data"] if r["hazard_id"] in ids), key=lambda r: r["hazard_id"])
+        expected = [{k: v for k, v in r.items() if k in summary_fields} for r in records] if role == "MEDIA" else records
+        assert selected == expected, role + " must preserve both canonical snapshots"
+        query_ids.append(response["correlation_id"])
+        result[role] = {"status": response["status"], "correlation_id": response["correlation_id"], "records": selected}
+    assert client_read("/hazards?include_raw=true", "MEDIA")["status"] == 403
+    return result
 
 
 evidence = {"started_at": now(), "states_before": states()}
@@ -96,7 +105,7 @@ for service in ("aggregator", "canonical-store"):
     assert after == evidence["snapshots_before_restart"]
     evidence["snapshots_after_" + service] = after
     response = read_together(ids)
-    assert response == evidence["api_before_restart"]
+    assert all(response[role]["records"] == evidence["api_before_restart"][role]["records"] for role in response)
     evidence["api_after_" + service] = response
     assert migrations() == evidence["migrations_before"], "schema evolution/restarts must not add/reapply migrations"
 evidence["migrations_after"] = migrations()
@@ -117,10 +126,38 @@ for role in ("aggregator", "client", "consumer"):
     expected = 0 if role == "aggregator" else 2
     assert probe.returncode == expected, role + " network access did not match ownership"
     evidence["network_probes"][role] = {"returncode": probe.returncode, "output": probe.stdout.strip()}
-evidence["client_api_request"] = {"status": "NOT_CHECKED", "reason": "This checker reads Aggregator directly; persistence through the authenticated Client API is not checked here."}
+# Restart downstream services individually; Auth loses sessions, Client API does not.
+evidence["downstream_lifecycle"] = {}
+for service in ("client-api", "auth"):
+    token = login("FIELD_TEAM")
+    before = states()
+    try:
+        run("stop", service)
+        stopped = states()
+        assert not stopped[service]["running"]
+        assert all(stopped[name] == state for name, state in before.items() if name != service)
+    finally:
+        run("up", "-d", "--no-deps", "--wait", "--wait-timeout", "30", service)
+    after = states()
+    assert all(after[name] == state for name, state in before.items() if name != service)
+    response = http_call(settings["CLIENT_API_PORT"], "/hazards?source=PVMBG&limit=1000", token=token)
+    expected_status = 401 if service == "auth" else 200
+    assert response["status"] == expected_status
+    if service == "auth":
+        sessions.clear()
+    restored = read_together(ids)
+    assert all(restored[role]["records"] == evidence["api_before_restart"][role]["records"] for role in restored)
+    evidence["downstream_lifecycle"][service] = {"before": before, "after": after, "old_token_status": expected_status,
+                                               "persistent_reads": restored}
+evidence["http_traces"] = {}
+for service in ("client-api", "auth", "aggregator"):
+    records = [{"correlation_id": r["correlation_id"], "latency_ms": r["latency_ms"]}
+               for r in logs(service, evidence["started_at"]) if r.get("correlation_id") in query_ids
+               and isinstance(r.get("latency_ms"), (int, float))]
+    assert set(query_ids) <= {r["correlation_id"] for r in records}, service + " must preserve HTTP correlation"
+    evidence["http_traces"][service] = records
 evidence["finished_at"] = now()
-evidence["result"] = "PASS_C_SCOPE; CLIENT_API_NOT_CHECKED"
-(folder / "p4-check.json").write_text(json.dumps(evidence, indent=2) + "\n")
-print("PASS: independent rebuild; v1/v2 JSONB survive restarts without migration; network ownership verified")
-print("NOT CHECKED: persistence through Client API")
+evidence["result"] = "PASS"
+(folder / "p4-check.json").write_text(redact(json.dumps(evidence, indent=2)) + "\n")
+print("PASS: v1/v2 persistence through three client scopes; storage isolation; independent downstream restarts; HTTP traces")
 print(folder / "p4-check.json")

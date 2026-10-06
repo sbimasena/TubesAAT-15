@@ -78,8 +78,12 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		data.mu.RLock()
+		version := data.schemaVersion
+		data.mu.RUnlock()
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "ok", "service": "pvmbg", "simulated_outage": data.outage.Load(),
+			"schema_version": version, "simulated_delay_ms": delay.Milliseconds(),
 		})
 	})
 	mux.Handle("GET /volcanic-reports", requirePVMBGToken(token, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

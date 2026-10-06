@@ -6,7 +6,7 @@ Pemeriksaan autentikasi memakai `check-member-b-auth.py`: login tiga identitas, 
 
 Pemeriksaan resiliensi memakai `check-member-b-resilience.py` pada project uji yang dipilih lewat `--project-name`. Pemeriksaan dasar mencakup proyeksi sumber aman, filter kosong 200, galat JSON, serta trace/redaksi log. `--exercise-outages` mengubah flag outage PVMBG dan menghentikan/menjalankan kembali PostgreSQL/Auth pada project tersebut, lalu memulihkan flag/layanan tanpa menghapus volume. `--burst-connections` menguji burst singkat dan mencatat 200/429 yang teramati; ini bukan beban P2 60 detik. Baca [panduan resiliensi](../services/client-api/README.md#pemeriksaan-resiliensi). Jangan jalankan bersamaan dengan demo lain yang mengubah sumber atau lifecycle.
 
-Jalankan dari root repositori dengan Python 3 stdlib/Docker dan file environment lokal lengkap seperti panduan README utama. Checker C menerima `--env-file` (awal `.env`), `--project-name`, serta `--evidence-dir` untuk menyimpan hasil baru tanpa menimpa bukti lama. Seluruh operasi Compose memakai konfigurasi tersebut dan overlay operator. Nilai efektif dibaca dari Compose, termasuk port host dan interpolasi environment. Jangan menjalankan skenario outage bersamaan.
+Jalankan dari root repositori dengan Python 3 stdlib/Docker dan file environment lokal lengkap seperti panduan README utama. Checker yang memakai `demo_support.py` menerima `--env-file` (awal `.env`), `--project-name`, serta `--evidence-dir` untuk menyimpan hasil baru tanpa menimpa bukti lama. Seluruh operasi Compose memakai konfigurasi tersebut dan overlay operator. Nilai efektif dibaca dari Compose, termasuk port host dan interpolasi environment. Jangan menjalankan skenario outage bersamaan.
 
 Untuk mengaktifkan akses operator pada project yang diperiksa:
 
@@ -19,7 +19,7 @@ python3 scripts/check-p5-third.py
 
 | Skrip | Tujuan dan efek |
 |---|---|
-| `check-p4.py` | Stop/build/start PVMBG saja; schema v1/v2 live; restart Aggregator/PostgreSQL tanpa menghapus volume; probe storage dari tiga peran jaringan. PVMBG dibiarkan schema v2. Pemeriksaan ini masih membaca Aggregator langsung; bukti persistence melalui Client API perlu dilengkapi. |
+| `check-p4.py` | Stop/build/start PVMBG saja; schema v1/v2 live; restart Aggregator/PostgreSQL tanpa menghapus volume; probe storage dari tiga peran jaringan. PVMBG dibiarkan schema v2. Record kanonis dicocokkan melalui Client API sebagai Field Team/Internal Ops dan proyeksi Media, sebelum/sesudah restart Aggregator/PostgreSQL. Auth/API diuji stop/start mandiri; restart Auth menolak sesi lama dan membutuhkan login ulang. Log ketiga layanan memuat correlation ID/latensi yang sama. |
 | `check-stage-3.py` | Uji fanout, downtime, dan idempotensi: stop/start notifikasi, replay ID sama sebelum/sesudah restart consumer, lalu stop/start broker. Layanan yang dihentikan dipulihkan, volume dipertahankan. `--output` menentukan lokasi hasil JSON sehingga rekaman sebelumnya tidak tertimpa. |
 | `check-p5-third.py` | Menjalankan proses subscriber terpisah melalui `tests/compose-review.yml`; mencocokkan event baru dengan dua consumer dasar; memeriksa file/commit/container producer tetap; membersihkan container/queue sementara. |
 | `check-stage-2.py` | Khusus broker dengan **kedua consumer offline**; jangan dijalankan pada stack consumer aktif. |
@@ -49,10 +49,10 @@ python3 scripts/check-clean-clone.py
 ```
 
 - P2 memerlukan native k6/lsof. Merecreate PVMBG dengan delay 3 detik, menjalankan 50 VU/60 detik serta mengambil tiga sampel 50 socket TCP, lalu melakukan outage 503/recovery. Aggregator, storage, dan consumer tetap berjalan. Delay kembali ke file environment yang dipilih, schema v2/outage=false pada `finally`. Jangan menjalankan demo lainnya bersamaan.
-- Clone menggunakan commit HEAD dan project/volume baru pada port 18081/18082/18083/25672. Perbaikan bootstrap broker sudah berada pada main; perintah default memeriksa HEAD tanpa patch kerja. Hanya project uji yang dihapus; volume utama tetap.
+- Clone menjalankan sembilan layanan dari commit HEAD tanpa patch source, pada project/volume baru dan port 28081/28082/28084/28080/35672. Secret/password sementara dihasilkan sendiri di luar checkout. Akses data melalui Auth/API; Aggregator/DB tetap tanpa port host. Hanya resource project clone yang dihapus; container project yang sudah ada diperiksa tetap.
 - Untuk menguji bootstrap yang diperbaiki pada volume broker lama dan reconnect consumer, pakai skrip yang sudah ada: `python3 scripts/check-stage-3.py --output /tmp/broker-recovery.json`.
 
-Parameter beban, definisi latensi, dan threshold dijelaskan di [panduan pengujian](../tests/README.md). Autentikasi, outage/recovery, dan burst singkat API Klien sudah memiliki checker pada cabang B; pengukuran P2 berkelanjutan melalui API publik masih perlu dijalankan.
+Parameter beban, definisi latensi, dan threshold dijelaskan di [panduan pengujian](../tests/README.md). Baseline langsung Aggregator tetap terpisah dari pengukuran API publik terautentikasi di bawah.
 
 ## Pemeriksaan ingestion dan freshness Anggota A
 
@@ -72,4 +72,16 @@ python3 scripts/check-deployment.py --env-file .env --output /tmp/deployment-che
 
 Checker memeriksa Compose utama tanpa overlay operator: sembilan layanan healthy, tidak ada port host Aggregator/DB, ownership jaringan/secret, query kedua sumber lewat tiga peran, serta correlation ID/latensi pada log Client API, Auth, dan Aggregator. `--start` membangun/menjalankan stack default, sehingga akan menutup kembali port operator pada project tersebut. `--project-name` memilih project uji. Environment tetap lokal; bukti tidak memuat token/password.
 
-Gunakan overlay operator hanya untuk checker yang membutuhkan HTTP Aggregator dari host. Checker clone masih menguji tujuh layanan A/C dari HEAD; file environment lokal lengkap dipakai dari luar clone, port Auth/API pada project clone dipisahkan dari stack utama, dan perubahan source workspace belum ikut pengujian.
+Gunakan overlay operator hanya untuk checker yang membutuhkan HTTP Aggregator dari host. Checker clone menguji sembilan layanan dari HEAD dengan secret sendiri dan Compose utama. `--revision` memilih commit; `--evidence-dir` memilih lokasi hasil. `--project-name` membatasi project yang diamati untuk memastikan container lama tetap; project clone selalu dibuat terpisah. Ia memakai checker deployment workspace untuk memeriksa aplikasi dari commit, tanpa menyalin perubahan aplikasi ke checkout. Pengujian ulang diperlukan setelah commit perubahan aplikasi/config yang memengaruhi hasil.
+
+## Beban Client API terautentikasi
+
+```sh
+python3 scripts/check-client-p2.py --env-file .env --project-name project-uji --evidence-dir /tmp/client-p2
+```
+
+Memerlukan sembilan layanan healthy, k6/lsof native, serta access TTL 60 detik. K6 menyiapkan 50 sesi Field Team sebelum pengukuran; setiap VU memegang pasangan token sendiri dan me-refresh sebelum expiry, tanpa login tiap query. Dua run berurutan masing-masing memakai 50 VU selama 60 detik: PVMBG delay 3000 ms, kemudian PVMBG outage sementara query BMKG berlanjut. Tiga sampel socket menghitung koneksi TCP proses k6 ke port Client API. Login/refresh terpisah dari metrik query; refresh failure tetap menggagalkan hasil.
+
+Respons 200 harus berisi data kanonis BMKG. Respons 429 harus memiliki kode `concurrency_limit`, correlation ID, dan `Retry-After: 1`; 429 yang memenuhi kontrak dilaporkan terpisah dari error tidak terkontrol. p95 request lengkap dan p95 respons 200 harus <300 ms, error tidak terkontrol <1%, dan setiap run harus mencatat sedikitnya 50 refresh berhasil serta query 200. Rate 429 tidak diberi batas tambahan; jumlah 200/rate layanan tetap dicatat.
+
+Checker mencatat panggilan upstream lambat/503, last-known PVMBG dan metadata stale selama outage, progres ingestion BMKG, serta report PVMBG baru setelah recovery. Schema/delay/outage asli dibaca dari health PVMBG dan dipulihkan pada `finally`, termasuk saat threshold gagal. Layanan inti tidak direstart. Jangan menjalankan pemeriksaan lifecycle bersamaan. Hasil gagal dan hasil pemulihan tetap disimpan pada lokasi bukti.

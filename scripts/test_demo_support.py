@@ -31,3 +31,13 @@ class DemoConfigurationTest(unittest.TestCase):
             module.run("up")
         self.assertEqual(caught.exception.output, "[REDACTED]")
         self.assertEqual(caught.exception.stderr, "[REDACTED]")
+        module.settings.update(FIELD_TEAM_CLIENT_ID="field-team", FIELD_TEAM_CLIENT_PASSWORD="test-password")
+        initial = {"access_token": "old-access", "refresh_token": "old-refresh", "expires_in": 60}
+        rotated = {"access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 60}
+        with patch.object(module, "http_call", side_effect=[{"status": 200, "body": initial}]) as call, patch.object(module.time, "monotonic", return_value=100):
+            self.assertEqual(module.login("FIELD_TEAM"), "old-access")
+            self.assertEqual(call.call_args.args[1], "/login")
+        with patch.object(module, "http_call", side_effect=[{"status": 200, "body": rotated}, {"status": 200}]) as call, patch.object(module.time, "monotonic", return_value=160):
+            self.assertEqual(module.client_read("/hazards")["status"], 200)
+            self.assertEqual(call.call_args_list[0].args[2], {"refresh_token": "old-refresh"})
+            self.assertEqual(call.call_args_list[1].kwargs["token"], "new-access")

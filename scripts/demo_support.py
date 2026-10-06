@@ -9,6 +9,8 @@ import sys
 import tempfile
 import time
 import urllib.request
+import urllib.error
+import uuid
 
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("--env-file", default=".env")
@@ -115,3 +117,49 @@ def logs(service, since):
         except json.JSONDecodeError:
             pass
     return records
+
+
+def http_call(port, path, body=None, token=None):
+    correlation = "c-check-" + uuid.uuid4().hex
+    headers = {"X-Correlation-ID": correlation}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request("http://127.0.0.1:" + str(port) + path,
+        data=None if body is None else json.dumps(body).encode(), headers=headers)
+    started = time.monotonic()
+    try:
+        response = urllib.request.urlopen(request, timeout=15)
+    except urllib.error.HTTPError as error:
+        response = error
+    with response:
+        assert response.headers.get("X-Correlation-ID") == correlation
+        payload = response.read()
+        return {"status": response.status, "correlation_id": correlation,
+                "body": json.loads(payload) if payload and response.headers.get_content_type() == "application/json" else None,
+                "elapsed_ms": (time.monotonic() - started) * 1000}
+
+
+sessions = {}
+
+
+def login(role):
+    response = http_call(settings["AUTH_PORT"], "/login", {
+        "client_id": settings[role + "_CLIENT_ID"], "password": settings[role + "_CLIENT_PASSWORD"]})
+    assert response["status"] == 200, role + " login failed"
+    pair = response["body"]
+    sessions[role] = (pair, time.monotonic() + pair["expires_in"] - 5)
+    return pair["access_token"]
+
+
+def client_read(path, role="FIELD_TEAM"):
+    if role not in sessions:
+        login(role)
+    pair, expiry = sessions[role]
+    if time.monotonic() >= expiry:
+        response = http_call(settings["AUTH_PORT"], "/refresh", {"refresh_token": pair["refresh_token"]})
+        assert response["status"] == 200, role + " refresh failed"
+        pair = response["body"]
+        sessions[role] = (pair, time.monotonic() + pair["expires_in"] - 5)
+    return http_call(settings["CLIENT_API_PORT"], path, token=pair["access_token"])

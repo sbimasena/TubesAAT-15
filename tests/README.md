@@ -1,13 +1,14 @@
 # Pengujian Lintas Layanan
 
-Isi file environment lokal lengkap seperti README utama. Semua checker C menerima `--env-file` dan `--project-name`; gunakan project uji untuk outage/restart. Demo yang membaca Aggregator dari host membutuhkan `tests/compose-operator.yml`. Compose utama sendiri menutup port Aggregator/DB.
+Isi file environment lokal lengkap seperti README utama. Checker pada stack yang sudah berjalan menerima `--env-file` dan `--project-name`; gunakan project uji untuk outage/restart. Clean clone menghasilkan environment sendiri. Demo yang membaca Aggregator dari host membutuhkan `tests/compose-operator.yml`. Compose utama sendiri menutup port Aggregator/DB.
 
 ```sh
 python3 scripts/check-deployment.py --env-file .env --output /tmp/deployment-check.json
 python3 -B -m unittest discover -s scripts -p test_demo_support.py
+k6 --address '' run --quiet tests/check-load-summary.js
 ```
 
-Checker deployment memeriksa stack default dan alur HTTP terlindungi. Tes helper memeriksa pemilihan project, port host efektif, penerusan opsi checker, serta redaksi secret saat Compose gagal.
+Checker deployment memeriksa stack default dan alur HTTP terlindungi. Tes helper memeriksa pemilihan project, port host efektif, penerusan opsi checker, redaksi secret saat Compose gagal, serta penggunaan token baru setelah refresh. Cek summary k6 memastikan token dari data setup tidak disimpan pada hasil beban.
 
 
 ## Persistence PostgreSQL dan publisher RabbitMQ
@@ -56,7 +57,7 @@ python3 scripts/check-stage-3.py --output /tmp/fanout-downtime.json
 python3 scripts/check-p5-third.py
 ```
 
-Tujuh layanan fungsional harus sudah berjalan. P4 melakukan rebuild PVMBG saja, membaca v1/v2 JSONB sesudah restart Aggregator/DB, serta memakai `tests/compose-probes.yml` untuk probe jaringan dengan image PostgreSQL tanpa password database. Probe merupakan container operator dengan jaringan setara peran layanan, bukan pengganti bukti request Client API yang nyata.
+Sembilan layanan fungsional harus sudah berjalan. P4 melakukan rebuild PVMBG saja, mencocokkan JSONB v1/v2 dengan respons Client API ketiga peran sebelum/sesudah restart Aggregator/DB, memeriksa restart mandiri Auth/API dan trace HTTP, serta memakai `tests/compose-probes.yml` untuk probe jaringan dengan image PostgreSQL tanpa password database. Probe merupakan container operator dengan jaringan setara peran layanan; request Client API yang nyata diperiksa terpisah dari probe.
 
 P5 memakai program `services/dashboard-consumer/cmd/review` pada container tersendiri/queue baru melalui `tests/compose-review.yml`. Producer dan kedua consumer dasar tidak dibuild/restart pada demo subscriber ketiga. Queue sementara exclusive/non-durable dibersihkan setelah selesai. Program memakai client AMQP yang sudah terpasang pada modul dashboard; tidak memanggil handler/logic dashboard. Build/testing demo ini tidak memerlukan modul aplikasi tambahan.
 
@@ -80,6 +81,20 @@ Metrik mencakup throughput, p50/p95/p99, error rate, dan jumlah respons 429. `bm
 python3 scripts/check-clean-clone.py
 ```
 
-Clone lokal HEAD ke temporary directory, build/start tujuh layanan A/C memakai file environment lokal lengkap dan overlay operator, dengan project, jaringan, volume baru serta localhost port 18081/18082/18083/25672. Pastikan port itu bebas. Memeriksa kedua sumber, canonical API, satu snapshot outbox confirmed yang diterima kedua jurnal, dan health. Project uji dibersihkan dengan `down --volumes --remove-orphans`; ID/StartedAt stack utama harus tetap. Docker build cache/image yang sudah tersedia dapat digunakan, jadi ini bukan tes download internet tanpa cache.
+Clone lokal HEAD ke temporary directory dan build/start sembilan layanan dengan Compose utama tanpa overlay operator. Secret/password acak dibuat pada file 0600 di luar checkout; tidak memerlukan `.env` pribadi. Port host 28081/28082/28084/28080/35672 harus bebas. Aggregator/PostgreSQL tidak memiliki port host. `--revision` memilih commit, `--evidence-dir` memilih lokasi bukti, dan `--project-name` opsional memilih project lama yang diamati, bukan nama project clone.
 
-Untuk diagnosis perubahan bootstrap yang belum di-commit saja, tersedia `--with-working-broker-fix`. Opsi ini menyalin **hanya** script startup broker ke clone, merekam nama file/SHA256/dirty status, dan menandai hasil sebagai clone dengan patch eksplisit. Perbaikan bootstrap broker sudah berada pada main; pemeriksaan default membuktikan HEAD tanpa perubahan. Tidak ada commit yang dibuat skrip.
+Checker deployment workspace memeriksa source aplikasi pada checkout commit: sembilan healthy, login tiga peran, field Media/kanonis, data kedua sumber, isolasi konfigurasi/port, dan trace HTTP. Satu event outbox confirmed dicocokkan dengan payload/revisi/correlation pada kedua jurnal. Checkout harus bersih sebelum/sesudah pemeriksaan; tidak ada source yang disalin atau patch sementara.
+
+Cleanup hanya project clone dengan `down --volumes --remove-orphans`; ID/StartedAt container Compose yang sudah ada harus tetap. Build cache/image lokal dapat digunakan, sehingga ini bukan tes download internet tanpa cache. Hasil mencatat SHA aplikasi yang diuji. Perubahan workspace belum ikut checkout commit; jalankan ulang setelah perubahan aplikasi/config yang relevan di-commit.
+
+## P2 melalui Client API
+
+```sh
+python3 scripts/check-client-p2.py --env-file .env --project-name project-uji --evidence-dir /tmp/client-p2
+```
+
+Sembilan layanan harus healthy. Dua run masing-masing 50 VU/60 detik menggunakan query BMKG-only, pertama saat PVMBG delay 3000 ms, lalu saat PVMBG outage. K6 membuat sesi terpisah per VU dan refresh tanpa login ulang dengan access TTL 60 detik. Socket diambil pada detik sekitar 15/30/45 setelah persiapan sesi selesai; targetnya port Client API, bukan port Aggregator.
+
+Metrik query mencatat throughput, p50/p95/p99, error tidak terkontrol, jumlah/rate 429, dan jumlah 200. p95 waktu request lengkap serta p95 respons 200 harus <300 ms dan error tidak terkontrol <1%. Respons 429 hanya dianggap terkontrol bila kode `concurrency_limit`, correlation ID, dan `Retry-After: 1` benar. Login/refresh memiliki tag/metrik sendiri; sedikitnya 50 refresh berhasil per run dan tidak ada refresh failure.
+
+Checker memeriksa last-known PVMBG/stale di bawah beban, ingestion BMKG yang berlanjut, report baru setelah recovery, dan identitas layanan inti yang tetap. Health mock melaporkan schema/delay/outage aktual; seluruh nilai awal dipulihkan melalui `finally`, termasuk pada run gagal. Hasil direct Aggregator tetap menjadi baseline terpisah. Rincian runner ada di [panduan skrip](../scripts/README.md#beban-client-api-terautentikasi).

@@ -1,0 +1,45 @@
+# NOT FINAL: Member B checkpoint wiring; final Auth deployment remains with Member C.
+services:
+  client-api:
+    environment:
+      CLIENT_API_PORT: 8080
+      AGGREGATOR_BASE_URL: http://aggregator:8083
+      AGGREGATOR_REQUEST_TIMEOUT_MS: ${AGGREGATOR_REQUEST_TIMEOUT_MS:-5000}
+      CLIENT_API_MAX_CONCURRENT_REQUESTS: ${CLIENT_API_MAX_CONCURRENT_REQUESTS:-64}
+      ENABLE_PROVISIONAL_HAZARD_ENDPOINT: ${ENABLE_PROVISIONAL_HAZARD_ENDPOINT:-false}
+      AUTH_BASE_URL: http://auth:${AUTH_PORT:-8084}
+      AUTH_REQUEST_TIMEOUT_MS: ${AUTH_REQUEST_TIMEOUT_MS:-5000}
+      AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET:?Set a local Auth internal secret}
+    depends_on:
+      aggregator:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/service", "--healthcheck"]
+      interval: 5s
+      timeout: 4s
+      retries: 3
+      start_period: 5s
+
+  auth:
+    environment:
+      AUTH_PORT: ${AUTH_PORT:-8084}
+      JWT_SIGNING_SECRET: ${JWT_SIGNING_SECRET:?Set a local JWT_SIGNING_SECRET}
+      AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET:?Set a local Auth internal secret}
+      ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-60}
+      REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:?Set a local refresh TTL}
+      MEDIA_CLIENT_ID: ${MEDIA_CLIENT_ID:-media}
+      MEDIA_CLIENT_PASSWORD: ${MEDIA_CLIENT_PASSWORD:?Set a local Media password}
+      FIELD_TEAM_CLIENT_ID: ${FIELD_TEAM_CLIENT_ID:-field-team}
+      FIELD_TEAM_CLIENT_PASSWORD: ${FIELD_TEAM_CLIENT_PASSWORD:?Set a local Field Team password}
+      INTERNAL_OPS_CLIENT_ID: ${INTERNAL_OPS_CLIENT_ID:-internal-ops}
+      INTERNAL_OPS_CLIENT_PASSWORD: ${INTERNAL_OPS_CLIENT_PASSWORD:?Set a local Internal Ops password}
+    ports:
+      - "127.0.0.1:${AUTH_PORT:-8084}:${AUTH_PORT:-8084}"
+    healthcheck:
+      test: ["CMD", "/service", "--healthcheck"]
+      interval: 5s
+      timeout: 4s
+      retries: 3
+      start_period: 5s

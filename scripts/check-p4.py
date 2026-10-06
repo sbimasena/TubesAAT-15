@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """P4 demo: independent service rebuild, additive JSONB fields, and store ownership.
 
-Uses .env.example, preserves volumes, leaves PVMBG in schema v2 for review.
+Uses the selected local environment, preserves volumes, leaves PVMBG in schema v2 for review.
 """
 import json
 from pathlib import Path
@@ -9,9 +9,9 @@ import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
-from demo_support import compose, healthy, now, run, settings, sql, states, wait_for
+from demo_support import options, compose, healthy, now, run, settings, sql, states, wait_for
 
-folder = Path("docs/evidence/anggota-c/stage-4")
+folder = Path(options.evidence_dir or "docs/evidence/anggota-c/stage-4")
 folder.mkdir(parents=True, exist_ok=True)
 
 
@@ -109,7 +109,7 @@ evidence["ownership"] = {name: {"networks": sorted(service.get("networks", {})),
 assert [n for n, s in evidence["ownership"].items() if s["database_url_present"]] == ["aggregator"]
 assert sorted(n for n, s in evidence["ownership"].items() if "storage" in s["networks"]) == ["aggregator", "canonical-store"]
 assert not evidence["ownership"]["canonical-store"]["host_ports"]
-probe_compose = compose + ["-f", "docker-compose.yml", "-f", "tests/compose-probes.yml"]
+probe_compose = compose + ["-f", "tests/compose-probes.yml"]
 evidence["network_probes"] = {}
 for role in ("aggregator", "client", "consumer"):
     probe = subprocess.run(probe_compose + ["run", "--rm", "--no-deps", "probe-" + role], text=True,
@@ -117,10 +117,10 @@ for role in ("aggregator", "client", "consumer"):
     expected = 0 if role == "aggregator" else 2
     assert probe.returncode == expected, role + " network access did not match ownership"
     evidence["network_probes"][role] = {"returncode": probe.returncode, "output": probe.stdout.strip()}
-evidence["client_api_request"] = {"status": "PENDING_B", "reason": "Client API and Auth main functions remain empty; probes prove network role isolation, not the Client API HTTP implementation."}
+evidence["client_api_request"] = {"status": "NOT_CHECKED", "reason": "This checker reads Aggregator directly; persistence through the authenticated Client API is not checked here."}
 evidence["finished_at"] = now()
-evidence["result"] = "PASS_C_SCOPE; CLIENT_API_PENDING_B"
+evidence["result"] = "PASS_C_SCOPE; CLIENT_API_NOT_CHECKED"
 (folder / "p4-check.json").write_text(json.dumps(evidence, indent=2) + "\n")
 print("PASS: independent rebuild; v1/v2 JSONB survive restarts without migration; network ownership verified")
-print("PENDING B: Client API -> Aggregator HTTP request")
+print("NOT CHECKED: persistence through Client API")
 print(folder / "p4-check.json")

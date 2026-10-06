@@ -1,4 +1,3 @@
-# Auth dan Client API menunggu implementasi anggota B.
 services:
   bmkg:
     build: ./services/bmkg
@@ -7,6 +6,11 @@ services:
     environment:
       BMKG_API_KEY: ${BMKG_API_KEY:-dev-bmkg-key}
       BMKG_GENERATE_INTERVAL_SECONDS: ${BMKG_GENERATE_INTERVAL_SECONDS:-15}
+    healthcheck:
+      test: ["CMD", "/service", "--healthcheck"]
+      interval: 5s
+      timeout: 4s
+      retries: 3
 
   pvmbg:
     build: ./services/pvmbg
@@ -16,11 +20,14 @@ services:
       PVMBG_TOKEN: ${PVMBG_TOKEN:-dev-pvmbg-token}
       PVMBG_DELAY_MS: ${PVMBG_DELAY_MS:-750}
       PVMBG_GENERATE_INTERVAL_SECONDS: ${PVMBG_GENERATE_INTERVAL_SECONDS:-15}
+    healthcheck:
+      test: ["CMD", "/service", "--healthcheck"]
+      interval: 5s
+      timeout: 4s
+      retries: 3
 
   aggregator:
     build: ./services/aggregator
-    ports:
-      - "${AGGREGATOR_PORT:-8083}:8083"
     environment:
       AGGREGATOR_PORT: 8083
       BMKG_BASE_URL: ${BMKG_BASE_URL:-http://bmkg:8081}
@@ -32,9 +39,9 @@ services:
       BROKER_URL: ${BROKER_URL:?Set BROKER_URL in .env; see .env.example}
     depends_on:
       bmkg:
-        condition: service_started
+        condition: service_healthy
       pvmbg:
-        condition: service_started
+        condition: service_healthy
       canonical-store:
         condition: service_healthy
       message-broker:
@@ -92,11 +99,49 @@ services:
     build: ./services/client-api
     ports:
       - "${CLIENT_API_PORT:-8080}:8080"
+    environment:
+      CLIENT_API_PORT: 8080
+      AGGREGATOR_BASE_URL: ${AGGREGATOR_BASE_URL:-http://aggregator:8083}
+      AGGREGATOR_REQUEST_TIMEOUT_MS: ${AGGREGATOR_REQUEST_TIMEOUT_MS:-5000}
+      CLIENT_API_MAX_CONCURRENT_REQUESTS: ${CLIENT_API_MAX_CONCURRENT_REQUESTS:-64}
+      ENABLE_PROVISIONAL_HAZARD_ENDPOINT: ${ENABLE_PROVISIONAL_HAZARD_ENDPOINT:-false}
+      AUTH_BASE_URL: ${AUTH_BASE_URL:-http://auth:8084}
+      AUTH_REQUEST_TIMEOUT_MS: ${AUTH_REQUEST_TIMEOUT_MS:-5000}
+      AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET:?Set AUTH_INTERNAL_SECRET in .env}
+    depends_on:
+      aggregator:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/service", "--healthcheck"]
+      interval: 5s
+      timeout: 4s
+      retries: 3
+      start_period: 5s
 
   auth:
     build: ./services/auth
     environment:
+      AUTH_PORT: 8084
+      JWT_SIGNING_SECRET: ${JWT_SIGNING_SECRET:?Set JWT_SIGNING_SECRET in .env}
+      AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET:?Set AUTH_INTERNAL_SECRET in .env}
       ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-60}
+      REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-3600}
+      MEDIA_CLIENT_ID: ${MEDIA_CLIENT_ID:-media}
+      MEDIA_CLIENT_PASSWORD: ${MEDIA_CLIENT_PASSWORD:?Set MEDIA_CLIENT_PASSWORD in .env}
+      FIELD_TEAM_CLIENT_ID: ${FIELD_TEAM_CLIENT_ID:-field-team}
+      FIELD_TEAM_CLIENT_PASSWORD: ${FIELD_TEAM_CLIENT_PASSWORD:?Set FIELD_TEAM_CLIENT_PASSWORD in .env}
+      INTERNAL_OPS_CLIENT_ID: ${INTERNAL_OPS_CLIENT_ID:-internal-ops}
+      INTERNAL_OPS_CLIENT_PASSWORD: ${INTERNAL_OPS_CLIENT_PASSWORD:?Set INTERNAL_OPS_CLIENT_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${AUTH_PORT:-8084}:8084"
+    healthcheck:
+      test: ["CMD", "/service", "--healthcheck"]
+      interval: 5s
+      timeout: 4s
+      retries: 3
+      start_period: 5s
 
   notification-consumer:
     build: ./services/notification-consumer

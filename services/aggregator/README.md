@@ -2,6 +2,10 @@
 
 Aggregator mem-poll BMKG dan PVMBG secara mandiri setiap `POLL_INTERVAL_SECONDS` (bawaan 3 detik), memetakan rekaman menjadi `HazardEvent`, mengorelasikan peringatan tsunami, dan menyediakan API kanonis internal.
 
+## Akses internal
+
+Compose utama tidak mempublikasikan port Aggregator. Client API memanggil `http://aggregator:8083` melalui jaringan Docker. Untuk inspeksi host oleh operator tepercaya, gunakan `tests/compose-operator.yml` yang membuka port hanya pada localhost. Endpoint internal mengembalikan data penuh tanpa token; akses klien harus melalui Client API.
+
 ## API dan freshness sumber
 
 - `GET /health` memeriksa ketersediaan storage dan status polling sumber. Gangguan database menghasilkan HTTP 503; gangguan upstream saja tetap memungkinkan data tersimpan dibaca.
@@ -60,10 +64,10 @@ go test -race ./...
 Tanpa `TEST_DATABASE_URL`, uji lokal melewati integrasi database. Untuk PostgreSQL/RabbitMQ nyata:
 
 ```sh
-docker compose --env-file .env.example -f docker-compose.yml -f tests/compose-storage.yml run --build --rm --no-deps aggregator
+docker compose --env-file .env -f docker-compose.yml -f tests/compose-storage.yml run --build --rm --no-deps aggregator
 ```
 
-Override menggunakan builder stage, schema PostgreSQL sementara, dan exchange/queue uji privat; resource uji dibersihkan setelah selesai. Rekaman kanonis development tidak dihapus. Uji mencakup deduplikasi, revisi/snapshot, JSONB v1/v2 tanpa migrasi tambahan, filter, rollback atomik, reopen database, publisher confirm/mandatory return, retry ID sama, dan pembatalan. Uji status mencakup commit gagal, polling kosong, mapping gagal, BMKG parsial, deadline freshness, serta poller BMKG saat PVMBG terhambat.
+Override menggunakan builder image, schema PostgreSQL sementara, dan exchange/queue uji privat; resource uji dibersihkan setelah selesai. Rekaman kanonis development tidak dihapus. Uji mencakup deduplikasi, revisi/snapshot, JSONB v1/v2 tanpa migrasi tambahan, filter, rollback atomik, reopen database, publisher confirm/mandatory return, retry ID sama, dan pembatalan. Uji status mencakup commit gagal, polling kosong, mapping gagal, BMKG parsial, deadline freshness, serta poller BMKG saat PVMBG terhambat.
 
 Untuk alur skema/fanout/outage melalui API nyata, tanpa restart:
 

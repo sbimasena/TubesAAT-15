@@ -29,8 +29,8 @@ Argon2id memakai salt acak 16 byte, memori 64 MiB, tiga iterasi, parallelism emp
 
 Isi `AUTH_PORT`, `JWT_SIGNING_SECRET`, `AUTH_INTERNAL_SECRET`, `REFRESH_TOKEN_TTL_SECONDS`, serta ID/password tiga klien melalui lingkungan. Kedua secret minimal 32 byte dan harus berbeda. `AUTH_INTERNAL_SECRET` hanya dibagikan kepada Auth/API Klien, terpisah dari kredensial upstream/downstream. `.env.example` menyediakan nama variabel dengan secret/password kosong. Jangan memasukkan konfigurasi nyata ke Git.
 
-**NOT FINAL:** Port 8084 is approved for the Member B checkpoint; final deployment awaits Member C.
+Auth memakai port container 8084. Compose utama mempublikasikannya hanya ke localhost; `AUTH_PORT` memilih port host dan tidak mengubah URL internal `http://auth:8084`.
 
 Jalankan `go run ./cmd/server` dari `services/auth` setelah lingkungan diisi. Pengujian: `go test ./...` atau `go test -race ./...`. Binary mendukung `/service --healthcheck` dengan timeout 3 detik; mode healthcheck tidak membutuhkan secret startup.
 
-Overlay B tersedia pada `tests/compose-member-b.yml`. Panduan checkpoint login/refresh/expiry ada di [README API Klien](../client-api/README.md#checkpoint-stage-4).
+Compose utama menyediakan konfigurasi wajib dan healthcheck Auth. Panduan login/refresh/expiry ada di [README API Klien](../client-api/README.md#pemeriksaan-autentikasi).

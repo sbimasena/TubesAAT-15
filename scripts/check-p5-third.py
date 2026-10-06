@@ -3,10 +3,10 @@
 import hashlib
 import json
 from pathlib import Path
-from demo_support import broker, compose, healthy, logs, now, received, run, sql, wait_for
+from demo_support import options, broker, compose, healthy, logs, now, received, run, sql, wait_for
 import subprocess
 
-review_compose = compose + ["-f", "docker-compose.yml", "-f", "tests/compose-review.yml"]
+review_compose = compose + ["-f", "tests/compose-review.yml"]
 
 
 def review(*args):
@@ -63,7 +63,7 @@ try:
     assert evidence["producer_hashes_before"] == evidence["producer_hashes_after"]
     assert evidence["producer_commit_before"] == evidence["producer_commit_after"]
     assert evidence["aggregator_id_before"] == evidence["aggregator_id_after"]
-    folder = Path("docs/evidence/anggota-c/stage-4")
+    folder = Path(options.evidence_dir or "docs/evidence/anggota-c/stage-4")
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "review-build.log").write_text(build_output + "\n")
 finally:

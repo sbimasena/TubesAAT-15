@@ -68,6 +68,12 @@ func (w *statusWriter) Write(payload []byte) (int, error) {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--healthcheck" {
+		if err := checkHealth("http://127.0.0.1:" + envOr("BMKG_PORT", defaultPort) + "/health"); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	apiKey := requiredEnv(logger, "BMKG_API_KEY")
 	servicePort := envOr("BMKG_PORT", defaultPort)
@@ -351,4 +357,17 @@ func durationFromEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return seconds
+}
+
+func checkHealth(endpoint string) error {
+	client := &http.Client{Timeout: 3 * time.Second}
+	response, err := client.Get(endpoint)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("health endpoint returned HTTP %d", response.StatusCode)
+	}
+	return nil
 }

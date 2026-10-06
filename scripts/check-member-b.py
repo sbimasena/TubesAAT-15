@@ -23,7 +23,8 @@ def main():
     parser.add_argument("--output", type=Path, help="Write evidence without credentials or hazard payloads")
     args = parser.parse_args()
     command = ["docker", "compose", "--env-file", args.env_file,
-               "-f", "docker-compose.yml", "-f", "tests/compose-member-b.yml"]
+               "-f", "docker-compose.yml", "-f", "tests/compose-operator.yml",
+               "-f", "tests/compose-member-b.yml"]
     if args.project_name:
         command += ["--project-name", args.project_name]
 

@@ -1,20 +1,51 @@
 """Shared local demo helpers; no service business logic or credentials in evidence."""
+import argparse
 import base64
 import datetime
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
 
-settings = dict(line.split("=", 1) for line in Path(".env.example").read_text().splitlines()
-                if line and not line.startswith("#") and "=" in line)
-compose = ["docker", "compose", "--env-file", ".env.example"]
+parser = argparse.ArgumentParser(add_help=False)
+parser.add_argument("--env-file", default=".env")
+parser.add_argument("--project-name")
+parser.add_argument("--evidence-dir", help="Directory for new demo evidence; preserves historical defaults when omitted")
+options, remaining = parser.parse_known_args()
+# Leave each checker its own flags while sharing the operator configuration.
+sys.argv[1:] = remaining
+compose = ["docker", "compose", "--env-file", str(Path(options.env_file).resolve())]
+if options.project_name:
+    compose += ["--project-name", options.project_name]
+compose += ["-f", "docker-compose.yml", "-f", "tests/compose-operator.yml"]
+result = subprocess.run(compose + ["config", "--format", "json"], capture_output=True, text=True)
+if result.returncode:
+    raise SystemExit("Invalid demo configuration: fill the local environment file; inspect Compose locally.")
+config = json.loads(result.stdout)
+settings = {key: str(value) for service in config["services"].values()
+            for key, value in service.get("environment", {}).items() if value is not None}
+for service, variable in (("bmkg", "BMKG_PORT"), ("pvmbg", "PVMBG_PORT"),
+                          ("aggregator", "AGGREGATOR_PORT"), ("auth", "AUTH_PORT"),
+                          ("client-api", "CLIENT_API_PORT"), ("message-broker", "RABBITMQ_MANAGEMENT_PORT")):
+    settings[variable] = str(config["services"][service]["ports"][0]["published"])
+
+
+def redact(text):
+    for key, value in settings.items():
+        if value and (key.endswith(("_SECRET", "_PASSWORD", "_PASS", "_TOKEN", "_KEY")) or key in ("DATABASE_URL", "BROKER_URL")):
+            text = text.replace(value, "[REDACTED]")
+    return text
 
 
 def run(*args):
-    return subprocess.check_output(compose + list(args), text=True, stderr=subprocess.STDOUT).strip()
+    result = subprocess.run(compose + list(args), capture_output=True, text=True)
+    if result.returncode:
+        raise subprocess.CalledProcessError(result.returncode, compose + list(args),
+                                            output=redact(result.stdout), stderr=redact(result.stderr))
+    return redact(result.stdout).strip()
 
 
 def now():
@@ -84,4 +115,3 @@ def logs(service, since):
         except json.JSONDecodeError:
             pass
     return records
-

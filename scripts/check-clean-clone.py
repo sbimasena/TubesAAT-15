@@ -12,13 +12,13 @@ from pathlib import Path
 import subprocess
 import tempfile
 import urllib.request
-from demo_support import now, settings, states, wait_for
+from demo_support import now, options, settings, states, wait_for
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--with-working-broker-fix", action="store_true",
                     help="test the uncommitted startup fix explicitly; result is NOT an unchanged HEAD check")
 args = parser.parse_args()
-folder = Path("docs/evidence/anggota-c/stage-5")
+folder = Path(options.evidence_dir or "docs/evidence/anggota-c/stage-5")
 folder.mkdir(parents=True, exist_ok=True)
 services = ["bmkg", "pvmbg", "canonical-store", "message-broker", "aggregator",
             "notification-consumer", "dashboard-consumer"]
@@ -40,8 +40,12 @@ with tempfile.TemporaryDirectory(prefix="tubesaat-clean-", dir="/private/tmp") a
     evidence["compose_project"] = project
     evidence["host_ports"] = {"bmkg": 18081, "pvmbg": 18082, "aggregator": 18083, "broker_management": 25672}
     env = dict(os.environ, BMKG_PORT="18081", PVMBG_PORT="18082", AGGREGATOR_PORT="18083",
-               RABBITMQ_MANAGEMENT_PORT="25672")
-    command = ["docker", "compose", "--env-file", ".env.example", "-p", project]
+               RABBITMQ_MANAGEMENT_PORT="25672", AUTH_PORT="18084", CLIENT_API_PORT="18080")
+    command = ["docker", "compose", "--env-file", str(Path(options.env_file).resolve()), "-p", project,
+               "-f", "docker-compose.yml"]
+    # Older committed revisions publish the operator port in the base file.
+    if (clone / "tests/compose-operator.yml").exists():
+        command += ["-f", "tests/compose-operator.yml"]
 
     def run(*args):
         return subprocess.check_output(command + list(args), cwd=clone, env=env,
@@ -103,7 +107,7 @@ with tempfile.TemporaryDirectory(prefix="tubesaat-clean-", dir="/private/tmp") a
         wait_for(lambda: all(json.loads(line).get("Health") in ("", "healthy")
                             for line in run("ps", "--format", "json").splitlines()), "fresh clone services should be healthy")
         evidence["services"] = [json.loads(line) for line in run("ps", "--format", "json").splitlines()]
-        evidence["result"] = ("PASS_WITH_EXPLICIT_WORKING_TREE_FIX" if args.with_working_broker_fix else "PASS_C_SCOPE") + "; AUTH_CLIENT_API_PENDING_B"
+        evidence["result"] = ("PASS_WITH_EXPLICIT_WORKING_TREE_FIX" if args.with_working_broker_fix else "PASS_C_SCOPE") + "; AUTH_CLIENT_API_NOT_CHECKED"
     except Exception as error:
         evidence["result"] = "FAIL"
         evidence["failure"] = str(error)

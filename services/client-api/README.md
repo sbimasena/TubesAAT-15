@@ -41,15 +41,15 @@ Galat yang dihasilkan handler hazard memakai JSON `{"error":{"code":"...","messa
 
 Konfigurasi tambahan: `AUTH_BASE_URL`, `AUTH_REQUEST_TIMEOUT_MS`, dan `AUTH_INTERNAL_SECRET` (minimal 32 byte). Signing key JWT tidak diberikan kepada API Klien. Timeout penulisan server memberi jeda setelah jumlah timeout Auth dan Aggregator.
 
-Untuk kompatibilitas checkpoint fondasi, `ENABLE_PROVISIONAL_HAZARD_ENDPOINT=true` mengaktifkan alias `GET /internal/provisional/hazards`, ditandai `X-Provisional-Endpoint: true`. Alias memakai Auth, proyeksi hazard/sumber, galat JSON, dan batas konkurensi yang sama dengan `/hazards`. Alias tetap nonaktif secara bawaan. **NOT FINAL:** The legacy alias is retained for checkpoints; retirement remains a separate compatibility decision.
+Untuk kompatibilitas checkpoint fondasi, `ENABLE_PROVISIONAL_HAZARD_ENDPOINT=true` mengaktifkan alias `GET /internal/provisional/hazards`, ditandai `X-Provisional-Endpoint: true`. Alias memakai Auth, proyeksi hazard/sumber, galat JSON, dan batas konkurensi yang sama dengan `/hazards`. Alias tetap nonaktif secara bawaan.
 
-Timeout penulisan respons server minimal 15 detik dan selalu menyediakan jeda 5 detik setelah jumlah timeout Auth dan Aggregator, sehingga respons 504 masih dapat dikirim. Timeout saat membaca body Aggregator juga menghasilkan 504. **NOT FINAL:** The checkpoint dependency timeout is 5000 ms; review the final value during P2 load testing.
+Timeout penulisan respons server minimal 15 detik dan selalu menyediakan jeda 5 detik setelah jumlah timeout Auth dan Aggregator, sehingga respons 504 masih dapat dikirim. Timeout saat membaca body Aggregator juga menghasilkan 504. Timeout dependency awal 5000 ms; tuning dilakukan berdasarkan pengukuran P2.
 
 Setelah variabel lingkungan wajib diisi, jalankan `go run ./cmd/server` dari direktori `services/client-api`, lalu periksa `GET /health` pada port `CLIENT_API_PORT`. Pengujian unit modul: `go test ./...` dari direktori yang sama.
 
-Binary mendukung `/service --healthcheck`, dengan timeout 3 detik, menggunakan `CLIENT_API_PORT` atau nilai awal 8080. Overlay `tests/compose-member-b.yml` menambahkan environment dan healthcheck kedua service tanpa memberi akses Canonical Store. Compose utama tetap milik C.
+Binary mendukung `/service --healthcheck`, dengan timeout 3 detik, menggunakan `CLIENT_API_PORT` atau nilai awal 8080. Compose utama menyediakan environment, dependency, dan healthcheck kedua service tanpa memberi akses Canonical Store. Overlay `tests/compose-member-b.yml` mempertahankan konfigurasi alias checkpoint; checker fondasi juga memakai overlay operator untuk membandingkan API internal.
 
-## Checkpoint Stage 2–3
+## Checkpoint fondasi
 
 Siapkan file environment lokal, misalnya `.env.member-b.local`, dari `.env.example`. Isi password/secret lokal, termasuk `AUTH_INTERNAL_SECRET`, TTL refresh positif, dan `ENABLE_PROVISIONAL_HAZARD_ENDPOINT=true`. File `.env.*` diabaikan Git. Jangan memakai kredensial produksi pada checkpoint.
 
@@ -59,22 +59,22 @@ Jalankan dari root repositori dengan Docker Engine aktif dan Python 3:
 python scripts/check-member-b.py --env-file .env.member-b.local --start --check-lifecycle --output member-b-checkpoint.json
 ```
 
-Skrip menggunakan Compose utama dan overlay B. Opsi `--start` membangun/menjalankan sembilan service; `--check-lifecycle` menghentikan lalu menjalankan kembali hanya Auth/API Klien. Skrip login sebagai Operasi Internal, lalu memeriksa health binary/HTTP, data kedua sumber melalui alias terlindungi, filter, field kanonis, correlation ID, log latensi, dan konfigurasi isolasi storage. Checker fondasi ini tetap membaca freshness langsung pada Aggregator; checker Stage 4/5 memeriksa proyeksi sumber publik. Skrip tidak mengubah skema/outage sumber atau menghapus volume. Setelah sukses, stack tetap berjalan. Tanpa kedua opsi tersebut, skrip hanya memeriksa stack yang sudah berjalan.
+Skrip menggunakan Compose utama dan overlay B. Opsi `--start` membangun/menjalankan sembilan service; `--check-lifecycle` menghentikan lalu menjalankan kembali hanya Auth/API Klien. Skrip login sebagai Operasi Internal, lalu memeriksa health binary/HTTP, data kedua sumber melalui alias terlindungi, filter, field kanonis, correlation ID, log latensi, dan konfigurasi isolasi storage. Checker fondasi ini tetap membaca freshness langsung pada Aggregator; checker autentikasi/resiliensi memeriksa proyeksi sumber publik. Skrip tidak mengubah skema/outage sumber atau menghapus volume. Setelah sukses, stack tetap berjalan. Tanpa kedua opsi tersebut, skrip hanya memeriksa stack yang sudah berjalan.
 
 `--project-name` memilih project Compose. Untuk project uji terpisah, gunakan port host yang kosong melalui file environment: `CLIENT_API_PORT`, `AUTH_PORT`, `BMKG_PORT`, `PVMBG_PORT`, `AGGREGATOR_PORT`, dan `RABBITMQ_MANAGEMENT_PORT`.
 
-Checkpoint fondasi ini hanya memakai login Operasi Internal; pemeriksaan tiga scope, refresh, dan expiry ada pada checker Stage 4. Keduanya belum membuktikan penerimaan P2/P3 seluruh tim. Untuk menghentikan stack dengan mempertahankan volume:
+Checkpoint fondasi ini hanya memakai login Operasi Internal; pemeriksaan tiga scope, refresh, dan expiry ada pada checker autentikasi. Keduanya belum membuktikan penerimaan P2/P3 seluruh tim. Untuk menghentikan stack dengan mempertahankan volume:
 
 ```sh
-docker compose --env-file .env.member-b.local -f docker-compose.yml -f tests/compose-member-b.yml stop
+docker compose --env-file .env.member-b.local -f docker-compose.yml -f tests/compose-operator.yml -f tests/compose-member-b.yml stop
 ```
 
-## Checkpoint Stage 4
+## Pemeriksaan autentikasi
 
-Jalankan Auth, API Klien, dan Aggregator yang sudah memiliki data BMKG/PVMBG. Untuk Compose, gunakan overlay B dan file lingkungan lokal. Endpoint sementara sebaiknya dinonaktifkan (`ENABLE_PROVISIONAL_HAZARD_ENDPOINT=false`) selama pemeriksaan API publik.
+Jalankan Auth, API Klien, dan Aggregator yang sudah memiliki data BMKG/PVMBG. Untuk Compose, gunakan file lingkungan lokal lengkap. Endpoint sementara sebaiknya dinonaktifkan (`ENABLE_PROVISIONAL_HAZARD_ENDPOINT=false`) selama pemeriksaan API publik.
 
 ```sh
-docker compose --env-file .env.member-b.local -f docker-compose.yml -f tests/compose-member-b.yml up --build -d
+docker compose --env-file .env.member-b.local up --build -d --wait
 python scripts/check-member-b-auth.py --env-file .env.member-b.local --natural-expiry --output member-b-auth-checkpoint.json
 ```
 
@@ -82,7 +82,7 @@ Skrip memeriksa login tiga peran, tujuh/sebelas field, penolakan permintaan ment
 
 Jika URL publik berbeda, gunakan `--auth-url` dan `--client-url`. Hasil ini adalah bukti bagian downstream P3 milik B; tidak menggantikan uji silang kredensial upstream milik A, uji beban/outage P2, atau verifikasi stack/fanout seluruh tim. Kontrak stale/freshness publik dan batas konkurensi/429 sudah diimplementasikan; pengukuran beban P2 tetap terpisah.
 
-## Checkpoint Stage 5
+## Pemeriksaan resiliensi
 
 Jalankan hanya pada project uji yang dipilih secara eksplisit dan memiliki enam layanan HTTP/storage yang sehat. Broker/consumer tidak diuji oleh checker ini. Jangan menjalankan demo yang mengubah sumber atau lifecycle secara bersamaan.
 

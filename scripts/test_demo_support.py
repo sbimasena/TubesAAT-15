@@ -1,4 +1,6 @@
 """Run with: python3 -B -m unittest discover -s scripts -p test_demo_support.py."""
+import contextlib
+import io
 import importlib.util
 import json
 from pathlib import Path
@@ -26,6 +28,20 @@ class DemoConfigurationTest(unittest.TestCase):
         self.assertIn("isolated", module.compose)
         self.assertEqual(module.compose[-4:], ["-f", "docker-compose.yml", "-f", "tests/compose-operator.yml"])
         self.assertEqual(module.redact("60 private-signing-value"), "60 [REDACTED]")
+        output, errors = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            module.progress("private-signing-value")
+            with patch.object(module.time, "sleep") as sleep:
+                calls = iter([False] * 6 + [True])
+                module.wait_for(lambda: next(calls), "private-signing-value readiness")
+                self.assertEqual(sleep.call_count, 6)
+            with patch.object(module.time, "sleep"), self.assertRaises(AssertionError):
+                module.wait_for(lambda: False, "bounded failure")
+        self.assertEqual(output.getvalue(), "")
+        self.assertNotIn("private-signing-value", errors.getvalue())
+        self.assertIn("[REDACTED] readiness", errors.getvalue())
+        self.assertIn("attempt 6", errors.getvalue())
+        self.assertIn("Ready:", errors.getvalue())
         failure = subprocess.CompletedProcess([], 1, "private-signing-value", "private-signing-value")
         with patch("subprocess.run", return_value=failure), self.assertRaises(subprocess.CalledProcessError) as caught:
             module.run("up")

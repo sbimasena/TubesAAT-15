@@ -13,6 +13,7 @@ from pathlib import Path
 import urllib.request
 
 from demo_support import journal, now, run, settings, wait_for
+from demo_support import progress
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--output", default="/tmp/tubesaat-ingestion-check.json")
@@ -84,6 +85,7 @@ def ready():
 
 try:
     wait_for(ready, "both sources should complete fresh ingestion before the check")
+    progress("Checking existing v1 mapping")
     admin("schema-version", {"version": 1})
     raw = request(settings["PVMBG_PORT"], "/volcanic-reports", token=settings["PVMBG_TOKEN"])
     old = next((report for report in raw if "confidence_level" not in report), None)
@@ -93,6 +95,7 @@ try:
     assert "confidence_level" not in old_hazard["attributes"]
     evidence["v1_hazard"] = old_hazard
 
+    progress("Checking live v2 mapping and canonical persistence")
     version = admin("schema-version", {"version": 2})
     assert version["confidence_level_enabled"] and version["schema_version"] == 2
     new_id = version["report_id"]
@@ -106,6 +109,7 @@ try:
     assert "confidence_level" not in canonical(old["report_id"])["attributes"]
     evidence["v2_hazard"] = new_hazard
 
+    progress("Checking delivery to both consumers")
     evidence["consumers"] = {}
     for service in ("notification-consumer", "dashboard-consumer"):
         def delivered():
@@ -122,6 +126,7 @@ try:
     assert notification["message_id"] == dashboard["message_id"]
     assert notification["correlation_id"] == dashboard["correlation_id"]
 
+    progress("Checking PVMBG outage, retained data and independent BMKG ingestion")
     before_outage = health()["sources"]["PVMBG"]["last_ingested_at"]
     admin("outage", {"enabled": True})
 
@@ -139,6 +144,7 @@ try:
     wait_for(degraded, "PVMBG outage should mark only PVMBG stale")
     # A successful fetch already in flight when outage is enabled may still commit.
     # Once a failed poll is observed, subsequent failed polls must not advance ingestion.
+    progress("Waiting one polling interval to verify repeated outage stability")
     time.sleep(float(settings["POLL_INTERVAL_SECONDS"]) + 1)
     repeated = health()
     failed_status = evidence["outage_health"]["sources"]["PVMBG"]
@@ -148,6 +154,7 @@ try:
     assert repeated_status["stale_since"] == failed_status["stale_since"]
     evidence["repeated_outage_health"] = repeated
     assert canonical(new_id) == new_hazard, "stored volcanic data must remain readable during outage"
+    progress("Recovering PVMBG")
     admin("outage", {"enabled": False})
     wait_for(ready, "PVMBG should become fresh after a successful committed retry")
     evidence["recovered_health"] = health()
@@ -160,6 +167,7 @@ except Exception as error:
     evidence["failure"] = str(error)
     raise
 finally:
+    progress("Restoring schema and outage settings")
     try:
         admin("outage", {"enabled": False})
         admin("schema-version", {"version": 1})
@@ -174,6 +182,7 @@ finally:
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(evidence, indent=2) + "\n")
+        progress("Result file saved")
 
 print("PASS: runtime v1/v2 mapping, both consumers, source outage/freshness and recovery without restart")
 print(args.output)

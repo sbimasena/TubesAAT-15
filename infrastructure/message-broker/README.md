@@ -17,10 +17,10 @@ Pesan persistent dengan positive publisher confirm dan volume yang dipertahankan
 ## Inspeksi queue dan uji recovery broker
 
 ```sh
-docker compose --env-file .env.example up -d message-broker aggregator
-docker compose --env-file .env.example exec -T message-broker rabbitmqctl list_queues name durable messages_ready messages_unacknowledged
-docker compose --env-file .env.example logs --tail 50 aggregator
+docker compose --env-file .env up -d message-broker aggregator
+docker compose --env-file .env exec -T message-broker rabbitmqctl list_queues name durable messages_ready messages_unacknowledged
+docker compose --env-file .env logs --tail 50 aggregator
 python3 scripts/check-stage-2.py
 ```
 
-Skrip `check-stage-2.py` memakai `.env.example`, memerlukan kedua consumer offline, memeriksa pesan dengan requeue, serta stop/start broker. Ia tidak purge/delete queue atau volume. Pesan yang diinspeksi menjadi redelivered; ini memang diperbolehkan oleh kontrak at-least-once.
+Skrip `check-stage-2.py` memakai file environment lokal lengkap dan overlay operator, memerlukan kedua consumer offline, memeriksa pesan dengan requeue, serta stop/start broker. Ia tidak purge/delete queue atau volume. Pesan yang diinspeksi menjadi redelivered; ini memang diperbolehkan oleh kontrak at-least-once.

@@ -29,8 +29,8 @@ Log JSON mencakup service, message_id, hazard_id, hazard_revision, correlation_i
 Dari root repositori:
 
 ```sh
-docker compose --env-file .env.example up --build -d notification-consumer dashboard-consumer
-docker compose --env-file .env.example -f docker-compose.yml -f tests/compose-consumers.yml run --build --rm --no-deps notification-consumer
+docker compose --env-file .env up --build -d notification-consumer dashboard-consumer
+docker compose --env-file .env -f docker-compose.yml -f tests/compose-consumers.yml run --build --rm --no-deps notification-consumer
 python3 scripts/check-stage-3.py
 ```
 

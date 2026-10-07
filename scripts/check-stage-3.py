@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Stage 3: two journals, independent downtime, restart dedup and broker reconnect.
 
-Uses the development .env.example. Keeps queues/volumes and restores stopped services.
+Uses the selected local environment. Keeps queues/volumes and restores stopped services.
 """
 import argparse
 import json
 from pathlib import Path
-from demo_support import broker, healthy, logs, now, received, run, sql, wait_for
+from demo_support import options, broker, healthy, logs, now, received, run, sql, wait_for
 
 services = ("notification-consumer", "dashboard-consumer")
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--output", type=Path, default=Path("docs/evidence/anggota-c/stage-3/consumer-check.json"))
+parser.add_argument("--output", type=Path, default=Path(options.evidence_dir or "docs/evidence/anggota-c/stage-3") / "consumer-check.json")
 arguments = parser.parse_args()
 
 

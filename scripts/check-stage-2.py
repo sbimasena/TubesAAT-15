@@ -1,39 +1,12 @@
 #!/usr/bin/env python3
 #Stage 2 check: stop/start RabbitMQ, keep polling/querying, recover durable queues.
-import base64
-import datetime
 import json
 from pathlib import Path
 import subprocess
 import time
 import urllib.request
 
-settings = dict(line.split("=", 1) for line in Path(".env.example").read_text().splitlines()
-                if line and not line.startswith("#") and "=" in line)
-compose = ["docker", "compose", "--env-file", ".env.example"]
-
-
-def run(*args):
-    return subprocess.check_output(compose + list(args), text=True, stderr=subprocess.STDOUT).strip()
-
-
-def sql(query):
-    return run("exec", "-T", "canonical-store", "psql", "-U", settings["POSTGRES_USER"],
-               "-d", settings["POSTGRES_DB"], "-At", "-c", query)
-
-
-def now():
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-
-def broker(path, body=None):
-    credentials = settings["RABBITMQ_DEFAULT_USER"] + ":" + settings["RABBITMQ_DEFAULT_PASS"]
-    request = urllib.request.Request("http://127.0.0.1:" + settings["RABBITMQ_MANAGEMENT_PORT"] + "/api/" + path,
-        data=None if body is None else json.dumps(body).encode(),
-        headers={"Authorization": "Basic " + base64.b64encode(credentials.encode()).decode(),
-                 "Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=5) as response:
-        return json.load(response)
+from demo_support import options, broker, now, run, settings, sql
 
 
 def queues():
@@ -77,7 +50,7 @@ try:
     sample = json.loads(sql(f"SELECT row_to_json(t) FROM (SELECT message_id,hazard_id,correlation_id,published_at FROM hazard_outbox WHERE message_id>{baseline} AND published_at IS NULL ORDER BY message_id LIMIT 1) t"))
     evidence["outbox_sample_offline"] = sample
     for endpoint in ("health", "hazards?limit=1"):
-        with urllib.request.urlopen("http://127.0.0.1:8083/" + endpoint, timeout=5) as response:
+        with urllib.request.urlopen("http://127.0.0.1:" + settings["AGGREGATOR_PORT"] + "/" + endpoint, timeout=5) as response:
             evidence["offline_" + endpoint.split("?")[0] + "_status"] = response.status
             assert response.status == 200
 finally:
@@ -115,7 +88,7 @@ for line in run("logs", "--no-log-prefix", "--since", evidence["started_at"], "a
         records.append(record)
 evidence["publisher_logs"] = records
 evidence["result"] = "PASS"
-destination = Path("docs/evidence/anggota-c/stage-2/broker-recovery.json")
+destination = Path(options.evidence_dir or "docs/evidence/anggota-c/stage-2") / "broker-recovery.json"
 destination.parent.mkdir(parents=True, exist_ok=True)
 destination.write_text(json.dumps(evidence, indent=2) + "\n")
 print("PASS: pending during downtime; API 200; recovered without Aggregator restart; durable queued snapshots preserved")

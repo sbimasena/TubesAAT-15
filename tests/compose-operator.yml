@@ -1,0 +1,5 @@
+# Trusted local operator access; never use this overlay for downstream deployment.
+services:
+  aggregator:
+    ports:
+      - "127.0.0.1:${AGGREGATOR_PORT:-8083}:8083"

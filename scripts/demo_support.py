@@ -1,20 +1,53 @@
 """Shared local demo helpers; no service business logic or credentials in evidence."""
+import argparse
 import base64
 import datetime
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
+import urllib.error
+import uuid
 
-settings = dict(line.split("=", 1) for line in Path(".env.example").read_text().splitlines()
-                if line and not line.startswith("#") and "=" in line)
-compose = ["docker", "compose", "--env-file", ".env.example"]
+parser = argparse.ArgumentParser(add_help=False)
+parser.add_argument("--env-file", default=".env")
+parser.add_argument("--project-name")
+parser.add_argument("--evidence-dir", help="Directory for new demo evidence; preserves historical defaults when omitted")
+options, remaining = parser.parse_known_args()
+# Leave each checker its own flags while sharing the operator configuration.
+sys.argv[1:] = remaining
+compose = ["docker", "compose", "--env-file", str(Path(options.env_file).resolve())]
+if options.project_name:
+    compose += ["--project-name", options.project_name]
+compose += ["-f", "docker-compose.yml", "-f", "tests/compose-operator.yml"]
+result = subprocess.run(compose + ["config", "--format", "json"], capture_output=True, text=True)
+if result.returncode:
+    raise SystemExit("Invalid demo configuration: fill the local environment file; inspect Compose locally.")
+config = json.loads(result.stdout)
+settings = {key: str(value) for service in config["services"].values()
+            for key, value in service.get("environment", {}).items() if value is not None}
+for service, variable in (("bmkg", "BMKG_PORT"), ("pvmbg", "PVMBG_PORT"),
+                          ("aggregator", "AGGREGATOR_PORT"), ("auth", "AUTH_PORT"),
+                          ("client-api", "CLIENT_API_PORT"), ("message-broker", "RABBITMQ_MANAGEMENT_PORT")):
+    settings[variable] = str(config["services"][service]["ports"][0]["published"])
+
+
+def redact(text):
+    for key, value in settings.items():
+        if value and (key.endswith(("_SECRET", "_PASSWORD", "_PASS", "_TOKEN", "_KEY")) or key in ("DATABASE_URL", "BROKER_URL")):
+            text = text.replace(value, "[REDACTED]")
+    return text
 
 
 def run(*args):
-    return subprocess.check_output(compose + list(args), text=True, stderr=subprocess.STDOUT).strip()
+    result = subprocess.run(compose + list(args), capture_output=True, text=True)
+    if result.returncode:
+        raise subprocess.CalledProcessError(result.returncode, compose + list(args),
+                                            output=redact(result.stdout), stderr=redact(result.stderr))
+    return redact(result.stdout).strip()
 
 
 def now():
@@ -85,3 +118,48 @@ def logs(service, since):
             pass
     return records
 
+
+def http_call(port, path, body=None, token=None):
+    correlation = "c-check-" + uuid.uuid4().hex
+    headers = {"X-Correlation-ID": correlation}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request("http://127.0.0.1:" + str(port) + path,
+        data=None if body is None else json.dumps(body).encode(), headers=headers)
+    started = time.monotonic()
+    try:
+        response = urllib.request.urlopen(request, timeout=15)
+    except urllib.error.HTTPError as error:
+        response = error
+    with response:
+        assert response.headers.get("X-Correlation-ID") == correlation
+        payload = response.read()
+        return {"status": response.status, "correlation_id": correlation,
+                "body": json.loads(payload) if payload and response.headers.get_content_type() == "application/json" else None,
+                "elapsed_ms": (time.monotonic() - started) * 1000}
+
+
+sessions = {}
+
+
+def login(role):
+    response = http_call(settings["AUTH_PORT"], "/login", {
+        "client_id": settings[role + "_CLIENT_ID"], "password": settings[role + "_CLIENT_PASSWORD"]})
+    assert response["status"] == 200, role + " login failed"
+    pair = response["body"]
+    sessions[role] = (pair, time.monotonic() + pair["expires_in"] - 5)
+    return pair["access_token"]
+
+
+def client_read(path, role="FIELD_TEAM"):
+    if role not in sessions:
+        login(role)
+    pair, expiry = sessions[role]
+    if time.monotonic() >= expiry:
+        response = http_call(settings["AUTH_PORT"], "/refresh", {"refresh_token": pair["refresh_token"]})
+        assert response["status"] == 200, role + " refresh failed"
+        pair = response["body"]
+        sessions[role] = (pair, time.monotonic() + pair["expires_in"] - 5)
+    return http_call(settings["CLIENT_API_PORT"], path, token=pair["access_token"])

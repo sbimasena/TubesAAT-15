@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """C's P2 check: 50 VUs/60s, slow PVMBG, cached reads during outage, recovery.
 
-Requires native k6/lsof and seven live services using .env.example. Finally restores
+Requires native k6/lsof and seven live services using the selected local environment. Finally restores
 PVMBG's default delay, schema v2, and outage=false. Never restart Aggregator.
 """
 import json
@@ -11,9 +11,9 @@ import platform
 import subprocess
 import time
 import urllib.request
-from demo_support import compose, healthy, logs, now, run, settings, sql, states, wait_for
+from demo_support import options, compose, healthy, logs, now, run, settings, sql, states, wait_for
 
-folder = Path("docs/evidence/anggota-c/stage-5")
+folder = Path(options.evidence_dir or "docs/evidence/anggota-c/stage-5")
 folder.mkdir(parents=True, exist_ok=True)
 base = "http://127.0.0.1:" + settings["AGGREGATOR_PORT"]
 pvmbg = "http://127.0.0.1:" + settings["PVMBG_PORT"]
@@ -41,13 +41,13 @@ def source():
     return request(base + "/health")["body"]["sources"]["PVMBG"]
 
 
-evidence = {"started_at": now(), "scope": "AGGREGATOR_DIRECT; AUTH_CLIENT_API_PENDING_B",
+evidence = {"started_at": now(), "scope": "AGGREGATOR_DIRECT; AUTH_CLIENT_API_NOT_CHECKED",
             "tool": subprocess.check_output(["k6", "version"], text=True).strip(),
             "host": {"platform": platform.platform(), "cpu_logical": os.cpu_count()},
             "states_before": states(), "default_delay_ms": int(settings["PVMBG_DELAY_MS"])}
 assert all(healthy(s) for s in ("aggregator", "notification-consumer", "dashboard-consumer"))
 assert request(base + "/internal/v1/hazards?source=BMKG&limit=1")["body"]["count"] > 0
-slow = compose + ["-f", "docker-compose.yml", "-f", "tests/compose-load.yml"]
+slow = compose + ["-f", "tests/compose-load.yml"]
 try:
     subprocess.check_call(slow + ["up", "-d", "--no-deps", "pvmbg"])
     wait_for(lambda: request(pvmbg + "/health")["status"] == 200, "PVMBG slow mock should start")
@@ -123,7 +123,7 @@ try:
     evidence["upstream_during_outage_recovery"] = [r for r in logs("aggregator", evidence["outage_enabled_at"])
                                                 if r.get("target") in ("bmkg", "pvmbg")]
     assert any(r.get("target") == "pvmbg" and r.get("status") == 503 for r in evidence["upstream_during_outage_recovery"])
-    evidence["result"] = "PASS_C_SCOPE; AUTH_CLIENT_API_PENDING_B"
+    evidence["result"] = "PASS_C_SCOPE; AUTH_CLIENT_API_NOT_CHECKED"
 except Exception as error:
     evidence["result"] = "FAIL"
     evidence["failure"] = str(error)

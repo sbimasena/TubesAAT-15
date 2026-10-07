@@ -1,5 +1,18 @@
 # Skrip Pengujian dan Demo
 
+Urutan lengkap P1–P5 tersedia di [README utama](../README.md#urutan-pemeriksaan-penerimaan-p1p5). Jalankan pada project uji, satu skenario setiap kali, dan hentikan urutan jika checker gagal.
+
+## Silang kredensial upstream (P3)
+
+```sh
+python3 scripts/check-cross-credentials.py --env-file .env --project-name project-uji --output /tmp/p3-upstream.json
+python3 -B -m unittest discover -s scripts -p test_cross_credentials.py
+```
+
+Checker membaca konfigurasi Compose utama untuk mendapatkan kredensial dan port host efektif BMKG/PVMBG. Ia memeriksa kedua endpoint BMKG serta endpoint laporan PVMBG: kredensial sendiri harus menghasilkan 200/array JSON; kredensial sumber lain pada header native, header trust domain asing, dan request tanpa kredensial harus menghasilkan 401/403. Kedua kredensial harus nonkosong dan berbeda. Redirect tidak diikuti. Tidak memerlukan overlay operator dan tidak mengubah schema, outage, lifecycle, atau data layanan. Jalankan saat kedua sumber tersedia.
+
+Exit code 0 berarti lulus, 1 berarti gagal. Output hanya memuat status/correlation ID; kredensial dan body tidak ditulis. Jika gagal sebelum request, periksa konfigurasi dan konektivitas lokal; jika gagal setelah request, status yang sudah diamati tetap disimpan. Tes lokal tidak memerlukan Docker dan memastikan server yang menerima kredensial asing tidak dapat lolos.
+
 Checkpoint fondasi B memakai konfigurasi lokal dan overlay khusus: lihat [README API Klien](../services/client-api/README.md#checkpoint-fondasi). `check-member-b.py` memeriksa Auth/API Klien dan alur HTTP ke Aggregator; opsi `--check-lifecycle` menghentikan/menjalankan kembali hanya kedua service B. Ini bukan tes penerimaan P2/P3.
 
 Pemeriksaan autentikasi memakai `check-member-b-auth.py`: login tiga identitas, scope, penolakan field mentah, rotasi/replay, serta penolakan access token lama. Opsi `--natural-expiry` menunggu TTL nyata sebelum refresh tanpa login ulang. Skrip membutuhkan Auth/API Klien/Aggregator dengan data kedua sumber; tidak mengubah lifecycle atau status sumber. Baca [panduan autentikasi](../services/client-api/README.md#pemeriksaan-autentikasi). Uji ini belum mencakup silang kredensial upstream, beban P2, atau fanout.

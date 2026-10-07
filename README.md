@@ -109,6 +109,54 @@ Clean clone menghasilkan kredensial sendiri; `--project-name` pada checker clone
 
 Pastikan project yang diperiksa sudah berjalan dengan overlay operator jika checker membutuhkan HTTP Aggregator dari host. Jalankan skenario satu per satu; skrip dapat mengubah schema/outage atau restart layanan. Volume utama dipertahankan. [Panduan skrip](scripts/README.md) dan [panduan pengujian](tests/README.md) menjelaskan efek masing-masing pemeriksaan.
 
+## Urutan pemeriksaan penerimaan P1–P5
+
+Jalankan dari root repository pada project uji tersendiri. Salin `.env` yang sudah lengkap ke `.env.acceptance.local`, lalu pilih port host yang bebas untuk `BMKG_PORT`, `PVMBG_PORT`, `AUTH_PORT`, `CLIENT_API_PORT`, `AGGREGATOR_PORT`, dan `RABBITMQ_MANAGEMENT_PORT`. Nama project memisahkan container/volume, tetapi tidak mengubah port host. P2 memerlukan k6/lsof native dan TTL akses 60 detik. Jalankan skenario satu per satu.
+
+```sh
+cp .env .env.acceptance.local
+# Edit port host di .env.acceptance.local sebelum menjalankan stack uji.
+export ACCEPTANCE_ENV=.env.acceptance.local
+export ACCEPTANCE_PROJECT=tubesaat-acceptance
+export ACCEPTANCE_RESULTS="$(mktemp -d /tmp/tubesaat-acceptance.XXXXXX)"
+
+# Stack default: sembilan layanan, ownership storage, scope, dan trace HTTP.
+docker compose --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" up --build -d --wait
+python3 scripts/check-deployment.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --output "$ACCEPTANCE_RESULTS/deployment.json"
+
+# P3: silang kredensial upstream, scope, expiry alami, dan rotasi token.
+python3 scripts/check-cross-credentials.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --output "$ACCEPTANCE_RESULTS/p3-upstream.json"
+python3 scripts/check-member-b-auth.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --natural-expiry --output "$ACCEPTANCE_RESULTS/p3-downstream.json"
+
+# Akses operator localhost untuk checker berikutnya.
+docker compose --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" -f docker-compose.yml -f tests/compose-operator.yml up -d --wait aggregator
+
+# P1: schema v1/v2 tanpa restart, fanout, dan freshness saat outage.
+python3 scripts/check-ingestion.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --output "$ACCEPTANCE_RESULTS/p1-ingestion.json"
+
+# P4: rebuild/restart mandiri, JSONB, dan isolasi storage.
+python3 scripts/check-p4.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --evidence-dir "$ACCEPTANCE_RESULTS/p4"
+
+# P5: backlog/reconnect/idempotensi dan subscriber ketiga.
+python3 scripts/check-stage-3.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --output "$ACCEPTANCE_RESULTS/p5-consumers.json"
+python3 scripts/check-p5-third.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --evidence-dir "$ACCEPTANCE_RESULTS/p5-third"
+
+# P2: API publik, 50 koneksi/60 detik per kondisi, slow/outage/recovery.
+python3 scripts/check-client-p2.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --evidence-dir "$ACCEPTANCE_RESULTS/p2"
+
+# Sesudah perubahan aplikasi di-commit: clone HEAD pada project/volume baru.
+python3 scripts/check-clean-clone.py --project-name "$ACCEPTANCE_PROJECT" --evidence-dir "$ACCEPTANCE_RESULTS/clean-clone"
+```
+
+Hentikan urutan jika satu perintah gagal, periksa hasilnya, lalu ulangi skenario setelah penyebabnya diperbaiki. File hasil tidak berarti lulus; periksa status `PASS` dan threshold. Clone hanya memakai commit yang dipilih; perubahan aplikasi/config yang belum di-commit tidak ikut diuji. Port clone 28081/28082/28084/28080/35672 harus bebas.
+
+Hasil berada di direktori sementara `ACCEPTANCE_RESULTS`; tim dapat menyalinnya ke lokasi laporan sendiri. Checker upstream hanya melakukan GET dan menyimpan status tanpa kredensial/payload. Checker lain dapat menambah data, mengubah schema/outage, atau restart layanan; efek pemulihannya dijelaskan dalam [panduan skrip](scripts/README.md). Untuk menutup port operator dan menghentikan stack uji tanpa menghapus volume:
+
+```sh
+docker compose --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" up -d --no-deps --wait aggregator
+docker compose --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" stop
+```
+
 ## Batas hasil dan implementasi
 
 Pengukuran lokal 6 Oktober 2026 pada Docker 8 CPU/sekitar 8 GB RAM membuktikan 50 koneksi dan refresh per VU, tetapi p95 P2 API publik mencapai 562 ms saat PVMBG lambat dan 539 ms saat outage, melampaui target <300 ms. Error tidak terkontrol dan respons 429 sama-sama nol; data terakhir dan recovery lulus. P2 belum diterima sampai perbaikan performa yang relevan dan pengukuran ulang selesai.

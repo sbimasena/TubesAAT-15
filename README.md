@@ -126,7 +126,7 @@ python3 scripts/check-deployment.py --env-file "$ACCEPTANCE_ENV" --project-name 
 
 # P3: silang kredensial upstream, scope, expiry alami, dan rotasi token.
 python3 scripts/check-cross-credentials.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --output "$ACCEPTANCE_RESULTS/p3-upstream.json"
-python3 scripts/check-member-b-auth.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --natural-expiry --output "$ACCEPTANCE_RESULTS/p3-downstream.json"
+python3 scripts/check-member-b-auth.py --env-file "$ACCEPTANCE_ENV" --natural-expiry --output "$ACCEPTANCE_RESULTS/p3-downstream.json"
 
 # Akses operator localhost untuk checker berikutnya.
 docker compose --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" -f docker-compose.yml -f tests/compose-operator.yml up -d --wait aggregator

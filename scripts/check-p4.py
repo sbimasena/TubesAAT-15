@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 from demo_support import (options, compose, healthy, now, run, settings, sql, states, wait_for,
                           http_call, client_read, login, sessions, logs, redact)
+from demo_support import progress
 
 folder = Path(options.evidence_dir or "docs/evidence/anggota-c/stage-4")
 folder.mkdir(parents=True, exist_ok=True)
@@ -59,6 +60,7 @@ def read_together(ids):
     return result
 
 
+progress("Checking independent rebuild and storage ownership")
 evidence = {"started_at": now(), "states_before": states()}
 assert all(healthy(s) for s in ("aggregator", "notification-consumer", "dashboard-consumer"))
 evidence["stop_requested_at"] = now()
@@ -80,6 +82,7 @@ for name, state in evidence["states_before"].items():
     if name != "pvmbg" and state["running"]:
         assert evidence["states_after_rebuild"][name] == state, name + " must not restart during PVMBG rebuild"
 # Capture new v1, enable v2 live, and capture confidence_level without changing the SQL schema.
+progress("Checking additive v1/v2 fields without SQL schema changes")
 evidence["migrations_before"] = migrations()
 v1_since = now()
 evidence["schema_v1_response"] = schema(1)
@@ -97,6 +100,7 @@ evidence["snapshots_before_restart"] = snapshots(ids)
 evidence["api_before_restart"] = read_together(ids)
 for record in evidence["snapshots_before_restart"]:
     assert ("confidence_level" in record["attributes"]) == (record["hazard_id"] == v2)
+progress("Checking persistence across Aggregator and database restarts")
 for service in ("aggregator", "canonical-store"):
     evidence["restart_" + service + "_at"] = now()
     run("restart", service)
@@ -119,6 +123,7 @@ assert [n for n, s in evidence["ownership"].items() if s["database_url_present"]
 assert sorted(n for n, s in evidence["ownership"].items() if "storage" in s["networks"]) == ["aggregator", "canonical-store"]
 assert not evidence["ownership"]["canonical-store"]["host_ports"]
 probe_compose = compose + ["-f", "tests/compose-probes.yml"]
+progress("Checking storage access from each network role")
 evidence["network_probes"] = {}
 for role in ("aggregator", "client", "consumer"):
     probe = subprocess.run(probe_compose + ["run", "--rm", "--no-deps", "probe-" + role], text=True,
@@ -127,6 +132,7 @@ for role in ("aggregator", "client", "consumer"):
     assert probe.returncode == expected, role + " network access did not match ownership"
     evidence["network_probes"][role] = {"returncode": probe.returncode, "output": probe.stdout.strip()}
 # Restart downstream services individually; Auth loses sessions, Client API does not.
+progress("Checking independent Auth and Client API lifecycle")
 evidence["downstream_lifecycle"] = {}
 for service in ("client-api", "auth"):
     token = login("FIELD_TEAM")
@@ -149,6 +155,7 @@ for service in ("client-api", "auth"):
     assert all(restored[role]["records"] == evidence["api_before_restart"][role]["records"] for role in restored)
     evidence["downstream_lifecycle"][service] = {"before": before, "after": after, "old_token_status": expected_status,
                                                "persistent_reads": restored}
+progress("Checking HTTP traces")
 evidence["http_traces"] = {}
 for service in ("client-api", "auth", "aggregator"):
     records = [{"correlation_id": r["correlation_id"], "latency_ms": r["latency_ms"]}
@@ -159,5 +166,6 @@ for service in ("client-api", "auth", "aggregator"):
 evidence["finished_at"] = now()
 evidence["result"] = "PASS"
 (folder / "p4-check.json").write_text(redact(json.dumps(evidence, indent=2)) + "\n")
+progress("Result file saved")
 print("PASS: v1/v2 persistence through three client scopes; storage isolation; independent downstream restarts; HTTP traces")
 print(folder / "p4-check.json")

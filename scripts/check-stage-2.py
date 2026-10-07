@@ -7,6 +7,7 @@ import time
 import urllib.request
 
 from demo_support import options, broker, now, run, settings, sql
+from demo_support import progress, heartbeat
 
 
 def queues():
@@ -30,6 +31,7 @@ def probes():
     return samples
 
 
+progress("Checking durable backlog; both consumers must be offline")
 evidence = {"started_at": now(), "aggregator_id_before": run("ps", "-q", "aggregator"),
             "queues_before": queues(), "queue_samples_before": probes()}
 assert all(q["durable"] and not q["auto_delete"] and q["consumers"] == 0 for q in evidence["queues_before"])
@@ -40,7 +42,9 @@ evidence["stop_requested_at"] = now()
 try:
     run("stop", "message-broker")
     evidence["broker_stopped_at"] = now()
-    for _ in range(15):
+    progress("Waiting for pending outbox records while broker is offline")
+    for attempt in range(15):
+        heartbeat("pending outbox during broker downtime", attempt)
         time.sleep(2)
         count = int(sql(f"SELECT count(*) FROM hazard_outbox WHERE published_at IS NULL AND message_id>{baseline}"))
         if count:
@@ -58,7 +62,9 @@ finally:
     run("start", "message-broker")
 
 published = "f"
-for _ in range(30):
+progress("Waiting for broker recovery and pending publication")
+for attempt in range(30):
+    heartbeat("broker recovery and queued publication", attempt)
     time.sleep(2)
     try:
         evidence["queues_after"] = queues()
@@ -91,5 +97,6 @@ evidence["result"] = "PASS"
 destination = Path(options.evidence_dir or "docs/evidence/anggota-c/stage-2") / "broker-recovery.json"
 destination.parent.mkdir(parents=True, exist_ok=True)
 destination.write_text(json.dumps(evidence, indent=2) + "\n")
+progress("Result file saved")
 print("PASS: pending during downtime; API 200; recovered without Aggregator restart; durable queued snapshots preserved")
 print(destination)

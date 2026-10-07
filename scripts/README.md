@@ -98,3 +98,31 @@ Memerlukan sembilan layanan healthy, k6/lsof native, serta access TTL 60 detik. 
 Respons 200 harus berisi data kanonis BMKG. Respons 429 harus memiliki kode `concurrency_limit`, correlation ID, dan `Retry-After: 1`; 429 yang memenuhi kontrak dilaporkan terpisah dari error tidak terkontrol. p95 request lengkap dan p95 respons 200 harus <300 ms, error tidak terkontrol <1%, dan setiap run harus mencatat sedikitnya 50 refresh berhasil serta query 200. Rate 429 tidak diberi batas tambahan; jumlah 200/rate layanan tetap dicatat.
 
 Checker mencatat panggilan upstream lambat/503, last-known PVMBG dan metadata stale selama outage, progres ingestion BMKG, serta report PVMBG baru setelah recovery. Schema/delay/outage asli dibaca dari health PVMBG dan dipulihkan pada `finally`, termasuk saat threshold gagal. Layanan inti tidak direstart. Jangan menjalankan pemeriksaan lifecycle bersamaan. Hasil gagal dan hasil pemulihan tetap disimpan pada lokasi bukti.
+
+## Log progres pengujian
+
+Semua `check-*.py` menampilkan tahap pemeriksaan dan waktu berjalan ke **stderr**, langsung tanpa buffering. Polling panjang mencetak heartbeat kira-kira setiap 10 detik; P2 mencetak checkpoint koneksi/data pada detik 15, 30, dan 45 serta ringkasan metrik tiap run. Operasi build/start yang outputnya ditangkap menampilkan tahap sebelum operasi; detailnya tetap tersedia di file log atau Docker. Token, password, kredensial request, dan payload tidak dicetak oleh log progres.
+
+Command sebelumnya tetap berlaku. Gunakan nama project Docker yang benar, lihat `docker compose ls`; nama contoh `project-uji` harus diganti dengan project yang ingin diperiksa. Contoh untuk stack `tubesaat-15`:
+
+```sh
+python3 scripts/check-client-p2.py --env-file .env --project-name tubesaat-15 --evidence-dir /tmp/p2-check
+```
+
+Untuk menyimpan progres deployment sambil mempertahankan JSON stdout:
+
+```sh
+python3 scripts/check-deployment.py --env-file .env --project-name tubesaat-15 \
+  --output /tmp/deployment-check.json 2>/tmp/deployment-progress.log
+tail -f /tmp/deployment-progress.log
+```
+
+`tail -f` dijalankan di terminal lain. Untuk melihat sekaligus menyimpan output gabungan checker:
+
+```sh
+set -o pipefail
+python3 scripts/check-client-p2.py --env-file .env --project-name tubesaat-15 \
+  --evidence-dir /tmp/p2-check 2>&1 | tee /tmp/p2-progress.log
+```
+
+File gabungan ini adalah log teks; hasil terstruktur P2 tetap di `/tmp/p2-check/p2-client-check.json`. Jangan menjalankan checker outage/lifecycle bersamaan pada project yang sama. Progres baru berlaku untuk proses yang dimulai setelah skrip diperbarui.

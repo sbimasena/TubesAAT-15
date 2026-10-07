@@ -18,6 +18,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from checker_progress import progress, heartbeat
 
 
 def main():
@@ -28,6 +29,7 @@ def main():
     parser.add_argument("--burst-connections", type=int, default=0, help="Optional short burst, not sustained P2 load (2-256)")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    progress("Starting configuration and prerequisite checks")
     assert args.burst_connections == 0 or 2 <= args.burst_connections <= 256, "Burst size must be 2-256"
     env = {}
     for line in Path(args.env_file).read_text(encoding="utf-8-sig").splitlines():
@@ -41,6 +43,8 @@ def main():
                "-f", str(root / "tests/compose-member-b.yml")]
 
     def compose(*parts):
+        if parts and parts[0] in ("up", "stop", "start", "restart", "build"):
+            progress("Compose " + parts[0] + ": running selected lifecycle operation")
         result = subprocess.run(command + list(parts), capture_output=True, text=True, timeout=60)
         if result.returncode:
             raise RuntimeError("Compose checkpoint operation failed")
@@ -108,15 +112,20 @@ def main():
 
     def wait_for(check, label):
         deadline = time.monotonic() + 45
+        attempt = 0
         while time.monotonic() < deadline:
+            heartbeat(label, attempt, every=10)
+            attempt += 1
             value = check()
             if value:
+                progress("Ready: " + label)
                 return value
             time.sleep(1)
         raise AssertionError(label)
 
     stopped = set()
     pvmbg_original = None
+    progress("Checking source projection, filters and error contracts")
     try:
         pair = login()
         access = pair["access_token"]
@@ -136,6 +145,7 @@ def main():
         sensitive.extend((pair["access_token"], pair["refresh_token"]))
         access = pair["access_token"]
 
+        progress("Checking optional connection burst")
         if args.burst_connections:
             barrier = threading.Barrier(args.burst_connections)
             def query(_):
@@ -147,6 +157,7 @@ def main():
             evidence["burst"] = {"connections": args.burst_connections, "status_counts": dict(counts),
                                  "controlled_429_observed": counts[429] > 0}
 
+        progress("Checking optional dependency outages and recovery")
         if args.exercise_outages:
             _, health = call("pvmbg", "/health")
             pvmbg_original = health["simulated_outage"]
@@ -205,12 +216,15 @@ def main():
         evidence["checks"].append("verified login/refresh identity, cross-service correlation/latency, token/secret redaction")
         evidence["status"] = "PASS"
     finally:
+        progress("Restoring stopped services and original PVMBG outage flag")
         for service in sorted(stopped):
             compose("up", "-d", "--no-deps", "--wait", "--wait-timeout", "30", service)
         if pvmbg_original is not None:
             call("pvmbg", "/admin/outage", {"enabled": pvmbg_original}, env["PVMBG_TOKEN"])
     if args.output:
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+        progress("Result file saved")
+    progress("PASS: resilience checks")
     print(json.dumps(evidence, indent=2))
 
 

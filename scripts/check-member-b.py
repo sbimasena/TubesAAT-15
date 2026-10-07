@@ -12,6 +12,7 @@ import subprocess
 import time
 import urllib.request
 import uuid
+from checker_progress import progress, heartbeat
 
 
 def main():
@@ -22,6 +23,7 @@ def main():
     parser.add_argument("--check-lifecycle", action="store_true", help="Stop/start only Auth and Client API")
     parser.add_argument("--output", type=Path, help="Write evidence without credentials or hazard payloads")
     args = parser.parse_args()
+    progress("Starting configuration and prerequisite checks")
     command = ["docker", "compose", "--env-file", args.env_file,
                "-f", "docker-compose.yml", "-f", "tests/compose-operator.yml",
                "-f", "tests/compose-member-b.yml"]
@@ -29,6 +31,8 @@ def main():
         command += ["--project-name", args.project_name]
 
     def compose(*options):
+        if options and options[0] in ("up", "stop", "start", "restart", "build"):
+            progress("Compose " + options[0] + ": running selected lifecycle operation")
         timeout = 600 if "--build" in options else 240
         result = subprocess.run(command + list(options), capture_output=True, text=True, timeout=timeout)
         if result.returncode:
@@ -60,6 +64,7 @@ def main():
             assert response.headers.get("X-Correlation-ID") == correlation, "Correlation ID changed"
             return json.load(response), response.headers
 
+    progress("Checking foundation deployment and optional lifecycle")
     if args.start:
         compose("up", "--build", "-d", "--wait", "--wait-timeout", "120")
     if args.check_lifecycle:
@@ -78,8 +83,12 @@ def main():
         assert health == {"service": service, "status": "ok"}, f"Unexpected {service} health response"
 
     # Wait for actual committed records from both sources, with a bounded deadline.
+    progress("Waiting for both sources to complete committed ingestion")
     deadline = time.monotonic() + 60
+    attempt = 0
     while True:
+        heartbeat("committed ingestion from both sources", attempt, every=10)
+        attempt += 1
         health, _ = get(origin("aggregator") + "/health", "member-b-storage-health")
         if health["storage"]["available"] and all(
                 health["sources"][source].get("last_ingested_at") and not health["sources"][source]["stale"]
@@ -101,6 +110,7 @@ def main():
                 "auth_checked": True, "lifecycle_checked": args.check_lifecycle, "sources": {}}
     required = {"hazard_id", "source", "source_ref_id", "hazard_type", "severity", "area_name",
                 "latitude", "longitude", "occurred_at", "ingested_at", "attributes"}
+    progress("Checking protected canonical read for each source")
     for source, hazard_type in (("BMKG", "SEISMIC"), ("PVMBG", "VOLCANIC")):
         correlation = "member-b-flow-" + uuid.uuid4().hex
         query = f"?source={source}&hazard_type={hazard_type}&since=1970-01-01T00:00:00Z&limit=5"
@@ -135,6 +145,8 @@ def main():
     payload = json.dumps(evidence, indent=2) + "\n"
     if args.output:
         args.output.write_text(payload, encoding="utf-8")
+        progress("Result file saved")
+    progress("PASS: Member B foundation checks")
     print(payload, end="")
 
 

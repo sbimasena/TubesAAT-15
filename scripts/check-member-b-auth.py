@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from checker_progress import progress
 
 
 def main():
@@ -23,6 +24,7 @@ def main():
     parser.add_argument("--natural-expiry", action="store_true", help="Wait for the actual access TTL (maximum 300s)")
     parser.add_argument("--output", type=Path, help="Evidence without tokens, credentials, or hazard payloads")
     args = parser.parse_args()
+    progress("Starting configuration and prerequisite checks")
     env = {}
     for line in Path(args.env_file).read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
@@ -76,6 +78,7 @@ def main():
     assert call(client, "/hazards")[0] == 401, "Missing token accepted"
     assert call(client, "/hazards", access="invalid-token")[0] == 401, "Invalid token accepted"
     checks.append("missing/invalid token -> 401")
+    progress("Checking three identities: scopes, raw-field rejection, refresh and replay")
     for role in ("media", "field-team", "internal-ops"):
         pair = login(role)
         for source in ("BMKG", "PVMBG"):
@@ -98,6 +101,7 @@ def main():
         checks.append(f"{role}: fields, safe source metadata, refresh, old access/replay rejection")
 
     elapsed = None
+    progress("Checking natural token expiry when requested")
     if args.natural_expiry:
         pair = login("field-team")
         # Decode only to schedule the wait; Auth remains responsible for JWT validation.
@@ -108,7 +112,11 @@ def main():
         assert call(client, "/hazards", access=pair["access_token"])[0] == 200, "Token invalid before natural expiry"
         started = time.monotonic()
         deadline = time.monotonic() + remaining
+        next_update = time.monotonic()
         while time.monotonic() < deadline:
+            if time.monotonic() >= next_update:
+                progress(f"Waiting for natural expiry: {max(0, deadline - time.monotonic()):.0f}s remaining")
+                next_update += 10
             time.sleep(min(1, max(0, deadline - time.monotonic())))
         assert call(client, "/hazards", access=pair["access_token"])[0] == 401, "Naturally expired token accepted"
         status, new = call(auth, "/refresh", {"refresh_token": pair["refresh_token"]})
@@ -124,6 +132,8 @@ def main():
                 "expiry_wait_seconds": elapsed, "correlation_prefix": prefix}
     if args.output:
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+        progress("Result file saved")
+    progress("PASS: authentication checks")
     print(json.dumps(evidence, indent=2))
 
 

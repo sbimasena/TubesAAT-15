@@ -13,12 +13,14 @@ import secrets
 import subprocess
 import tempfile
 import time
+from checker_progress import progress, heartbeat
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--revision", default="HEAD", help="Committed revision to verify")
 parser.add_argument("--evidence-dir", type=Path, default=Path("docs/evidence/anggota-c/integrasi/clean-clone"))
 parser.add_argument("--project-name", help="Existing project to observe; default observes all existing Compose containers")
 args = parser.parse_args()
+progress("Starting isolated clean-checkout verification")
 folder = args.evidence_dir.resolve()
 folder.mkdir(parents=True, exist_ok=True)
 checker = Path("scripts/check-deployment.py").resolve()
@@ -39,8 +41,10 @@ def existing_states():
 
 
 def wait_for(check, description):
-    for _ in range(30):
+    for attempt in range(30):
+        heartbeat(description, attempt)
         if check():
+            progress("Ready: " + description)
             return
         time.sleep(2)
     raise AssertionError(description)
@@ -48,6 +52,7 @@ def wait_for(check, description):
 
 evidence = {"started_at": now(), "existing_states_before": existing_states(),
             "verification_tool_sha256": hashlib.sha256(checker.read_bytes()).hexdigest()}
+progress("Creating isolated checkout and disposable configuration")
 with tempfile.TemporaryDirectory(prefix="tubesaat-clean-", dir="/private/tmp") as temporary:
     root = Path(temporary)
     clone = root / "repo"
@@ -102,6 +107,7 @@ with tempfile.TemporaryDirectory(prefix="tubesaat-clean-", dir="/private/tmp") a
         data = path.read_bytes()
         return [json.loads(line) for line in data[:data.rfind(b"\n") + 1].splitlines()]
 
+    progress("Building and starting nine services; build output saved to build.log")
     try:
         build = subprocess.run(command + ["up", "--build", "-d", "--wait", "--wait-timeout", "120"],
                                cwd=clone, env=env, capture_output=True, text=True)
@@ -109,6 +115,7 @@ with tempfile.TemporaryDirectory(prefix="tubesaat-clean-", dir="/private/tmp") a
         assert build.returncode == 0, "clean clone startup failed; inspect build.log"
         # Run the current verification tool against committed service source, not copied application files.
         deployment_file = folder / "deployment.json"
+        progress("Checking protected reads and network isolation in the new project")
         result = subprocess.run(["python3", "-B", str(checker), "--env-file", str(environment_file),
                                  "--project-name", project, "--output", str(deployment_file)],
                                 cwd=clone, env=env, capture_output=True, text=True)
@@ -120,6 +127,7 @@ with tempfile.TemporaryDirectory(prefix="tubesaat-clean-", dir="/private/tmp") a
                 evidence["producer"] = json.loads(value)
                 return True
             return False
+        progress("Checking fresh outbox publication")
         wait_for(published, "fresh clone must publish an outbox snapshot")
         evidence["consumers"] = {}
         for service in ("notification-consumer", "dashboard-consumer"):
@@ -144,6 +152,7 @@ with tempfile.TemporaryDirectory(prefix="tubesaat-clean-", dir="/private/tmp") a
         (folder / "diagnostics.log").write_text(redact(diagnostics))
         raise
     finally:
+        progress("Removing only the temporary project and checking existing containers")
         try:
             evidence["cleanup"] = run("down", "--volumes", "--remove-orphans")
             evidence["existing_states_after"] = existing_states()
@@ -157,5 +166,6 @@ with tempfile.TemporaryDirectory(prefix="tubesaat-clean-", dir="/private/tmp") a
         finally:
             evidence["finished_at"] = now()
             (folder / "clean-clone.json").write_text(redact(json.dumps(evidence, indent=2)) + "\n")
+            progress("Result file saved")
 print("PASS: clean committed checkout boots nine healthy services; protected queries; matching fanout; isolated cleanup")
 print(folder / "clean-clone.json")

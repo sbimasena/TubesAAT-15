@@ -11,6 +11,7 @@ import time
 import urllib.request
 import urllib.error
 import uuid
+from checker_progress import progress as _progress, heartbeat
 
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("--env-file", default=".env")
@@ -23,6 +24,7 @@ compose = ["docker", "compose", "--env-file", str(Path(options.env_file).resolve
 if options.project_name:
     compose += ["--project-name", options.project_name]
 compose += ["-f", "docker-compose.yml", "-f", "tests/compose-operator.yml"]
+_progress("Reading selected Compose configuration")
 result = subprocess.run(compose + ["config", "--format", "json"], capture_output=True, text=True)
 if result.returncode:
     raise SystemExit("Invalid demo configuration: fill the local environment file; inspect Compose locally.")
@@ -42,7 +44,16 @@ def redact(text):
     return text
 
 
+def progress(message):
+    _progress(redact(message))
+
+
+progress("Selected project: " + config.get("name", options.project_name or "Compose default"))
+
+
 def run(*args):
+    if args and args[0] in ("up", "stop", "start", "restart", "build", "rm", "down"):
+        progress("Compose " + args[0] + ": running selected lifecycle operation")
     result = subprocess.run(compose + list(args), capture_output=True, text=True)
     if result.returncode:
         raise subprocess.CalledProcessError(result.returncode, compose + list(args),
@@ -70,9 +81,11 @@ def broker(path, body=None):
 
 
 def wait_for(check, description):
-    for _ in range(30):
+    for attempt in range(30):
+        heartbeat(redact(description), attempt)
         try:
             if check():
+                progress("Ready: " + description)
                 return
         except (OSError, subprocess.CalledProcessError):
             # Startup/restart can briefly refuse network requests or container execs.

@@ -8,6 +8,7 @@ import subprocess
 import urllib.error
 import urllib.request
 import uuid
+from checker_progress import progress
 
 
 def check_upstreams(services, checks=None):
@@ -37,6 +38,7 @@ def check_upstreams(services, checks=None):
                 ("foreign trust-domain header", foreign_header),
                 ("missing credential", {}),
             ):
+                progress(f"Request: {service} {path}; {name}")
                 correlation = "cross-credential-" + uuid.uuid4().hex
                 request = urllib.request.Request(
                     f"http://127.0.0.1:{port}{path}",
@@ -50,6 +52,7 @@ def check_upstreams(services, checks=None):
                     status = response.status
                     checks.append({"service": service, "path": path, "case": name,
                                    "status": status, "correlation_id": correlation})
+                    progress(f"Response: {service} {path}; {name}; HTTP {status}")
                     expected = (200,) if name == "own credential" else (401, 403)
                     if status not in expected:
                         raise ValueError(f"{service} {path}: {name} returned {status}; expected {expected}")
@@ -64,6 +67,7 @@ def main():
     parser.add_argument("--project-name")
     parser.add_argument("--output", type=Path, help="Save statuses only; no credentials or response bodies")
     args = parser.parse_args()
+    progress("Starting configuration and prerequisite checks")
     evidence = {"started_at": datetime.now(timezone.utc).isoformat(), "checks": []}
     command = ["docker", "compose", "--env-file", str(Path(args.env_file).resolve())]
     if args.project_name:
@@ -83,6 +87,8 @@ def main():
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(evidence, indent=2) + "\n")
+        progress("Result file saved")
+    progress("Credential isolation checks complete")
     print(json.dumps(evidence, indent=2))
     return 0 if evidence["result"] == "PASS" else 1
 

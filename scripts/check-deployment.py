@@ -8,6 +8,7 @@ import urllib.request
 import uuid
 
 from demo_support import compose, now, redact, settings, wait_for
+from demo_support import progress
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--start", action="store_true", help="Build/start the default stack in the selected project")
@@ -18,12 +19,15 @@ deployment = compose[:-2]
 
 
 def run(*parts):
+    if parts and parts[0] in ("up", "stop", "start", "restart", "build"):
+        progress("Compose " + parts[0] + ": running selected lifecycle operation")
     result = subprocess.run(deployment + list(parts), capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError("Deployment Compose operation failed; inspect the selected project locally")
     return result.stdout.strip()
 
 
+progress("Checking default deployment ownership, network isolation and health")
 config = json.loads(run("config", "--format", "json"))
 services = config["services"]
 expected = {"bmkg", "pvmbg", "aggregator", "canonical-store", "message-broker",
@@ -36,6 +40,7 @@ assert {name for name, service in services.items() if "DATABASE_URL" in service.
 assert {name for name, service in services.items() if "JWT_SIGNING_SECRET" in service.get("environment", {})} == {"auth"}
 assert {name for name, service in services.items() if "AUTH_INTERNAL_SECRET" in service.get("environment", {})} == {"auth", "client-api"}
 
+progress("Deployment prerequisites checked")
 if args.start:
     run("up", "--build", "-d", "--wait", "--wait-timeout", "120")
 
@@ -66,6 +71,7 @@ def call(port, path, body=None, token=None):
         return json.load(response)
 
 
+progress("Checking login and protected reads for all three roles")
 reads = {}
 for role in ("MEDIA", "FIELD_TEAM", "INTERNAL_OPS"):
     pair = call(settings["AUTH_PORT"], "/login", {"client_id": settings[role + "_CLIENT_ID"],
@@ -81,6 +87,7 @@ for role in ("MEDIA", "FIELD_TEAM", "INTERNAL_OPS"):
     assert all(set(row) == fields for row in payload["data"])
     reads[role.lower().replace("_", "-")] = {"count": payload["count"], "field_count": len(fields)}
 
+progress("Checking correlation IDs and latency traces")
 traces = {}
 for service in ("client-api", "auth", "aggregator"):
     records = []
@@ -101,4 +108,6 @@ evidence = {"result": "PASS", "checked_at": now(), "scope": "DEFAULT_COMPOSE",
 if args.output:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(redact(json.dumps(evidence, indent=2)) + "\n")
+    progress("Result file saved")
+progress("PASS: deployment and protected reads")
 print(json.dumps(evidence, indent=2))

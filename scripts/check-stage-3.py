@@ -7,6 +7,7 @@ import argparse
 import json
 from pathlib import Path
 from demo_support import options, broker, healthy, logs, now, received, run, sql, wait_for
+from demo_support import progress
 
 services = ("notification-consumer", "dashboard-consumer")
 parser = argparse.ArgumentParser(description=__doc__)
@@ -24,6 +25,7 @@ def republish(sample):
     assert result["routed"]
 
 
+progress("Checking fanout, offline backlog and consumer idempotency")
 evidence = {"started_at": now(), "aggregator_id": run("ps", "-q", "aggregator"),
             "dashboard_id": run("ps", "-q", "dashboard-consumer")}
 wait_for(lambda: all(healthy(s) for s in services), "consumers must become ready")
@@ -55,6 +57,7 @@ for record in evidence["consumer_samples"].values():
     assert record["hazard_id"] == sample["hazard_id"] and record["correlation_id"] == sample["correlation_id"]
     assert record["hazard_revision"] == sample["hazard_revision"] and record["payload"] == sample["payload"]
 # Republish a real producer snapshot twice, with a consumer restart between attempts.
+progress("Checking duplicate delivery before and after consumer restart")
 for attempt in range(2):
     if attempt:
         run("restart", *services)
@@ -68,6 +71,7 @@ for attempt in range(2):
     for s in services:
         assert len(received(s, sample["message_id"])) == 1, "one durable result per ID across restart"
 # Connection recovery and health must reflect a broker outage, with volumes retained.
+progress("Checking broker loss and consumer reconnect")
 evidence["broker_stop_requested_at"] = now()
 consumer_ids = {s: run("ps", "-q", s) for s in services}
 try:
@@ -91,5 +95,6 @@ evidence["result"] = "PASS"
 destination = arguments.output
 destination.parent.mkdir(parents=True, exist_ok=True)
 destination.write_text(json.dumps(evidence, indent=2) + "\n")
+progress("Result file saved")
 print("PASS: two consumers; independent downtime/backlog; one journal result per ID across restart; broker reconnect")
 print(destination)

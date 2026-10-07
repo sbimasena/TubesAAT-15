@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from demo_support import options, broker, compose, healthy, logs, now, received, run, sql, wait_for
 import subprocess
+from demo_support import progress
 
 review_compose = compose + ["-f", "tests/compose-review.yml"]
 
@@ -23,6 +24,7 @@ def review_logs():
             if line.startswith("{")]
 
 
+progress("Checking third subscriber and unchanged producer")
 evidence = {"started_at": now(), "producer_commit_before": subprocess.check_output(
     ["git", "log", "-1", "--format=%H", "--", "services/aggregator"], text=True).strip(),
     "producer_hashes_before": producer_hashes(), "aggregator_id_before": run("ps", "-q", "aggregator")}
@@ -46,6 +48,7 @@ try:
     wait_for(lambda: any(r.get("message_id") == mid for r in review_logs()), "third subscriber must receive the new event")
     third = next(r for r in review_logs() if r.get("message_id") == mid)
     evidence["third_consumer"] = third
+    progress("Matching the new event across all three subscribers")
     for service in ("notification-consumer", "dashboard-consumer"):
         wait_for(lambda: bool(received(service, mid)), service + " must receive the same event")
     evidence["base_consumers"] = {s: received(s, mid)[0] for s in ("notification-consumer", "dashboard-consumer")}
@@ -67,6 +70,7 @@ try:
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "review-build.log").write_text(build_output + "\n")
 finally:
+    progress("Cleaning up temporary subscriber")
     # Only the demo container is removed; its exclusive queue disappears on disconnect.
     review("rm", "-s", "-f", "review-subscriber")
 wait_for(lambda: not any(q["name"] == subscribed["queue"] for q in broker("queues/%2F")), "temporary queue must disappear")
@@ -74,5 +78,6 @@ evidence["temporary_queue_removed"] = True
 evidence["finished_at"] = now()
 evidence["result"] = "PASS"
 (folder / "third-consumer.json").write_text(json.dumps(evidence, indent=2) + "\n")
+progress("Result file saved")
 print("PASS: the same new producer event reaches three independent consumers; producer files/commit/container unchanged")
 print(folder / "third-consumer.json")

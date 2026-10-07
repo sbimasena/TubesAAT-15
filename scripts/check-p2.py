@@ -12,6 +12,7 @@ import subprocess
 import time
 import urllib.request
 from demo_support import options, compose, healthy, logs, now, run, settings, sql, states, wait_for
+from demo_support import progress
 
 folder = Path(options.evidence_dir or "docs/evidence/anggota-c/stage-5")
 folder.mkdir(parents=True, exist_ok=True)
@@ -41,6 +42,7 @@ def source():
     return request(base + "/health")["body"]["sources"]["PVMBG"]
 
 
+progress("Checking prerequisites for direct Aggregator load")
 evidence = {"started_at": now(), "scope": "AGGREGATOR_DIRECT; AUTH_CLIENT_API_NOT_CHECKED",
             "tool": subprocess.check_output(["k6", "version"], text=True).strip(),
             "host": {"platform": platform.platform(), "cpu_logical": os.cpu_count()},
@@ -57,6 +59,7 @@ try:
         "SELECT json_object_agg(source,n) FROM (SELECT source,count(*) n FROM hazard_events GROUP BY source) t"))
     evidence["load_started_at"] = now()
     started = time.monotonic()
+    progress("Starting k6: 50 VUs for 60 seconds; raw output saved to load.log")
     with (folder / "load.log").open("w") as output:
         load = subprocess.Popen(["k6", "run", "--quiet", "--env", "BASE_URL=" + base,
             "--env", "SUMMARY_PATH=" + str(folder / "load-summary.json"), "tests/load-p2.js"],
@@ -64,6 +67,7 @@ try:
         try:
             evidence["connection_samples"] = []
             for _ in range(3):
+                progress("Waiting 15 seconds before the next TCP and response checkpoint")
                 time.sleep(15)
                 sockets = subprocess.check_output(["lsof", "-nP", "-a", "-p", str(load.pid),
                     "-iTCP", "-sTCP:ESTABLISHED", "-Fn"], text=True, timeout=5)
@@ -71,6 +75,7 @@ try:
                     if line.startswith("n") and line.endswith("->127.0.0.1:" + settings["AGGREGATOR_PORT"])))
                 evidence["connection_samples"].append({"at": now(), "elapsed_seconds": time.monotonic() - started,
                     "established_count": len(connections), "connections": connections})
+            progress("Waiting for the 60-second load run to finish")
             load.wait(timeout=30)
         finally:
             if load.poll() is None:
@@ -101,6 +106,7 @@ try:
     stable = evidence["during_outage"]["body"]["data"]
     bmkg_before = request(base + "/health")["body"]["sources"]["BMKG"]["last_success_at"]
     evidence["bmkg_during_outage"] = []
+    progress("Checking BMKG reads and retained PVMBG data during outage")
     for _ in range(5):
         seismic = request(base + "/internal/v1/hazards?source=BMKG&hazard_type=SEISMIC&limit=100")
         assert seismic["body"]["count"] > 0 and seismic["elapsed_ms"] < 300
@@ -129,6 +135,7 @@ except Exception as error:
     evidence["failure"] = str(error)
     raise
 finally:
+    progress("Restoring PVMBG delay, schema and outage settings")
     try:
         run("up", "-d", "--no-deps", "pvmbg")
         wait_for(lambda: request(pvmbg + "/health")["status"] == 200, "restore default PVMBG")
@@ -147,6 +154,7 @@ finally:
     finally:
         evidence["finished_at"] = now()
         (folder / "p2-check.json").write_text(json.dumps(evidence, indent=2) + "\n")
+        progress("Result file saved")
 print("PASS C: 50 VUs/60s, slow PVMBG, last-known reads during outage, recovery without Aggregator restart")
 print("PENDING B: authenticated Client API load and downstream freshness")
 print(folder / "p2-check.json")

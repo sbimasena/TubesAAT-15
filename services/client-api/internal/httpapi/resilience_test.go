@@ -27,8 +27,16 @@ func (f validatorFunc) Validate(ctx context.Context, access, correlation string)
 
 type listerFunc func(context.Context, url.Values, string) ([]byte, error)
 
-func (f listerFunc) List(ctx context.Context, query url.Values, correlation string) ([]byte, error) {
-	return f(ctx, query, correlation)
+func (f listerFunc) List(ctx context.Context, query url.Values, correlation string) (aggregator.Envelope, error) {
+	payload, err := f(ctx, query, correlation)
+	if err != nil {
+		return aggregator.Envelope{}, err
+	}
+	envelope, err := aggregator.DecodeEnvelope(payload)
+	if err != nil {
+		return aggregator.Envelope{}, &aggregator.RequestError{Kind: aggregator.ErrorInvalidResponse, Err: err}
+	}
+	return envelope, nil
 }
 
 func assertAPIError(t *testing.T, w *httptest.ResponseRecorder, status int, code, correlation string) {

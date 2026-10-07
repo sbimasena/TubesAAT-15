@@ -16,7 +16,7 @@ import (
 )
 
 type hazardLister interface {
-	List(context.Context, url.Values, string) ([]byte, error)
+	List(context.Context, url.Values, string) (aggregator.Envelope, error)
 }
 
 type correlationKey struct{}
@@ -44,17 +44,12 @@ func NewHandler(client hazardLister, validator accessValidator, enableProvisiona
 			return
 		}
 		id, _ := r.Context().Value(correlationKey{}).(string)
-		payload, err := client.List(r.Context(), query, id)
+		envelope, err := client.List(r.Context(), query, id)
 		if r.Context().Err() != nil {
 			return
 		}
 		if err != nil {
 			aggregatorError(w, err)
-			return
-		}
-		envelope, err := aggregator.DecodeEnvelope(payload)
-		if err != nil {
-			writeError(w, http.StatusBadGateway, "invalid_aggregator_response", "invalid Aggregator response")
 			return
 		}
 		rows, err := hazard.Project(envelope.Data, info.Scope, query)

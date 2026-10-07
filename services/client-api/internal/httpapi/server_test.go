@@ -50,9 +50,11 @@ type testLister struct{ calls int }
 
 const emptyResponse = `{"data":[],"count":0,"sources":{"BMKG":{"available":true,"stale":false,"last_ingested_at":"2026-10-06T00:00:00Z","stale_after_seconds":15},"PVMBG":{"available":false,"stale":true,"stale_after_seconds":15}}}`
 
-func (l *testLister) List(_ context.Context, _ url.Values, _ string) ([]byte, error) {
+const testHazardResponse = `{"count":1,"sources":{"BMKG":{"available":true,"stale":false,"last_ingested_at":"2026-10-06T00:00:01Z","stale_after_seconds":15,"last_error":"private diagnostic","ingestion_error":"private mapping","last_success_at":"2026-10-06T00:00:02Z","future_raw":"private metadata"},"PVMBG":{"available":false,"stale":true,"stale_since":"2026-10-06T00:00:02Z","stale_after_seconds":15,"last_error":"private outage"}},"data":[{"hazard_id":"h","source":"BMKG","source_ref_id":"private-ref","hazard_type":"SEISMIC","severity":"SIAGA","area_name":"Bandung","latitude":1,"longitude":2,"occurred_at":"2026-10-06T00:00:00Z","ingested_at":"2026-10-06T00:00:01Z","attributes":{"private":"raw"},"future_raw":"private"}]}`
+
+func (l *testLister) List(_ context.Context, _ url.Values, _ string) (aggregator.Envelope, error) {
 	l.calls++
-	return []byte(`{"count":1,"sources":{"BMKG":{"available":true,"stale":false,"last_ingested_at":"2026-10-06T00:00:01Z","stale_after_seconds":15,"last_error":"private diagnostic","ingestion_error":"private mapping","last_success_at":"2026-10-06T00:00:02Z","future_raw":"private metadata"},"PVMBG":{"available":false,"stale":true,"stale_since":"2026-10-06T00:00:02Z","stale_after_seconds":15,"last_error":"private outage"}},"data":[{"hazard_id":"h","source":"BMKG","source_ref_id":"private-ref","hazard_type":"SEISMIC","severity":"SIAGA","area_name":"Bandung","latitude":1,"longitude":2,"occurred_at":"2026-10-06T00:00:00Z","ingested_at":"2026-10-06T00:00:01Z","attributes":{"private":"raw"},"future_raw":"private"}]}`), nil
+	return aggregator.DecodeEnvelope([]byte(testHazardResponse))
 }
 
 func TestProtectedHazardsEnforceScopesBeforeFetchingData(t *testing.T) {

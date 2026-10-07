@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/sbimasena/TubesAAT-15/services/client-api/internal/httpclient"
 )
 
 const hazardsPath = "/internal/v1/hazards"
@@ -48,8 +50,7 @@ func NewClient(baseURL string, timeout time.Duration, logger *slog.Logger) (*Cli
 	if timeout <= 0 {
 		return nil, fmt.Errorf("Aggregator timeout must be positive")
 	}
-	return &Client{base: base, http: &http.Client{Timeout: timeout,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}, logger: logger}, nil
+	return &Client{base: base, http: httpclient.New(timeout), logger: logger}, nil
 }
 
 // List forwards only the four filters supported by the agreed Aggregator API.

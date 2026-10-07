@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/sbimasena/TubesAAT-15/services/client-api/internal/httpclient"
 )
 
 var (
@@ -38,8 +40,7 @@ func New(baseURL, secret string, timeout time.Duration, logger *slog.Logger) (*C
 		return nil, fmt.Errorf("Auth requires an HTTP(S) origin, internal secret of at least 32 bytes, and positive timeout")
 	}
 	return &Client{endpoint: base.ResolveReference(&url.URL{Path: "/internal/v1/introspect"}).String(),
-		secret: secret, logger: logger, http: &http.Client{Timeout: timeout,
-			CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+		secret: secret, logger: logger, http: httpclient.New(timeout)}, nil
 }
 
 // Validate always asks Auth; caching would delay rejection after a refresh.

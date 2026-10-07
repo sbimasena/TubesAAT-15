@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/sbimasena/TubesAAT-15/services/client-api/internal/httpclient"
 )
 
 const hazardsPath = "/internal/v1/hazards"
@@ -48,13 +50,12 @@ func NewClient(baseURL string, timeout time.Duration, logger *slog.Logger) (*Cli
 	if timeout <= 0 {
 		return nil, fmt.Errorf("Aggregator timeout must be positive")
 	}
-	return &Client{base: base, http: &http.Client{Timeout: timeout,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}, logger: logger}, nil
+	return &Client{base: base, http: httpclient.New(timeout), logger: logger}, nil
 }
 
 // List forwards only the four filters supported by the agreed Aggregator API.
-// Canonical mapping remains in Aggregator; this adapter preserves additive response fields.
-func (c *Client) List(ctx context.Context, filters url.Values, correlationID string) ([]byte, error) {
+// Canonical mapping remains in Aggregator; raw hazard fields remain available for scope projection.
+func (c *Client) List(ctx context.Context, filters url.Values, correlationID string) (Envelope, error) {
 	endpoint := c.base.ResolveReference(&url.URL{Path: hazardsPath})
 	query := url.Values{}
 	for _, key := range []string{"source", "hazard_type", "since", "limit"} {
@@ -65,7 +66,7 @@ func (c *Client) List(ctx context.Context, filters url.Values, correlationID str
 	endpoint.RawQuery = query.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
-		return nil, &RequestError{Kind: ErrorTransport, Err: err}
+		return Envelope{}, &RequestError{Kind: ErrorTransport, Err: err}
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("X-Correlation-ID", correlationID)
@@ -74,27 +75,33 @@ func (c *Client) List(ctx context.Context, filters url.Values, correlationID str
 	if err != nil {
 		kind := classifyError(err)
 		c.logCall(correlationID, started, 0, kind)
-		return nil, &RequestError{Kind: kind, Err: err}
+		return Envelope{}, &RequestError{Kind: kind, Err: err}
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		c.logCall(correlationID, started, response.StatusCode, ErrorUpstreamStatus)
-		return nil, &RequestError{Kind: ErrorUpstreamStatus, Status: response.StatusCode,
+		return Envelope{}, &RequestError{Kind: ErrorUpstreamStatus, Status: response.StatusCode,
 			Err: fmt.Errorf("HTTP %d", response.StatusCode)}
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if err != nil {
 		kind := classifyError(err)
 		c.logCall(correlationID, started, response.StatusCode, kind)
-		return nil, &RequestError{Kind: kind, Status: response.StatusCode, Err: err}
+		return Envelope{}, &RequestError{Kind: kind, Status: response.StatusCode, Err: err}
 	}
-	if len(data) > maxResponseBytes || !validEnvelope(data) {
+	if len(data) > maxResponseBytes {
 		c.logCall(correlationID, started, response.StatusCode, ErrorInvalidResponse)
-		return nil, &RequestError{Kind: ErrorInvalidResponse, Status: response.StatusCode,
+		return Envelope{}, &RequestError{Kind: ErrorInvalidResponse, Status: response.StatusCode,
+			Err: fmt.Errorf("oversized response")}
+	}
+	envelope, err := DecodeEnvelope(data)
+	if err != nil {
+		c.logCall(correlationID, started, response.StatusCode, ErrorInvalidResponse)
+		return Envelope{}, &RequestError{Kind: ErrorInvalidResponse, Status: response.StatusCode,
 			Err: fmt.Errorf("invalid or oversized response")}
 	}
 	c.logCall(correlationID, started, response.StatusCode, "")
-	return data, nil
+	return envelope, nil
 }
 
 func classifyError(err error) ErrorKind {
@@ -109,11 +116,6 @@ func classifyError(err error) ErrorKind {
 		return ErrorTimeout
 	}
 	return ErrorTransport
-}
-
-func validEnvelope(data []byte) bool {
-	_, err := DecodeEnvelope(data)
-	return err == nil
 }
 
 func (c *Client) logCall(id string, started time.Time, status int, kind ErrorKind) {

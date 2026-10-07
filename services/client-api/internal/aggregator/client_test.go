@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,8 +26,9 @@ func TestListPreservesCommittedFreshnessAndAdditiveFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	response, err := client.List(context.Background(), nil, "freshness-test")
-	if err != nil || string(response) != payload {
-		t.Fatalf("freshness or additive fields changed: %s (%v)", response, err)
+	expected, _ := DecodeEnvelope([]byte(payload))
+	if err != nil || !reflect.DeepEqual(response, expected) {
+		t.Fatalf("freshness or additive fields changed: %+v (%v)", response, err)
 	}
 }
 
@@ -68,8 +70,9 @@ func TestListForwardsSupportedFiltersAndCorrelationID(t *testing.T) {
 		t.Fatal(err)
 	}
 	response, err := client.List(context.Background(), url.Values{"source": {"BMKG"}, "limit": {"5"}, "unsupported": {"x"}}, "request-123")
-	if err != nil || string(response) != validResponse {
-		t.Fatalf("unexpected result: %s (%v)", response, err)
+	expected, _ := DecodeEnvelope([]byte(validResponse))
+	if err != nil || !reflect.DeepEqual(response, expected) {
+		t.Fatalf("unexpected result: %+v (%v)", response, err)
 	}
 }
 

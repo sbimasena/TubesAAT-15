@@ -12,7 +12,7 @@ func TestStoredReadsRemainSuccessfulWithExplicitSourceMetadata(t *testing.T) {
 	for _, scope := range []string{"media", "field-team", "internal-ops"} {
 		for _, scenario := range []string{"fresh", "cached during outage", "empty filter", "metadata reset", "no observed ingestion"} {
 			t.Run(scope+"/"+scenario, func(t *testing.T) {
-				payload, _ := (&testLister{}).List(context.Background(), nil, "test")
+				payload := []byte(testHazardResponse)
 				var wire map[string]any
 				if err := json.Unmarshal(payload, &wire); err != nil {
 					t.Fatal(err)

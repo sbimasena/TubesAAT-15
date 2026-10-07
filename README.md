@@ -159,7 +159,9 @@ docker compose --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT"
 
 ## Batas hasil dan implementasi
 
-Pengukuran lokal 6 Oktober 2026 pada Docker 8 CPU/sekitar 8 GB RAM membuktikan 50 koneksi dan refresh per VU, tetapi p95 P2 API publik mencapai 562 ms saat PVMBG lambat dan 539 ms saat outage, melampaui target <300 ms. Error tidak terkontrol dan respons 429 sama-sama nol; data terakhir dan recovery lulus. P2 belum diterima sampai perbaikan performa yang relevan dan pengukuran ulang selesai.
+Pengukuran lokal 6 Oktober 2026 mencatat p95 API publik 562 ms saat PVMBG lambat dan 539 ms saat outage, melampaui target <300 ms. Pemeriksaan ulang 7 Oktober pada Docker 8 CPU/sekitar 4 GB RAM lulus: setelah reuse koneksi HTTP dan penghapusan decode envelope berulang, p95 mencapai 203 ms dan 221 ms. Setiap kondisi memakai 50 koneksi selama 60 detik, 50 refresh berhasil, nol error tidak terkontrol/429, serta last-known data dan recovery yang lulus. Query BMKG memakai limit 100; generator sementara 1 detik digunakan untuk menyiapkan katalog penuh.
+
+Baseline pada stack uji yang sama juga lulus (209/224 ms); kegagalan 6 Oktober tidak tereproduksi pada run ini. Latensi membaik sedikit, sementara jumlah query 200 selama pengukuran bertambah dari 31.037/30.096 menjadi 33.634/30.987. Angka ini berlaku pada mesin/config yang diuji; tim perlu mengulang checker pada lingkungan demo akhir dan menyimpan hasilnya sendiri.
 
 - Checker P2 API publik memakai 50 sesi/VU selama 60 detik per kondisi lambat/outage, refresh per VU, bukti socket, serta metrik 200/429/error/latensi. Baseline langsung Aggregator tetap terpisah. Hasil pengukuran bergantung pada mesin/config yang diuji.
 - Checker clone menjalankan sembilan layanan dari HEAD dengan Compose utama dan secret sementara sendiri, tanpa port operator/DB. Perubahan workspace yang belum di-commit tidak ikut checkout; SHA aplikasi selalu dicatat.

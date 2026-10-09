@@ -1,0 +1,257 @@
+{
+  "started_at": "2026-10-09T12:41:19.494712+00:00",
+  "states_before": {
+    "aggregator": {
+      "id": "ace9dbdf0647",
+      "running": true,
+      "started_at": "2026-10-09T12:40:13.162386346Z"
+    },
+    "auth": {
+      "id": "0ebbf5253c17",
+      "running": true,
+      "started_at": "2026-10-09T12:40:01.016422465Z"
+    },
+    "bmkg": {
+      "id": "e2faaa98d7d9",
+      "running": true,
+      "started_at": "2026-10-09T12:40:01.015373048Z"
+    },
+    "canonical-store": {
+      "id": "c5dd42f096f2",
+      "running": true,
+      "started_at": "2026-10-09T12:40:01.01848609Z"
+    },
+    "client-api": {
+      "id": "0203fef026bb",
+      "running": true,
+      "started_at": "2026-10-09T12:40:19.470564376Z"
+    },
+    "dashboard-consumer": {
+      "id": "25c2674dd884",
+      "running": true,
+      "started_at": "2026-10-09T12:40:13.163587804Z"
+    },
+    "message-broker": {
+      "id": "e03db31ea9ed",
+      "running": true,
+      "started_at": "2026-10-09T12:40:01.223657882Z"
+    },
+    "notification-consumer": {
+      "id": "1a685668ec89",
+      "running": true,
+      "started_at": "2026-10-09T12:40:13.162851554Z"
+    },
+    "pvmbg": {
+      "id": "9e3c03c87be0",
+      "running": true,
+      "started_at": "2026-10-09T12:40:01.016089007Z"
+    }
+  },
+  "v1_hazard": {
+    "hazard_id": "haz_cdf176c6ec3e8f3c1d01e3c272e35289",
+    "source": "PVMBG",
+    "source_ref_id": "PVMBG-20261009-001",
+    "hazard_type": "VOLCANIC",
+    "severity": "NORMAL",
+    "area_name": "Merapi",
+    "latitude": -7.5407,
+    "longitude": 110.4457,
+    "occurred_at": "2026-09-29T12:40:01.679354Z",
+    "ingested_at": "2026-10-09T12:40:14.828575Z",
+    "attributes": {
+      "ash_column_height_m": 0,
+      "eruption_count_24h": 0
+    }
+  },
+  "v2_hazard": {
+    "hazard_id": "haz_c92aa4f419dd7cda468954e348041af8",
+    "source": "PVMBG",
+    "source_ref_id": "PVMBG-1791549680679332960",
+    "hazard_type": "VOLCANIC",
+    "severity": "NORMAL",
+    "area_name": "Sinabung",
+    "latitude": 3.17,
+    "longitude": 98.392,
+    "occurred_at": "2026-10-09T12:41:20.679332Z",
+    "ingested_at": "2026-10-09T12:41:20.825891Z",
+    "attributes": {
+      "ash_column_height_m": 134,
+      "confidence_level": 0.7036322458518115,
+      "eruption_count_24h": 14
+    }
+  },
+  "consumers": {
+    "notification-consumer": {
+      "message_id": "55",
+      "hazard_id": "haz_c92aa4f419dd7cda468954e348041af8",
+      "hazard_revision": 1,
+      "correlation_id": "poll-PVMBG-1791549680067624251",
+      "payload": {
+        "source": "PVMBG",
+        "latitude": 3.17,
+        "severity": "NORMAL",
+        "area_name": "Sinabung",
+        "hazard_id": "haz_c92aa4f419dd7cda468954e348041af8",
+        "longitude": 98.392,
+        "attributes": {
+          "confidence_level": 0.7036322458518115,
+          "eruption_count_24h": 14,
+          "ash_column_height_m": 134
+        },
+        "hazard_type": "VOLCANIC",
+        "ingested_at": "2026-10-09T12:41:20.825891+00:00",
+        "occurred_at": "2026-10-09T12:41:20.679332+00:00",
+        "source_ref_id": "PVMBG-1791549680679332960"
+      },
+      "result": "notification_simulated",
+      "received_at": "2026-10-09T12:41:23.450697919Z"
+    },
+    "dashboard-consumer": {
+      "message_id": "55",
+      "hazard_id": "haz_c92aa4f419dd7cda468954e348041af8",
+      "hazard_revision": 1,
+      "correlation_id": "poll-PVMBG-1791549680067624251",
+      "payload": {
+        "source": "PVMBG",
+        "latitude": 3.17,
+        "severity": "NORMAL",
+        "area_name": "Sinabung",
+        "hazard_id": "haz_c92aa4f419dd7cda468954e348041af8",
+        "longitude": 98.392,
+        "attributes": {
+          "confidence_level": 0.7036322458518115,
+          "eruption_count_24h": 14,
+          "ash_column_height_m": 134
+        },
+        "hazard_type": "VOLCANIC",
+        "ingested_at": "2026-10-09T12:41:20.825891+00:00",
+        "occurred_at": "2026-10-09T12:41:20.679332+00:00",
+        "source_ref_id": "PVMBG-1791549680679332960"
+      },
+      "result": "dashboard_updated",
+      "received_at": "2026-10-09T12:41:23.450990711Z"
+    }
+  },
+  "outage_health": {
+    "service": "aggregator",
+    "sources": {
+      "BMKG": {
+        "available": true,
+        "last_success_at": "2026-10-09T12:41:26.209417837Z",
+        "last_ingested_at": "2026-10-09T12:41:26.222755754Z",
+        "stale": false,
+        "stale_after_seconds": 15
+      },
+      "PVMBG": {
+        "available": false,
+        "last_success_at": "2026-10-09T12:41:23.817778211Z",
+        "last_error": "call pvmbg /volcanic-reports: upstream returned 503 Service Unavailable: PVMBG is simulating an outage",
+        "last_ingested_at": "2026-10-09T12:41:23.824588211Z",
+        "stale": true,
+        "stale_since": "2026-10-09T12:41:26.090806587Z",
+        "stale_after_seconds": 15
+      }
+    },
+    "status": "ok",
+    "storage": {
+      "available": true
+    }
+  },
+  "repeated_outage_health": {
+    "service": "aggregator",
+    "sources": {
+      "BMKG": {
+        "available": true,
+        "last_success_at": "2026-10-09T12:41:29.312025672Z",
+        "last_ingested_at": "2026-10-09T12:41:29.343673381Z",
+        "stale": false,
+        "stale_after_seconds": 15
+      },
+      "PVMBG": {
+        "available": false,
+        "last_success_at": "2026-10-09T12:41:23.817778211Z",
+        "last_error": "call pvmbg /volcanic-reports: upstream returned 503 Service Unavailable: PVMBG is simulating an outage",
+        "last_ingested_at": "2026-10-09T12:41:23.824588211Z",
+        "stale": true,
+        "stale_since": "2026-10-09T12:41:26.090806587Z",
+        "stale_after_seconds": 15
+      }
+    },
+    "status": "ok",
+    "storage": {
+      "available": true
+    }
+  },
+  "recovered_health": {
+    "service": "aggregator",
+    "sources": {
+      "BMKG": {
+        "available": true,
+        "last_success_at": "2026-10-09T12:41:35.306242717Z",
+        "last_ingested_at": "2026-10-09T12:41:35.311530425Z",
+        "stale": false,
+        "stale_after_seconds": 15
+      },
+      "PVMBG": {
+        "available": true,
+        "last_success_at": "2026-10-09T12:41:35.834244592Z",
+        "last_ingested_at": "2026-10-09T12:41:35.847100509Z",
+        "stale": false,
+        "stale_after_seconds": 15
+      }
+    },
+    "status": "ok",
+    "storage": {
+      "available": true
+    }
+  },
+  "result": "PASS",
+  "states_after": {
+    "aggregator": {
+      "id": "ace9dbdf0647",
+      "running": true,
+      "started_at": "2026-10-09T12:40:13.162386346Z"
+    },
+    "auth": {
+      "id": "0ebbf5253c17",
+      "running": true,
+      "started_at": "2026-10-09T12:40:01.016422465Z"
+    },
+    "bmkg": {
+      "id": "e2faaa98d7d9",
+      "running": true,
+      "started_at": "2026-10-09T12:40:01.015373048Z"
+    },
+    "canonical-store": {
+      "id": "c5dd42f096f2",
+      "running": true,
+      "started_at": "2026-10-09T12:40:01.01848609Z"
+    },
+    "client-api": {
+      "id": "0203fef026bb",
+      "running": true,
+      "started_at": "2026-10-09T12:40:19.470564376Z"
+    },
+    "dashboard-consumer": {
+      "id": "25c2674dd884",
+      "running": true,
+      "started_at": "2026-10-09T12:40:13.163587804Z"
+    },
+    "message-broker": {
+      "id": "e03db31ea9ed",
+      "running": true,
+      "started_at": "2026-10-09T12:40:01.223657882Z"
+    },
+    "notification-consumer": {
+      "id": "1a685668ec89",
+      "running": true,
+      "started_at": "2026-10-09T12:40:13.162851554Z"
+    },
+    "pvmbg": {
+      "id": "9e3c03c87be0",
+      "running": true,
+      "started_at": "2026-10-09T12:40:01.016089007Z"
+    }
+  },
+  "finished_at": "2026-10-09T12:41:37.608597+00:00"
+}

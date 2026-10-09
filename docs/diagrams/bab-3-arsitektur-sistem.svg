@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1220" viewBox="0 0 1600 1220" role="img" aria-labelledby="title">
+<title id="title">Arsitektur sistem koordinasi kebencanaan BMKG–PVMBG–BNPB</title>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#24313b"/></marker>
+<marker id="blue-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#345d78"/></marker></defs>
+<style>text {font-family: Arial, Helvetica, sans-serif; fill: #24313b;} .body {font-size: 23px;} .small {font-size: 21px; fill: #53616b;} .heading {font-size: 27px; font-weight: 700;} .heading-compact {font-size: 23px; font-weight: 700;} .group {font-size: 24px; font-weight: 700; letter-spacing: .5px;} .edge {font-size: 21px;} </style>
+<rect width="100%" height="100%" fill="white"/>
+<text x="40" y="52" class="group" text-anchor="start"><tspan x="40" dy="0">KLIEN DOWNSTREAM</tspan></text>
+<text x="840" y="52" class="group" text-anchor="start"><tspan x="840" dy="0">SUMBER MANDIRI</tspan></text>
+<rect x="390" y="330" width="1150" height="790" fill="none" stroke="#91a0ab" stroke-width="1.8" stroke-dasharray="9 6"/>
+<text x="412" y="365" class="group" text-anchor="start"><tspan x="412" dy="0">BNPB · LAYANAN DAN INFRASTRUKTUR</tspan></text>
+<rect x="840" y="90" width="290" height="160" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="859" y="129" class="heading" text-anchor="start"><tspan x="859" dy="0">BMKG Mock</tspan></text>
+<text x="859" y="167" class="body" text-anchor="start"><tspan x="859" dy="0">SeismicEvent</tspan><tspan x="859" dy="30">TsunamiWarning</tspan><tspan x="859" dy="30">X-BMKG-Key</tspan></text>
+<rect x="1170" y="90" width="330" height="160" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="1189" y="129" class="heading" text-anchor="start"><tspan x="1189" dy="0">PVMBG Mock</tspan></text>
+<text x="1189" y="167" class="body" text-anchor="start"><tspan x="1189" dy="0">VolcanicReport</tspan><tspan x="1189" dy="30">confidence_level opsional</tspan><tspan x="1189" dy="30">Bearer token PVMBG</tspan></text>
+<rect x="40" y="660" width="260" height="165" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="59" y="699" class="heading" text-anchor="start"><tspan x="59" dy="0">Klien</tspan></text>
+<text x="59" y="737" class="body" text-anchor="start"><tspan x="59" dy="0">Media / Pers</tspan><tspan x="59" dy="30">Tim Lapangan</tspan><tspan x="59" dy="30">BNPB Internal Ops</tspan></text>
+<rect x="435" y="405" width="300" height="145" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="454" y="444" class="heading" text-anchor="start"><tspan x="454" dy="0">Auth Service</tspan></text>
+<text x="454" y="482" class="body" text-anchor="start"><tspan x="454" dy="0">Login dan refresh</tspan><tspan x="454" dy="30">JWT + rotasi token</tspan></text>
+<rect x="435" y="660" width="300" height="165" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="454" y="699" class="heading" text-anchor="start"><tspan x="454" dy="0">Client-Facing API</tspan></text>
+<text x="454" y="737" class="body" text-anchor="start"><tspan x="454" dy="0">GET /hazards</tspan><tspan x="454" dy="30">Otorisasi field</tspan><tspan x="454" dy="30">Batas konkurensi</tspan></text>
+<rect x="855" y="660" width="310" height="165" fill="#f5f7f8" stroke="#345d78" stroke-width="2"/>
+<text x="874" y="699" class="heading" text-anchor="start"><tspan x="874" dy="0">Aggregator</tspan></text>
+<text x="874" y="737" class="body" text-anchor="start"><tspan x="874" dy="0">2 poller · default 3 detik</tspan><tspan x="874" dy="30">Pemetaan + API internal</tspan><tspan x="874" dy="30">Worker outbox</tspan></text>
+<rect x="1225" y="660" width="275" height="165" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="1244" y="699" class="heading" text-anchor="start"><tspan x="1244" dy="0">Canonical Store</tspan></text>
+<text x="1244" y="737" class="body" text-anchor="start"><tspan x="1244" dy="0">PostgreSQL</tspan><tspan x="1244" dy="30">HazardEvent + JSONB</tspan><tspan x="1244" dy="30">Transactional outbox</tspan></text>
+<rect x="855" y="930" width="310" height="115" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="874" y="969" class="heading" text-anchor="start"><tspan x="874" dy="0">RabbitMQ</tspan></text>
+<text x="874" y="1007" class="body" text-anchor="start"><tspan x="874" dy="0">hazard.events · fanout</tspan></text>
+<rect x="1225" y="905" width="275" height="85" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="1244" y="944" class="heading-compact" text-anchor="start"><tspan x="1244" dy="0">Consumer notifikasi</tspan></text>
+<text x="1244" y="982" class="body" text-anchor="start"><tspan x="1244" dy="0">Queue notification</tspan></text>
+<rect x="1225" y="1015" width="275" height="85" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="1244" y="1054" class="heading-compact" text-anchor="start"><tspan x="1244" dy="0">Consumer dashboard</tspan></text>
+<text x="1244" y="1092" class="body" text-anchor="start"><tspan x="1244" dy="0">Queue dashboard</tspan></text>
+<polyline points="300,700 350,700 350,477 435,477" fill="none" stroke="#345d78" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#blue-arrow)"/>
+<rect x="138.5" y="417" width="191.5" height="58" fill="white"/>
+<text x="330" y="440" class="edge" text-anchor="end"><tspan x="330" dy="0">Login / refresh</tspan><tspan x="330" dy="29">HTTP</tspan></text>
+<polyline points="300,780 435,780" fill="none" stroke="#345d78" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#blue-arrow)"/>
+<rect x="321.9" y="723" width="86.19999999999999" height="58" fill="white"/>
+<text x="365" y="746" class="edge" text-anchor="middle"><tspan x="365" dy="0">HTTP</tspan><tspan x="365" dy="29">Bearer</tspan></text>
+<polyline points="585,660 585,550" fill="none" stroke="#345d78" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#blue-arrow)"/>
+<rect x="610" y="572" width="214.89999999999998" height="58" fill="white"/>
+<text x="610" y="595" class="edge" text-anchor="start"><tspan x="610" dy="0">Introspeksi token</tspan><tspan x="610" dy="29">setiap request</tspan></text>
+<polyline points="735,742 855,742" fill="none" stroke="#345d78" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#blue-arrow)"/>
+<rect x="763.6" y="691" width="62.8" height="29" fill="white"/>
+<text x="795" y="714" class="edge" text-anchor="middle"><tspan x="795" dy="0">HTTP</tspan></text>
+<polyline points="930,660 930,285 985,285 985,250" fill="none" stroke="#345d78" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#blue-arrow)"/>
+<rect x="751.6" y="443" width="156.39999999999998" height="58" fill="white"/>
+<text x="908" y="466" class="edge" text-anchor="end"><tspan x="908" dy="0">Polling BMKG</tspan><tspan x="908" dy="29">HTTP/JSON</tspan></text>
+<polyline points="1080,660 1080,285 1335,285 1335,250" fill="none" stroke="#345d78" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#blue-arrow)"/>
+<rect x="1100" y="443" width="168.1" height="58" fill="white"/>
+<text x="1100" y="466" class="edge" text-anchor="start"><tspan x="1100" dy="0">Polling PVMBG</tspan><tspan x="1100" dy="29">HTTP/JSON</tspan></text>
+<polyline points="1165,742 1225,742" fill="none" stroke="#24313b" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="1116.8" y="601" width="156.39999999999998" height="58" fill="white"/>
+<text x="1195" y="624" class="edge" text-anchor="middle"><tspan x="1195" dy="0">SQL</tspan><tspan x="1195" dy="29">baca / tulis</tspan></text>
+<text x="1362" y="864" class="small" text-anchor="middle"><tspan x="1362" dy="0">Pemilik: Aggregator</tspan></text>
+<polyline points="1010,825 1010,930" fill="none" stroke="#24313b" stroke-width="2.3" stroke-linejoin="round" stroke-dasharray="8 6" marker-end="url(#arrow)"/>
+<rect x="879.15" y="855" width="261.7" height="58" fill="white"/>
+<text x="1010" y="878" class="edge" text-anchor="middle"><tspan x="1010" dy="0">Publish dari outbox</tspan><tspan x="1010" dy="29">AMQP · setelah commit</tspan></text>
+<polyline points="1165,965 1195,965 1195,947 1225,947" fill="none" stroke="#24313b" stroke-width="2.3" stroke-linejoin="round" stroke-dasharray="8 6" marker-end="url(#arrow)"/>
+<polyline points="1165,1010 1195,1010 1195,1057 1225,1057" fill="none" stroke="#24313b" stroke-width="2.3" stroke-linejoin="round" stroke-dasharray="8 6" marker-end="url(#arrow)"/>
+<text x="40" y="1160" class="small" text-anchor="start"><tspan x="40" dy="0">Panah HTTP/SQL menunjukkan pemanggil → tujuan; respons kembali pada koneksi yang sama.</tspan></text>
+<text x="40" y="1192" class="small" text-anchor="start"><tspan x="40" dy="0">Garis putus-putus menunjukkan distribusi event. Setiap layanan dan infrastruktur berada pada container tersendiri.</tspan></text>
+</svg>

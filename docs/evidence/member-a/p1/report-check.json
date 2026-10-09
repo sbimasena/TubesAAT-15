@@ -1,0 +1,343 @@
+{
+  "started_at": "2026-10-09T12:41:19.197995+00:00",
+  "result": "PASS",
+  "project": "tubesaat-p1-report",
+  "source_commit": "2d6280fcd8732a3d8f45992a9e9c32017b3a82ac",
+  "tested_source": "WORKSPACE",
+  "configuration": {
+    "POLL_INTERVAL_SECONDS": "3",
+    "PVMBG_DELAY_MS": "750",
+    "BMKG_GENERATE_INTERVAL_SECONDS": "10",
+    "PVMBG_GENERATE_INTERVAL_SECONDS": "10"
+  },
+  "migrations_before": [
+    {
+      "version": 1,
+      "applied_at": "2026-10-09T12:40:13.983126+00:00"
+    }
+  ],
+  "bmkg": {
+    "source_event": {
+      "event_id": "BMKG-20261009-005",
+      "region_name": "Laut Maluku",
+      "epicenter_lat": 1.1,
+      "epicenter_lon": 126.4,
+      "magnitude": 6,
+      "depth_km": 60,
+      "potential_tsunami": true,
+      "occurred_at": "2026-10-05T12:40:01.872917215Z"
+    },
+    "source_warning": {
+      "warning_id": "TSU-BMKG-20261009-005",
+      "event_id": "BMKG-20261009-005",
+      "threat_level": "SIAGA",
+      "area_name": "Laut Maluku",
+      "issued_at": "2026-10-05T12:42:01.872917215Z"
+    },
+    "hazard": {
+      "hazard_id": "haz_1b955c13265069a7187ff52a6a1a1539",
+      "source": "BMKG",
+      "source_ref_id": "BMKG-20261009-005",
+      "hazard_type": "SEISMIC",
+      "severity": "SIAGA",
+      "area_name": "Laut Maluku",
+      "latitude": 1.1,
+      "longitude": 126.4,
+      "occurred_at": "2026-10-05T12:40:01.872917Z",
+      "ingested_at": "2026-10-09T12:40:14.330332Z",
+      "attributes": {
+        "depth_km": 60,
+        "magnitude": 6,
+        "potential_tsunami": true,
+        "tsunami_warning": {
+          "area_name": "Laut Maluku",
+          "issued_at": "2026-10-05T12:42:01.872917215Z",
+          "threat_level": "SIAGA",
+          "warning_id": "TSU-BMKG-20261009-005"
+        }
+      }
+    },
+    "mapping_and_correlation": "PASS"
+  },
+  "pvmbg_v1": {
+    "source_report": {
+      "report_id": "PVMBG-20261009-001",
+      "volcano_id": "V-001",
+      "alert_level": "NORMAL",
+      "reported_at": "2026-09-29T12:40:01.679354007Z",
+      "eruption_count_24h": 0,
+      "ash_column_height_m": 0
+    },
+    "hazard": {
+      "hazard_id": "haz_cdf176c6ec3e8f3c1d01e3c272e35289",
+      "source": "PVMBG",
+      "source_ref_id": "PVMBG-20261009-001",
+      "hazard_type": "VOLCANIC",
+      "severity": "NORMAL",
+      "area_name": "Merapi",
+      "latitude": -7.5407,
+      "longitude": 110.4457,
+      "occurred_at": "2026-09-29T12:40:01.679354Z",
+      "ingested_at": "2026-10-09T12:40:14.828575Z",
+      "attributes": {
+        "ash_column_height_m": 0,
+        "eruption_count_24h": 0
+      }
+    },
+    "mapping": "PASS"
+  },
+  "pvmbg_v2": {
+    "source_report": {
+      "report_id": "PVMBG-1791549680679332960",
+      "volcano_id": "V-004",
+      "alert_level": "NORMAL",
+      "reported_at": "2026-10-09T12:41:20.67933296Z",
+      "eruption_count_24h": 14,
+      "ash_column_height_m": 134,
+      "confidence_level": 0.7036322458518115
+    },
+    "hazard": {
+      "hazard_id": "haz_c92aa4f419dd7cda468954e348041af8",
+      "source": "PVMBG",
+      "source_ref_id": "PVMBG-1791549680679332960",
+      "hazard_type": "VOLCANIC",
+      "severity": "NORMAL",
+      "area_name": "Sinabung",
+      "latitude": 3.17,
+      "longitude": 98.392,
+      "occurred_at": "2026-10-09T12:41:20.679332Z",
+      "ingested_at": "2026-10-09T12:41:20.825891Z",
+      "attributes": {
+        "ash_column_height_m": 134,
+        "confidence_level": 0.7036322458518115,
+        "eruption_count_24h": 14
+      }
+    },
+    "mapping": "PASS"
+  },
+  "migrations_after": [
+    {
+      "version": 1,
+      "applied_at": "2026-10-09T12:40:13.983126+00:00"
+    }
+  ],
+  "no_restart": {
+    "aggregator": {
+      "container_id": "ace9dbdf0647",
+      "started_at": "2026-10-09T12:40:13.162386346Z",
+      "unchanged": true
+    },
+    "auth": {
+      "container_id": "0ebbf5253c17",
+      "started_at": "2026-10-09T12:40:01.016422465Z",
+      "unchanged": true
+    },
+    "bmkg": {
+      "container_id": "e2faaa98d7d9",
+      "started_at": "2026-10-09T12:40:01.015373048Z",
+      "unchanged": true
+    },
+    "canonical-store": {
+      "container_id": "c5dd42f096f2",
+      "started_at": "2026-10-09T12:40:01.01848609Z",
+      "unchanged": true
+    },
+    "client-api": {
+      "container_id": "0203fef026bb",
+      "started_at": "2026-10-09T12:40:19.470564376Z",
+      "unchanged": true
+    },
+    "dashboard-consumer": {
+      "container_id": "25c2674dd884",
+      "started_at": "2026-10-09T12:40:13.163587804Z",
+      "unchanged": true
+    },
+    "message-broker": {
+      "container_id": "e03db31ea9ed",
+      "started_at": "2026-10-09T12:40:01.223657882Z",
+      "unchanged": true
+    },
+    "notification-consumer": {
+      "container_id": "1a685668ec89",
+      "started_at": "2026-10-09T12:40:13.162851554Z",
+      "unchanged": true
+    },
+    "pvmbg": {
+      "container_id": "9e3c03c87be0",
+      "started_at": "2026-10-09T12:40:01.016089007Z",
+      "unchanged": true
+    }
+  },
+  "consumers": {
+    "notification-consumer": {
+      "message_id": "55",
+      "hazard_id": "haz_c92aa4f419dd7cda468954e348041af8",
+      "hazard_revision": 1,
+      "correlation_id": "poll-PVMBG-1791549680067624251",
+      "payload": {
+        "source": "PVMBG",
+        "latitude": 3.17,
+        "severity": "NORMAL",
+        "area_name": "Sinabung",
+        "hazard_id": "haz_c92aa4f419dd7cda468954e348041af8",
+        "longitude": 98.392,
+        "attributes": {
+          "confidence_level": 0.7036322458518115,
+          "eruption_count_24h": 14,
+          "ash_column_height_m": 134
+        },
+        "hazard_type": "VOLCANIC",
+        "ingested_at": "2026-10-09T12:41:20.825891+00:00",
+        "occurred_at": "2026-10-09T12:41:20.679332+00:00",
+        "source_ref_id": "PVMBG-1791549680679332960"
+      },
+      "result": "notification_simulated",
+      "received_at": "2026-10-09T12:41:23.450697919Z"
+    },
+    "dashboard-consumer": {
+      "message_id": "55",
+      "hazard_id": "haz_c92aa4f419dd7cda468954e348041af8",
+      "hazard_revision": 1,
+      "correlation_id": "poll-PVMBG-1791549680067624251",
+      "payload": {
+        "source": "PVMBG",
+        "latitude": 3.17,
+        "severity": "NORMAL",
+        "area_name": "Sinabung",
+        "hazard_id": "haz_c92aa4f419dd7cda468954e348041af8",
+        "longitude": 98.392,
+        "attributes": {
+          "confidence_level": 0.7036322458518115,
+          "eruption_count_24h": 14,
+          "ash_column_height_m": 134
+        },
+        "hazard_type": "VOLCANIC",
+        "ingested_at": "2026-10-09T12:41:20.825891+00:00",
+        "occurred_at": "2026-10-09T12:41:20.679332+00:00",
+        "source_ref_id": "PVMBG-1791549680679332960"
+      },
+      "result": "dashboard_updated",
+      "received_at": "2026-10-09T12:41:23.450990711Z"
+    }
+  },
+  "v2_correlation_id": "poll-PVMBG-1791549680067624251",
+  "v2_trace": [
+    {
+      "time": "2026-10-09T12:41:20.825855127Z",
+      "level": "INFO",
+      "msg": "upstream request complete",
+      "service": "aggregator",
+      "target": "pvmbg",
+      "operation": "/volcanic-reports",
+      "correlation_id": "poll-PVMBG-1791549680067624251",
+      "latency_ms": 758.102,
+      "status": 200
+    },
+    {
+      "time": "2026-10-09T12:41:20.830891418Z",
+      "level": "INFO",
+      "msg": "canonical operation complete",
+      "service": "aggregator",
+      "target": "canonical-store",
+      "operation": "canonical-upsert",
+      "correlation_id": "poll-PVMBG-1791549680067624251",
+      "latency_ms": 4.992
+    },
+    {
+      "time": "2026-10-09T12:41:20.830914002Z",
+      "level": "INFO",
+      "msg": "canonical events and outbox committed",
+      "source": "PVMBG",
+      "correlation_id": "poll-PVMBG-1791549680067624251",
+      "events": 1
+    },
+    {
+      "time": "2026-10-09T12:41:23.451113211Z",
+      "level": "INFO",
+      "msg": "outbox publish confirmed",
+      "service": "aggregator",
+      "target": "message-broker",
+      "message_id": 55,
+      "hazard_id": "haz_c92aa4f419dd7cda468954e348041af8",
+      "hazard_revision": 1,
+      "correlation_id": "poll-PVMBG-1791549680067624251",
+      "latency_ms": 5.376
+    }
+  ],
+  "freshness": {
+    "outage_health": {
+      "service": "aggregator",
+      "sources": {
+        "BMKG": {
+          "available": true,
+          "last_success_at": "2026-10-09T12:41:26.209417837Z",
+          "last_ingested_at": "2026-10-09T12:41:26.222755754Z",
+          "stale": false,
+          "stale_after_seconds": 15
+        },
+        "PVMBG": {
+          "available": false,
+          "last_success_at": "2026-10-09T12:41:23.817778211Z",
+          "last_error": "call pvmbg /volcanic-reports: upstream returned 503 Service Unavailable: PVMBG is simulating an outage",
+          "last_ingested_at": "2026-10-09T12:41:23.824588211Z",
+          "stale": true,
+          "stale_since": "2026-10-09T12:41:26.090806587Z",
+          "stale_after_seconds": 15
+        }
+      },
+      "status": "ok",
+      "storage": {
+        "available": true
+      }
+    },
+    "repeated_outage_health": {
+      "service": "aggregator",
+      "sources": {
+        "BMKG": {
+          "available": true,
+          "last_success_at": "2026-10-09T12:41:29.312025672Z",
+          "last_ingested_at": "2026-10-09T12:41:29.343673381Z",
+          "stale": false,
+          "stale_after_seconds": 15
+        },
+        "PVMBG": {
+          "available": false,
+          "last_success_at": "2026-10-09T12:41:23.817778211Z",
+          "last_error": "call pvmbg /volcanic-reports: upstream returned 503 Service Unavailable: PVMBG is simulating an outage",
+          "last_ingested_at": "2026-10-09T12:41:23.824588211Z",
+          "stale": true,
+          "stale_since": "2026-10-09T12:41:26.090806587Z",
+          "stale_after_seconds": 15
+        }
+      },
+      "status": "ok",
+      "storage": {
+        "available": true
+      }
+    },
+    "recovered_health": {
+      "service": "aggregator",
+      "sources": {
+        "BMKG": {
+          "available": true,
+          "last_success_at": "2026-10-09T12:41:35.306242717Z",
+          "last_ingested_at": "2026-10-09T12:41:35.311530425Z",
+          "stale": false,
+          "stale_after_seconds": 15
+        },
+        "PVMBG": {
+          "available": true,
+          "last_success_at": "2026-10-09T12:41:35.834244592Z",
+          "last_ingested_at": "2026-10-09T12:41:35.847100509Z",
+          "stale": false,
+          "stale_after_seconds": 15
+        }
+      },
+      "status": "ok",
+      "storage": {
+        "available": true
+      }
+    }
+  },
+  "finished_at": "2026-10-09T12:41:39.943633+00:00"
+}

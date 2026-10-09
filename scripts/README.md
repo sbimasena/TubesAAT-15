@@ -77,6 +77,19 @@ Memerlukan tujuh layanan A/C yang berjalan dengan environment lokal dan overlay 
 
 Skrip tidak menghentikan kontainer atau menghapus volume/queue. Ia menambah laporan v2 dan snapshot/outbox/jurnal hasilnya, lalu memulihkan PVMBG ke skema v1 serta outage=false. Jangan jalankan bersamaan dengan demo yang mengubah status sumber. Hasil dan timestamp ditulis ke berkas output; tidak memerlukan `jq`. Freshness menunjukkan keberhasilan pipeline polling/commit, bukan umur tiap rekaman atau publisher confirm.
 
+## Bukti laporan P1 dan diagram Bab 3
+
+`check-p1-report.py` menjalankan checker ingestion lalu mencocokkan payload BMKG/warning dan PVMBG v1/v2 dengan data kanonis. Ia juga memeriksa migrasi, identitas container, trace, dan dua consumer. Gunakan project yang sudah berjalan dengan overlay operator dan environment lokal lengkap:
+
+```sh
+python3 -B scripts/check-p1-report.py --env-file .env.acceptance.local --project-name tubesaat-acceptance --output /tmp/p1-report/report-check.json
+python3 -B scripts/show-p1-evidence.py runtime --input /tmp/p1-report/report-check.json
+```
+
+Checker menambah data/jurnal dan memulihkan PVMBG ke v1/outage=false; tidak melakukan restart atau penghapusan volume. `show-p1-evidence.py` hanya menampilkan hasil JSON tersimpan dan menerima bagian `bmkg`, `pvmbg`, atau `runtime`. [README bukti P1](../docs/evidence/member-a/p1/README.md) menyediakan perintah Freeze untuk Gambar 1–3 dan log checker asli.
+
+`render-p1-evidence.py` adalah renderer HTML versi awal yang memerlukan Chrome dan menulis PNG di sebelah JSON input. Jangan menjalankannya pada direktori bukti utama jika ingin mempertahankan gambar terminal. `render-report-diagrams.py` membuat SVG dan PNG arsitektur tanpa mengubah kode aplikasi; lokasi gambar, caption, dan dependensinya ada pada [README diagram](../docs/diagrams/README.md).
+
 ## Deployment default
 
 ```sh

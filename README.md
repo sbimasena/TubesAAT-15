@@ -157,6 +157,12 @@ docker compose --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT"
 docker compose --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" stop
 ```
 
+## Artefak laporan Member A
+
+[Bukti P1](docs/evidence/member-a/p1/README.md) memuat JSON/log pengujian nyata dan gambar terminal untuk Gambar 1–3. [Diagram Bab 3](docs/diagrams/README.md) menyediakan SVG, PNG, dan perintah rendering. [Panduan tambahan laporan](docs/report/member-a-additions.md) menjelaskan lokasi paragraf dan tabel; [audit Google Docs](docs/report/google-docs-audit.md) mencatat koreksi terhadap versi laporan yang diperiksa pada 9 Oktober 2026.
+
+Pengumpulan bukti baru memakai `scripts/check-p1-report.py`; gambar terminal memakai Freeze dan `scripts/show-p1-evidence.py`. Perintah rendering membaca hasil tersimpan dan tidak menjalankan ulang pengujian. Simpan hasil run baru di direktori berbeda agar ID/timestamp pada bukti yang sudah dirujuk laporan tetap tersedia. Hasil P1 ini tidak menggantikan pengukuran P2.
+
 ## Batas hasil dan implementasi
 
 Pengukuran lokal 6 Oktober 2026 mencatat p95 API publik 562 ms saat PVMBG lambat dan 539 ms saat outage, melampaui target <300 ms. Pemeriksaan ulang 7 Oktober pada Docker 8 CPU/sekitar 4 GB RAM lulus: setelah reuse koneksi HTTP dan penghapusan decode envelope berulang, p95 mencapai 203 ms dan 221 ms. Setiap kondisi memakai 50 koneksi selama 60 detik, 50 refresh berhasil, nol error tidak terkontrol/429, serta last-known data dan recovery yang lulus. Query BMKG memakai limit 100; generator sementara 1 detik digunakan untuk menyiapkan katalog penuh.

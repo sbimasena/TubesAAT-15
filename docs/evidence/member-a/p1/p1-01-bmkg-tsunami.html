@@ -1,0 +1,52 @@
+<!doctype html><html lang="id"><meta charset="utf-8"><title>P1: pemetaan BMKG dan korelasi tsunami</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:28px 32px;background:#fff;color:#17212c;font:18px Arial,sans-serif}
+header{border-bottom:2px solid #283a4b;margin-bottom:22px;padding-bottom:16px}h1{font-size:28px;margin:0 0 12px}
+.meta{font-size:15px;line-height:1.6;color:#455767}.status{float:right;border:1px solid #246442;padding:6px 14px;color:#246442;font-weight:700}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}section{border:1px solid #9eacb7;padding:16px;margin-bottom:18px;break-inside:avoid}
+h2{font-size:21px;margin:0 0 12px}pre{font:17px/1.38 Menlo,Consolas,monospace;margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+table{width:100%;border-collapse:collapse;margin-bottom:20px;font:16px/1.35 Menlo,Consolas,monospace}
+td,th{border:1px solid #a6b3bd;padding:9px;text-align:left;overflow-wrap:anywhere}th{background:#eef2f5}
+.note{margin:8px 0 20px;font-size:17px;line-height:1.5}footer{border-top:1px solid #9eacb7;padding-top:12px;font-size:14px;color:#455767}
+</style><header><span class="status">PASS</span><h1>P1: pemetaan BMKG dan korelasi tsunami</h1>
+<div class="meta">Project: tubesaat-p1-report | Pengujian: 2026-10-09T12:41:19.197995+00:00 s.d. 2026-10-09T12:41:39.943633+00:00<br>
+Sumber aplikasi: WORKSPACE, commit dasar 2d6280fcd8732a3d8f45992a9e9c32017b3a82ac<br>
+Polling: 3 detik | Generator BMKG/PVMBG: 10/10 detik | Delay PVMBG: 750 ms</div></header><div class="grid"><div><section><h2>SeismicEvent dari BMKG</h2><pre>{
+  &quot;event_id&quot;: &quot;BMKG-20261009-005&quot;,
+  &quot;region_name&quot;: &quot;Laut Maluku&quot;,
+  &quot;epicenter_lat&quot;: 1.1,
+  &quot;epicenter_lon&quot;: 126.4,
+  &quot;magnitude&quot;: 6,
+  &quot;depth_km&quot;: 60,
+  &quot;potential_tsunami&quot;: true,
+  &quot;occurred_at&quot;: &quot;2026-10-05T12:40:01.872917215Z&quot;
+}</pre></section><section><h2>TsunamiWarning terkait</h2><pre>{
+  &quot;warning_id&quot;: &quot;TSU-BMKG-20261009-005&quot;,
+  &quot;event_id&quot;: &quot;BMKG-20261009-005&quot;,
+  &quot;threat_level&quot;: &quot;SIAGA&quot;,
+  &quot;area_name&quot;: &quot;Laut Maluku&quot;,
+  &quot;issued_at&quot;: &quot;2026-10-05T12:42:01.872917215Z&quot;
+}</pre></section></div><div><section><h2>HazardEvent yang tersimpan</h2><pre>{
+  &quot;hazard_id&quot;: &quot;haz_1b955c13265069a7187ff52a6a1a1539&quot;,
+  &quot;source&quot;: &quot;BMKG&quot;,
+  &quot;source_ref_id&quot;: &quot;BMKG-20261009-005&quot;,
+  &quot;hazard_type&quot;: &quot;SEISMIC&quot;,
+  &quot;severity&quot;: &quot;SIAGA&quot;,
+  &quot;area_name&quot;: &quot;Laut Maluku&quot;,
+  &quot;latitude&quot;: 1.1,
+  &quot;longitude&quot;: 126.4,
+  &quot;occurred_at&quot;: &quot;2026-10-05T12:40:01.872917Z&quot;,
+  &quot;ingested_at&quot;: &quot;2026-10-09T12:40:14.330332Z&quot;,
+  &quot;attributes&quot;: {
+    &quot;depth_km&quot;: 60,
+    &quot;magnitude&quot;: 6,
+    &quot;potential_tsunami&quot;: true,
+    &quot;tsunami_warning&quot;: {
+      &quot;area_name&quot;: &quot;Laut Maluku&quot;,
+      &quot;issued_at&quot;: &quot;2026-10-05T12:42:01.872917215Z&quot;,
+      &quot;threat_level&quot;: &quot;SIAGA&quot;,
+      &quot;warning_id&quot;: &quot;TSU-BMKG-20261009-005&quot;
+    }
+  }
+}</pre></section></div></div><p class="note">Pencocokan event_id, koordinat, atribut, waktu kejadian, ID deterministik, dan severity dari warning: PASS.</p>
+<footer>Gambar 1. Cuplikan bukti pengujian dari report-check.json.</footer></html>

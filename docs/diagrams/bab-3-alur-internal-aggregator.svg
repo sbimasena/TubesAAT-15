@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1660" height="1290" viewBox="0 0 1660 1290" role="img" aria-labelledby="title">
+<title id="title">Alur internal Aggregator: polling, korelasi, pemetaan, query, dan outbox</title>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#24313b"/></marker>
+<marker id="blue-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#345d78"/></marker></defs>
+<style>text {font-family: Arial, Helvetica, sans-serif; fill: #24313b;} .body {font-size: 23px;} .small {font-size: 21px; fill: #53616b;} .heading {font-size: 27px; font-weight: 700;} .heading-compact {font-size: 23px; font-weight: 700;} .group {font-size: 24px; font-weight: 700; letter-spacing: .5px;} .edge {font-size: 21px;} </style>
+<rect width="100%" height="100%" fill="white"/>
+<rect x="360" y="70" width="920" height="1095" fill="none" stroke="#91a0ab" stroke-width="1.8" stroke-dasharray="9 6"/>
+<text x="382" y="105" class="group" text-anchor="start"><tspan x="382" dy="0">AGGREGATOR · SATU LAYANAN</tspan></text>
+<text x="40" y="53" class="group" text-anchor="start"><tspan x="40" dy="0">LAYANAN SUMBER / KLIEN</tspan></text>
+<text x="1330" y="53" class="group" text-anchor="start"><tspan x="1330" dy="0">INFRASTRUKTUR</tspan></text>
+<rect x="40" y="195" width="250" height="175" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="59" y="234" class="heading" text-anchor="start"><tspan x="59" dy="0">BMKG Mock</tspan></text>
+<text x="59" y="272" class="body" text-anchor="start"><tspan x="59" dy="0">SeismicEvent</tspan><tspan x="59" dy="30">TsunamiWarning</tspan><tspan x="59" dy="30">X-BMKG-Key</tspan></text>
+<rect x="40" y="455" width="250" height="155" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="59" y="494" class="heading" text-anchor="start"><tspan x="59" dy="0">PVMBG Mock</tspan></text>
+<text x="59" y="532" class="body" text-anchor="start"><tspan x="59" dy="0">VolcanicReport</tspan><tspan x="59" dy="30">Bearer token PVMBG</tspan></text>
+<rect x="40" y="740" width="250" height="140" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="59" y="779" class="heading" text-anchor="start"><tspan x="59" dy="0">Client-Facing API</tspan></text>
+<text x="59" y="817" class="body" text-anchor="start"><tspan x="59" dy="0">Query HazardEvent</tspan><tspan x="59" dy="30">melalui API internal</tspan></text>
+<rect x="405" y="195" width="280" height="175" fill="#f5f7f8" stroke="#345d78" stroke-width="2"/>
+<text x="424" y="234" class="heading" text-anchor="start"><tspan x="424" dy="0">Poller BMKG</tspan></text>
+<text x="424" y="272" class="body" text-anchor="start"><tspan x="424" dy="0">Timeout HTTP: 2 detik</tspan><tspan x="424" dy="30">Fetch event lalu warning</tspan><tspan x="424" dy="30">Dua cursor terpisah</tspan></text>
+<rect x="780" y="195" width="350" height="175" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="799" y="234" class="heading" text-anchor="start"><tspan x="799" dy="0">Korelasi + MapSeismic</tspan></text>
+<text x="799" y="272" class="body" text-anchor="start"><tspan x="799" dy="0">Cache event / warning</tspan><tspan x="799" dy="30">Korelasi melalui event_id</tspan><tspan x="799" dy="30">HazardEvent seismik</tspan></text>
+<rect x="405" y="455" width="280" height="155" fill="#f5f7f8" stroke="#345d78" stroke-width="2"/>
+<text x="424" y="494" class="heading" text-anchor="start"><tspan x="424" dy="0">Poller PVMBG</tspan></text>
+<text x="424" y="532" class="body" text-anchor="start"><tspan x="424" dy="0">Timeout HTTP: 4 detik</tspan><tspan x="424" dy="30">Cursor laporan</tspan></text>
+<rect x="780" y="455" width="350" height="185" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="799" y="494" class="heading" text-anchor="start"><tspan x="799" dy="0">MapVolcanic</tspan></text>
+<text x="799" y="532" class="body" text-anchor="start"><tspan x="799" dy="0">Referensi volcano_id</tspan><tspan x="799" dy="30">Field tambahan → attributes</tspan><tspan x="799" dy="30">confidence_level opsional</tspan><tspan x="799" dy="30">HazardEvent vulkanik</tspan></text>
+<rect x="405" y="740" width="280" height="140" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="424" y="779" class="heading" text-anchor="start"><tspan x="424" dy="0">API internal</tspan></text>
+<text x="424" y="817" class="body" text-anchor="start"><tspan x="424" dy="0">GET /internal/v1/hazards</tspan><tspan x="424" dy="30">Data + status sumber</tspan></text>
+<rect x="780" y="740" width="350" height="140" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="799" y="779" class="heading" text-anchor="start"><tspan x="799" dy="0">Repository</tspan></text>
+<text x="799" y="817" class="body" text-anchor="start"><tspan x="799" dy="0">Upsert / List</tspan><tspan x="799" dy="30">Identitas hazard deterministik</tspan></text>
+<rect x="780" y="1000" width="350" height="130" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="799" y="1039" class="heading" text-anchor="start"><tspan x="799" dy="0">Worker outbox</tspan></text>
+<text x="799" y="1077" class="body" text-anchor="start"><tspan x="799" dy="0">Ambil pesan pending</tspan><tspan x="799" dy="30">Publish + publisher confirm</tspan></text>
+<rect x="1330" y="740" width="290" height="170" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="1349" y="779" class="heading" text-anchor="start"><tspan x="1349" dy="0">Canonical Store</tspan></text>
+<text x="1349" y="817" class="body" text-anchor="start"><tspan x="1349" dy="0">PostgreSQL</tspan><tspan x="1349" dy="30">hazard_events + JSONB</tspan><tspan x="1349" dy="30">hazard_outbox</tspan></text>
+<rect x="1330" y="1000" width="290" height="130" fill="white" stroke="#24313b" stroke-width="2"/>
+<text x="1349" y="1039" class="heading" text-anchor="start"><tspan x="1349" dy="0">RabbitMQ</tspan></text>
+<text x="1349" y="1077" class="body" text-anchor="start"><tspan x="1349" dy="0">Exchange hazard.events</tspan><tspan x="1349" dy="30">Fanout ke dua queue</tspan></text>
+<polyline points="405,280 290,280" fill="none" stroke="#345d78" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#blue-arrow)"/>
+<rect x="315.6" y="223" width="62.8" height="29" fill="white"/>
+<text x="347" y="246" class="edge" text-anchor="middle"><tspan x="347" dy="0">HTTP</tspan></text>
+<polyline points="685,280 780,280" fill="none" stroke="#24313b" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="701.6" y="226" width="62.8" height="29" fill="white"/>
+<text x="733" y="249" class="edge" text-anchor="middle"><tspan x="733" dy="0">Data</tspan></text>
+<polyline points="405,532 290,532" fill="none" stroke="#345d78" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#blue-arrow)"/>
+<rect x="315.6" y="475" width="62.8" height="29" fill="white"/>
+<text x="347" y="498" class="edge" text-anchor="middle"><tspan x="347" dy="0">HTTP</tspan></text>
+<polyline points="685,532 780,532" fill="none" stroke="#24313b" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="701.6" y="477" width="62.8" height="29" fill="white"/>
+<text x="733" y="500" class="edge" text-anchor="middle"><tspan x="733" dy="0">Data</tspan></text>
+<polyline points="1130,280 1205,280 1205,780 1130,780" fill="none" stroke="#24313b" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="1109.65" y="683" width="144.7" height="29" fill="white"/>
+<text x="1182" y="706" class="edge" text-anchor="middle"><tspan x="1182" dy="0">HazardEvent</tspan></text>
+<polyline points="955,640 955,740" fill="none" stroke="#24313b" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="882.65" y="673" width="144.7" height="29" fill="white"/>
+<text x="955" y="696" class="edge" text-anchor="middle"><tspan x="955" dy="0">HazardEvent</tspan></text>
+<polyline points="290,810 405,810" fill="none" stroke="#345d78" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#blue-arrow)"/>
+<rect x="315.6" y="754" width="62.8" height="29" fill="white"/>
+<text x="347" y="777" class="edge" text-anchor="middle"><tspan x="347" dy="0">HTTP</tspan></text>
+<polyline points="685,810 780,810" fill="none" stroke="#24313b" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="701.6" y="755" width="62.8" height="29" fill="white"/>
+<text x="733" y="778" class="edge" text-anchor="middle"><tspan x="733" dy="0">List</tspan></text>
+<polyline points="1130,840 1330,840" fill="none" stroke="#24313b" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="1151.8" y="787" width="156.39999999999998" height="58" fill="white"/>
+<text x="1230" y="810" class="edge" text-anchor="middle"><tspan x="1230" dy="0">SQL</tspan><tspan x="1230" dy="29">baca / tulis</tspan></text>
+<text x="1475" y="950" class="small" text-anchor="middle"><tspan x="1475" dy="0">Hazard + outbox</tspan><tspan x="1475" dy="31">dalam satu transaksi</tspan></text>
+<polyline points="1130,1040 1235,1040 1235,890 1330,890" fill="none" stroke="#24313b" stroke-width="2.3" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="1157.65" y="957" width="144.7" height="58" fill="white"/>
+<text x="1230" y="980" class="edge" text-anchor="middle"><tspan x="1230" dy="0">SQL</tspan><tspan x="1230" dy="29">Baca outbox</tspan></text>
+<polyline points="1130,1095 1330,1095" fill="none" stroke="#24313b" stroke-width="2.3" stroke-linejoin="round" stroke-dasharray="8 6" marker-end="url(#arrow)"/>
+<rect x="1198.6" y="1110" width="62.8" height="29" fill="white"/>
+<text x="1230" y="1133" class="edge" text-anchor="middle"><tspan x="1230" dy="0">AMQP</tspan></text>
+<text x="406" y="958" class="small" text-anchor="start"><tspan x="406" dy="0">Poller BMKG dan PVMBG</tspan><tspan x="406" dy="31">berjalan mandiri.</tspan></text>
+<text x="406" y="1050" class="small" text-anchor="start"><tspan x="406" dy="0">Query membaca data tersimpan;</tspan><tspan x="406" dy="31">tidak menunggu fetch upstream.</tspan></text>
+<text x="40" y="1210" class="small" text-anchor="start"><tspan x="40" dy="0">Cursor maju setelah commit. Request jaringan dilakukan di luar lock pengelolaan state.</tspan></text>
+<text x="40" y="1243" class="small" text-anchor="start"><tspan x="40" dy="0">Panah HTTP/SQL menunjukkan pemanggil → tujuan; panah internal menunjukkan alur data atau operasi repository.</tspan></text>
+<text x="40" y="1276" class="small" text-anchor="start"><tspan x="40" dy="0">Worker outbox berjalan terpisah dari polling. Garis putus-putus menunjukkan publikasi event.</tspan></text>
+</svg>

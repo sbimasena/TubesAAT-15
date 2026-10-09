@@ -1,0 +1,26 @@
+[ingestion +0s] Reading selected Compose configuration
+[ingestion +0s] Selected project: tubesaat-p1-report
+[ingestion +0s] Waiting: both sources should complete fresh ingestion before the check (attempt 1)
+[ingestion +0s] Ready: both sources should complete fresh ingestion before the check
+[ingestion +0s] Checking existing v1 mapping
+[ingestion +1s] Waiting: v1 report should be persisted (attempt 1)
+[ingestion +1s] Ready: v1 report should be persisted
+[ingestion +1s] Checking live v2 mapping and canonical persistence
+[ingestion +1s] Waiting: v2 report should be ingested without restart (attempt 1)
+[ingestion +3s] Ready: v2 report should be ingested without restart
+[ingestion +4s] Checking delivery to both consumers
+[ingestion +4s] Waiting: notification-consumer should receive the canonical v2 snapshot (attempt 1)
+[ingestion +4s] Ready: notification-consumer should receive the canonical v2 snapshot
+[ingestion +4s] Waiting: dashboard-consumer should receive the canonical v2 snapshot (attempt 1)
+[ingestion +5s] Ready: dashboard-consumer should receive the canonical v2 snapshot
+[ingestion +5s] Checking PVMBG outage, retained data and independent BMKG ingestion
+[ingestion +5s] Waiting: PVMBG outage should mark only PVMBG stale (attempt 1)
+[ingestion +9s] Ready: PVMBG outage should mark only PVMBG stale
+[ingestion +9s] Waiting one polling interval to verify repeated outage stability
+[ingestion +13s] Recovering PVMBG
+[ingestion +13s] Waiting: PVMBG should become fresh after a successful committed retry (attempt 1)
+[ingestion +17s] Ready: PVMBG should become fresh after a successful committed retry
+[ingestion +17s] Restoring schema and outage settings
+[ingestion +18s] Result file saved
+PASS: runtime v1/v2 mapping, both consumers, source outage/freshness and recovery without restart
+docs/evidence/member-a/p1/ingestion-check.json

@@ -222,9 +222,7 @@ Filter publik: `source`, `hazard_type`, `since`, `limit`. Respons berbentuk `dat
 
 Freshness mengukur pipeline polling/commit, bukan umur tiap hazard atau keberhasilan consumer. Ambangnya adalah nilai terbesar antara 15 detik dan tiga interval polling. Aggregator sendiri mengakses jaringan storage dan `DATABASE_URL`; Auth/API/consumer tidak membaca Canonical Store langsung. Signing secret hanya masuk Auth; internal secret hanya Auth/API.
 
-## Batas implementasi dan referensi
-
-P2 mensyaratkan p95 <300 ms dan error tidak terkontrol <1%; angka bergantung pada mesin/config. Hasil pengujian terdahulu tidak menjamin run sekarang lulus. PostgreSQL/RabbitMQ masing-masing satu instance. Delivery at-least-once bergantung pada binding/volume yang dipertahankan; consumer belum memiliki DLQ. Notifikasi berupa simulasi dan dashboard consumer belum memiliki UI. Subscriber demo tidak menerima riwayat sebelum binding.
+## Referensi
 
 - Kontrak endpoint: [Auth](services/auth/README.md), [Client API](services/client-api/README.md), [Aggregator](services/aggregator/README.md).
 - Infrastruktur: [PostgreSQL](infrastructure/canonical-store/README.md), [RabbitMQ](infrastructure/message-broker/README.md).

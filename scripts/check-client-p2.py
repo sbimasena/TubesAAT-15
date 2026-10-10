@@ -12,7 +12,7 @@ from demo_support import (options, compose, config, settings, run, now, states, 
                           http_call, client_read, redact)
 from demo_support import progress
 
-folder = Path(options.evidence_dir or "docs/evidence/anggota-c/integrasi/client-p2").resolve()
+folder = Path(options.evidence_dir).resolve()
 folder.mkdir(parents=True, exist_ok=True)
 base = "http://127.0.0.1:" + settings["CLIENT_API_PORT"]
 auth = "http://127.0.0.1:" + settings["AUTH_PORT"]

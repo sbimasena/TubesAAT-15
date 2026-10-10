@@ -14,10 +14,12 @@ import subprocess
 import sys
 import urllib.request
 
-from demo_support import options, settings, sql, logs, now, progress, redact
+from demo_support import options, config, aggregator_read, settings, sql, logs, now, progress, redact
 
 
 def get(service, path):
+    if service == "aggregator":
+        return aggregator_read(path, "p1-report-payload")["body"]
     headers = {"X-Correlation-ID": "p1-report-payload"}
     if service == "bmkg":
         headers["X-BMKG-Key"] = settings["BMKG_API_KEY"]
@@ -43,11 +45,11 @@ def check_identity(event, source, reference):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=Path("docs/evidence/member-a/p1/report-check.json"))
+    parser.add_argument("--output", type=Path, default=Path(options.evidence_dir) / "report-check.json")
     args = parser.parse_args()
     folder = args.output.parent
     folder.mkdir(parents=True, exist_ok=True)
-    evidence = {"started_at": now(), "result": "FAIL", "project": options.project_name,
+    evidence = {"started_at": now(), "result": "FAIL", "project": options.project_name or config.get("name"),
                 "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
                 "tested_source": "WORKSPACE", "configuration": {
                     key: settings[key] for key in ("POLL_INTERVAL_SECONDS", "PVMBG_DELAY_MS",

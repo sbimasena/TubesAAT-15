@@ -1,56 +1,92 @@
 # Skrip Pengujian dan Demo
 
-Urutan lengkap P1–P5 tersedia di [README utama](../README.md#urutan-pemeriksaan-penerimaan-p1p5). Jalankan pada project uji, satu skenario setiap kali, dan hentikan urutan jika checker gagal.
+Dari root repository, cukup siapkan `.env` sekali dan jalankan stack:
+
+```sh
+python3 scripts/setup-env.py
+docker compose up --build -d --wait
+```
+
+Setelah itu jalankan checker satu per satu. Semua checker pada stack ini memakai konfigurasi efektif dari Compose utama, termasuk port host dan environment; tidak perlu overlay operator atau memilih nama project secara manual. Pembacaan Aggregator dilakukan dengan `docker compose exec -T aggregator /service --inspect`, sehingga port Aggregator tetap tertutup.
+
+Hasil terbaru tersimpan di `artifacts/checks/<nama-checker>/` dan tidak menimpa bukti laporan pada `docs/evidence/`. Setiap checker mencetak lokasi hasil. Run berikutnya menimpa hasil terbaru pada direktori yang sama; gunakan `--evidence-dir <direktori>` jika ingin menyimpan run terpisah. Exit code 0 berarti lulus. Jangan jalankan skenario outage/lifecycle bersamaan.
+
+## Deployment default
+
+```sh
+python3 scripts/check-deployment.py
+```
+
+Memeriksa sembilan layanan healthy, port Aggregator/DB tertutup, ownership jaringan/secret, query dua sumber melalui tiga identitas, serta correlation ID/latensi pada log Client API, Auth, dan Aggregator. `--start` dapat membangun/menjalankan stack lebih dahulu. Jika sebelumnya menggunakan overlay operator manual, jalankan Compose utama kembali untuk menutup port sebelum checker deployment.
+
+## Pemeriksaan ingestion dan freshness Anggota A
+
+```sh
+python3 scripts/check-ingestion.py
+```
+
+Memeriksa mapping PVMBG v1/v2, confidence level, snapshot kanonis di dua jurnal consumer, freshness dan data tersimpan saat PVMBG outage, independensi BMKG, lalu recovery. Container utama tidak boleh restart. Skrip menambah laporan/snapshot/outbox/jurnal, lalu mengembalikan PVMBG ke v1/outage=false. Data yang ditambahkan tetap tersimpan.
 
 ## Silang kredensial upstream (P3)
 
 ```sh
-python3 scripts/check-cross-credentials.py --env-file .env --project-name project-uji --output /tmp/p3-upstream.json
-python3 -B -m unittest discover -s scripts -p test_cross_credentials.py
+python3 scripts/check-cross-credentials.py
+python3 scripts/check-member-b-auth.py --natural-expiry
 ```
 
-Checker membaca konfigurasi Compose utama untuk mendapatkan kredensial dan port host efektif BMKG/PVMBG. Ia memeriksa kedua endpoint BMKG serta endpoint laporan PVMBG: kredensial sendiri harus menghasilkan 200/array JSON; kredensial sumber lain pada header native, header trust domain asing, dan request tanpa kredensial harus menghasilkan 401/403. Kedua kredensial harus nonkosong dan berbeda. Redirect tidak diikuti. Tidak memerlukan overlay operator dan tidak mengubah schema, outage, lifecycle, atau data layanan. Jalankan saat kedua sumber tersedia.
+Checker upstream memeriksa kedua endpoint BMKG dan laporan PVMBG. Kredensial sendiri harus menghasilkan 200/array JSON; kredensial sumber lain pada header native, header trust domain asing, dan request tanpa kredensial harus menghasilkan 401/403. Kedua kredensial harus berbeda; redirect tidak diikuti. Bukti hanya berisi status/correlation ID, tanpa kredensial/payload. Tidak mengubah layanan.
 
-Exit code 0 berarti lulus, 1 berarti gagal. Output hanya memuat status/correlation ID; kredensial dan body tidak ditulis. Jika gagal sebelum request, periksa konfigurasi dan konektivitas lokal; jika gagal setelah request, status yang sudah diamati tetap disimpan. Tes lokal tidak memerlukan Docker dan memastikan server yang menerima kredensial asing tidak dapat lolos.
+Checker Auth memeriksa tiga identitas, tujuh/sebelas field, metadata publik yang aman, penolakan field mentah, rotasi/replay, dan token lama. `--natural-expiry` menunggu TTL access nyata (maksimal 300 detik), lalu refresh tanpa login ulang. Tanpa opsi tersebut, pemeriksaan expiry alami dilewati. Kredensial/port dibaca dari Compose, sama seperti checker lain. [Detail kontrak Auth](../services/client-api/README.md#pemeriksaan-autentikasi).
 
-Pemeriksaan autentikasi memakai `check-member-b-auth.py`: login tiga identitas, scope, penolakan field mentah, rotasi/replay, serta penolakan access token lama. Opsi `--natural-expiry` menunggu TTL nyata sebelum refresh tanpa login ulang. Skrip membutuhkan Auth/API Klien/Aggregator dengan data kedua sumber; tidak mengubah lifecycle atau status sumber. Baca [panduan autentikasi](../services/client-api/README.md#pemeriksaan-autentikasi). Uji ini belum mencakup silang kredensial upstream, beban P2, atau fanout.
-
-Pemeriksaan resiliensi memakai `check-member-b-resilience.py` pada project uji yang dipilih lewat `--project-name`. Pemeriksaan dasar mencakup proyeksi sumber aman, filter kosong 200, galat JSON, serta trace/redaksi log. `--exercise-outages` mengubah flag outage PVMBG dan menghentikan/menjalankan kembali PostgreSQL/Auth pada project tersebut, lalu memulihkan flag/layanan tanpa menghapus volume. `--burst-connections` menguji burst singkat dan mencatat 200/429 yang teramati; ini bukan beban P2 60 detik. Baca [panduan resiliensi](../services/client-api/README.md#pemeriksaan-resiliensi). Jangan jalankan bersamaan dengan demo lain yang mengubah sumber atau lifecycle.
-
-Jalankan dari root repositori dengan Python 3 stdlib/Docker dan file environment lokal lengkap seperti panduan README utama. Checker yang memakai `demo_support.py` menerima `--env-file` (awal `.env`), `--project-name`, serta `--evidence-dir` untuk menyimpan hasil baru tanpa menimpa bukti lama. Seluruh operasi Compose memakai konfigurasi tersebut dan overlay operator. Nilai efektif dibaca dari Compose, termasuk port host dan interpolasi environment. Jangan menjalankan skenario outage bersamaan.
-
-Untuk mengaktifkan akses operator pada project yang diperiksa:
+## Storage dan lifecycle mandiri (P4)
 
 ```sh
-docker compose --env-file .env -f docker-compose.yml -f tests/compose-operator.yml up --build -d --wait
 python3 scripts/check-p4.py
-python3 scripts/check-stage-3.py --output /tmp/fanout-downtime.json
+```
+
+Stop/build/start PVMBG saja; ubah schema v1/v2; cocokkan JSONB dengan pembacaan melalui tiga scope; restart Aggregator/PostgreSQL dengan volume tetap; probe storage dari tiga peran jaringan; stop/start Auth/API secara mandiri; dan cocokkan trace HTTP. Schema PVMBG awal dipulihkan. Restart Auth menghapus sesi lama; checker login ulang. Probe jaringan memakai `tests/compose-probes.yml` secara otomatis dan tidak membagikan password DB ke peran client/consumer.
+
+## Fanout, downtime, dan idempotensi (P5)
+
+```sh
+python3 scripts/check-stage-3.py
 python3 scripts/check-p5-third.py
 ```
 
-| Skrip | Tujuan dan efek |
-|---|---|
-| `check-p4.py` | Stop/build/start PVMBG saja; schema v1/v2 live; restart Aggregator/PostgreSQL tanpa menghapus volume; probe storage dari tiga peran jaringan. PVMBG dibiarkan schema v2. Record kanonis dicocokkan melalui Client API sebagai Field Team/Internal Ops dan proyeksi Media, sebelum/sesudah restart Aggregator/PostgreSQL. Auth/API diuji stop/start mandiri; restart Auth menolak sesi lama dan membutuhkan login ulang. Log ketiga layanan memuat correlation ID/latensi yang sama. |
-| `check-stage-3.py` | Uji fanout, downtime, dan idempotensi: stop/start notifikasi, replay ID sama sebelum/sesudah restart consumer, lalu stop/start broker. Layanan yang dihentikan dipulihkan, volume dipertahankan. `--output` menentukan lokasi hasil JSON sehingga rekaman sebelumnya tidak tertimpa. |
-| `check-p5-third.py` | Menjalankan proses subscriber terpisah melalui `tests/compose-review.yml`; mencocokkan event baru dengan dua consumer dasar; memeriksa file/commit/container producer tetap; membersihkan container/queue sementara. |
-| `check-stage-2.py` | Khusus broker dengan **kedua consumer offline**; jangan dijalankan pada stack consumer aktif. |
+Checker consumer mematikan notifikasi sementara dashboard terus menerima event, memeriksa backlog dan catch-up, replay ID yang sama sebelum/sesudah restart consumer, lalu mematikan/menjalankan broker untuk menguji reconnect. Layanan dipulihkan dan volume dipertahankan. ID pesan harus hanya muncul sekali pada jurnal tiap consumer.
 
-`demo_support.py` berisi helper operator (Compose, request management, SQL, copy journal), tidak dipakai aplikasi atau sebagai shared business logic antarlayanan. Probe SQL hanya untuk operator/demo; layanan consumer tetap tidak mengakses PostgreSQL.
+Checker subscriber ketiga membangun proses terpisah lewat `tests/compose-review.yml`, menunggu binding baru, lalu mencocokkan satu event baru di ketiga subscriber. Source/commit/container producer harus tetap. Container dan queue sementara dibersihkan otomatis. Queue exclusive/non-durable/auto-delete ini tidak menerima sejarah sebelum binding dan tidak menyimpan backlog lintas restart.
 
-Untuk melihat binding subscriber ketiga secara manual:
+## Recovery broker dengan consumer offline
 
 ```sh
-docker compose --env-file .env -f docker-compose.yml -f tests/compose-operator.yml -f tests/compose-review.yml up --build -d --no-deps review-subscriber
-docker compose --env-file .env -f docker-compose.yml -f tests/compose-operator.yml -f tests/compose-review.yml logs -f review-subscriber
+python3 scripts/check-stage-2.py
 ```
 
-Buka UI RabbitMQ → Exchanges → hazard.events selama subscriber aktif; queue `amq.gen-*` memakai binding baru. Proses berhenti setelah 90 detik. Queue exclusive/non-durable/auto-delete ini hanya untuk demo, tidak menyimpan backlog lintas restart. Output stdout bukan jurnal idempotensi. Penerimaan baru berlaku setelah binding; tidak me-replay sejarah sebelum binding. Cleanup:
+Jalankan langsung pada stack lengkap. Checker mematikan kedua consumer, menunggu backlog, memeriksa pesan persistent tiap queue, lalu menghentikan broker. Polling harus tetap menulis outbox pending dan query Aggregator tetap 200. Sesudah broker dijalankan, outbox harus terbit tanpa restart Aggregator dan snapshot queue harus tetap ada.
+
+Probe queue memakai requeue, tanpa ack permanen/purge. Sesudah selesai atau gagal, checker menjalankan kembali hanya consumer yang sebelumnya berjalan. Fanout dan deduplikasi diperiksa terpisah oleh `check-stage-3.py`.
+
+## Resiliensi HTTP tambahan
 
 ```sh
-docker compose --env-file .env -f docker-compose.yml -f tests/compose-operator.yml -f tests/compose-review.yml rm -s -f review-subscriber
+python3 scripts/check-member-b-resilience.py
+python3 scripts/check-member-b-resilience.py --exercise-outages --burst-connections 64
 ```
 
-Hasil JSON mencatat ID pesan, correlation ID, dan timestamp selama pengujian. Cocokkan ID producer dengan kedua consumer untuk memeriksa fanout. Angka queue pada UI sesudah recovery bisa sudah nol karena backlog telah dikonsumsi.
+Pemeriksaan dasar mencakup proyeksi aman, filter kosong 200, galat JSON, refresh, trace dan redaksi log. `--exercise-outages` mengubah outage PVMBG dan stop/start PostgreSQL/Auth, lalu memulihkan flag/layanan. `--burst-connections` menerima 2–256 koneksi untuk burst singkat, mencatat 200/429; ini tidak menggantikan beban P2. [Detail resiliensi](../services/client-api/README.md#pemeriksaan-resiliensi).
+
+## Beban Client API terautentikasi
+
+```sh
+python3 scripts/check-client-p2.py
+```
+
+Memerlukan k6 dan lsof native pada host, sembilan layanan healthy, serta access TTL 60 detik. K6 menyiapkan 50 sesi Field Team sebelum pengukuran. Tiap VU menyimpan pasangan token sendiri dan refresh sebelum expiry. Dua run masing-masing 50 VU/60 detik memakai query BMKG-only: PVMBG delay 3000 ms, lalu outage. Socket proses k6 ke Client API disampel pada detik 15/30/45.
+
+p95 request lengkap dan p95 respons 200 harus <300 ms, error tidak terkontrol <1%, setiap run sedikitnya 50 refresh berhasil dan query 200. 429 hanya dianggap terkontrol jika kode `concurrency_limit`, correlation ID, dan `Retry-After: 1` benar; jumlah/rate 429 dan throughput tetap dicatat. Login/refresh terpisah dari metrik query.
+
+Checker memeriksa fetch upstream lambat/503, last-known PVMBG/stale, progres BMKG dan laporan baru setelah recovery. Delay/schema/outage awal dibaca dari health PVMBG dan dipulihkan melalui `finally`, termasuk saat threshold gagal. Layanan inti selain PVMBG tidak direstart. Hasil tergantung mesin/config; baca `p2-client-check.json`, summary dan log kedua run.
 
 ## Startup dari clone
 
@@ -58,79 +94,45 @@ Hasil JSON mencatat ID pesan, correlation ID, dan timestamp selama pengujian. Co
 python3 scripts/check-clean-clone.py
 ```
 
-Clone menjalankan sembilan layanan dari commit HEAD tanpa patch source, pada project/volume baru dan port 28081/28082/28084/28080/35672. Secret/password sementara dihasilkan sendiri di luar checkout. Akses data melalui Auth/API; Aggregator/DB tetap tanpa port host. Hanya resource project clone yang dihapus; container project yang sudah ada diperiksa tetap.
+Menjalankan commit HEAD pada project/volume baru dengan secret/password sementara sendiri, tanpa port operator/DB. Port 28081/28082/28084/28080/35672 harus bebas. `--revision` memilih commit. Perubahan aplikasi/config yang belum di-commit tidak ikut diuji; SHA dicatat. `--project-name` pada checker ini memilih project lama yang diamati, bukan nama project clone.
 
-Pengukuran P2 memakai [checker Client API terautentikasi](#beban-client-api-terautentikasi). Parameter beban, definisi latensi, dan threshold dijelaskan di [panduan pengujian](../tests/README.md).
-
-## Pemeriksaan ingestion dan freshness Anggota A
-
-```sh
-python3 scripts/check-ingestion.py --output /tmp/tubesaat-ingestion-check.json
-```
-
-Memerlukan tujuh layanan A/C yang berjalan dengan environment lokal dan overlay operator. Skrip membandingkan rekaman PVMBG v1/v2 dengan API kanonis dan kedua jurnal consumer, lalu memeriksa data tersimpan, status stale, independensi BMKG, dan recovery saat outage PVMBG. Identitas/waktu startup kontainer harus tetap sama. Kontainer one-off untuk pengujian dikecualikan dari pemeriksaan identitas layanan utama.
-
-Skrip tidak menghentikan kontainer atau menghapus volume/queue. Ia menambah laporan v2 dan snapshot/outbox/jurnal hasilnya, lalu memulihkan PVMBG ke skema v1 serta outage=false. Jangan jalankan bersamaan dengan demo yang mengubah status sumber. Hasil dan timestamp ditulis ke berkas output; tidak memerlukan `jq`. Freshness menunjukkan keberhasilan pipeline polling/commit, bukan umur tiap rekaman atau publisher confirm.
+Hanya resource clone dihapus, termasuk volumenya; container project lama harus tetap. Build cache dapat dipakai, sehingga ini bukan uji download internet tanpa cache. Checker deployment workspace dipakai untuk memeriksa aplikasi pada checkout commit. Sesudah commit perubahan aplikasi/config, ulangi checker jika ingin membuktikan versi itu.
 
 ## Bukti laporan P1 dan diagram Bab 3
 
-`check-p1-report.py` menjalankan checker ingestion lalu mencocokkan payload BMKG/warning dan PVMBG v1/v2 dengan data kanonis. Ia juga memeriksa migrasi, identitas container, trace, dan dua consumer. Gunakan project yang sudah berjalan dengan overlay operator dan environment lokal lengkap:
-
 ```sh
-python3 -B scripts/check-p1-report.py --env-file .env.acceptance.local --project-name tubesaat-acceptance --output /tmp/p1-report/report-check.json
-python3 -B scripts/show-p1-evidence.py runtime --input /tmp/p1-report/report-check.json
+python3 scripts/check-p1-report.py
+python3 scripts/show-p1-evidence.py runtime --input artifacts/checks/p1-report/report-check.json
 ```
 
-Checker menambah data/jurnal dan memulihkan PVMBG ke v1/outage=false; tidak melakukan restart atau penghapusan volume. `show-p1-evidence.py` hanya menampilkan hasil JSON tersimpan dan menerima bagian `bmkg`, `pvmbg`, atau `runtime`. [README bukti P1](../docs/evidence/member-a/p1/README.md) menyediakan perintah Freeze untuk Gambar 1–3 dan log checker asli.
+Checker laporan menjalankan ingestion dan mencocokkan payload BMKG/warning serta PVMBG v1/v2 dengan data kanonis. Ia memeriksa migrasi, container, trace dan consumer; menambah data/jurnal lalu memulihkan PVMBG ke v1/outage=false. `show-p1-evidence.py` membaca hasil tersimpan; bagian lain adalah `bmkg` dan `pvmbg`. [Bukti P1](../docs/evidence/member-a/p1/README.md) menjelaskan rendering terminal dengan Freeze.
 
-`render-report-diagrams.py` membuat SVG dan PNG arsitektur tanpa mengubah kode aplikasi; lokasi gambar, caption, dan dependensinya ada pada [README diagram](../docs/diagrams/README.md).
+`render-report-diagrams.py` hanya membuat SVG/PNG arsitektur. Dependensi, lokasi dan caption ada di [panduan diagram](../docs/diagrams/README.md). Rendering tidak menjalankan ulang pengujian.
 
-## Deployment default
+## Opsi untuk project atau hasil terpisah
 
-```sh
-python3 scripts/check-deployment.py --env-file .env --output /tmp/deployment-check.json
-```
-
-Checker memeriksa Compose utama tanpa overlay operator: sembilan layanan healthy, tidak ada port host Aggregator/DB, ownership jaringan/secret, query kedua sumber lewat tiga peran, serta correlation ID/latensi pada log Client API, Auth, dan Aggregator. `--start` membangun/menjalankan stack default, sehingga akan menutup kembali port operator pada project tersebut. `--project-name` memilih project uji. Environment tetap lokal; bukti tidak memuat token/password.
-
-Gunakan overlay operator hanya untuk checker yang membutuhkan HTTP Aggregator dari host. Checker clone menguji sembilan layanan dari HEAD dengan secret sendiri dan Compose utama. `--revision` memilih commit; `--evidence-dir` memilih lokasi hasil. `--project-name` membatasi project yang diamati untuk memastikan container lama tetap; project clone selalu dibuat terpisah. Ia memakai checker deployment workspace untuk memeriksa aplikasi dari commit, tanpa menyalin perubahan aplikasi ke checkout. Pengujian ulang diperlukan setelah commit perubahan aplikasi/config yang memengaruhi hasil.
-
-## Beban Client API terautentikasi
+Pemakaian biasa tidak membutuhkan opsi ini. Jika startup memakai file env/nama project khusus, teruskan nilai yang sama ke checker:
 
 ```sh
-python3 scripts/check-client-p2.py --env-file .env --project-name project-uji --evidence-dir /tmp/client-p2
+docker compose --env-file .env.acceptance.local --project-name tubesaat-acceptance up --build -d --wait
+python3 scripts/check-ingestion.py --env-file .env.acceptance.local --project-name tubesaat-acceptance --evidence-dir /tmp/ingestion-run
 ```
 
-Memerlukan sembilan layanan healthy, k6/lsof native, serta access TTL 60 detik. K6 menyiapkan 50 sesi Field Team sebelum pengukuran; setiap VU memegang pasangan token sendiri dan me-refresh sebelum expiry, tanpa login tiap query. Dua run berurutan masing-masing memakai 50 VU selama 60 detik: PVMBG delay 3000 ms, kemudian PVMBG outage sementara query BMKG berlanjut. Tiga sampel socket menghitung koneksi TCP proses k6 ke port Client API. Login/refresh terpisah dari metrik query; refresh failure tetap menggagalkan hasil.
+Nama project memisahkan container/volume, tetapi port host tetap harus bebas. Tidak perlu menambah file Compose operator. `--output <file.json>` tersedia pada checker deployment, ingestion, Auth, upstream, resiliensi, laporan P1 dan consumer; `--evidence-dir` tersedia pada semua checker. Jika memilih `--output`, file JSON memakai path itu.
 
-Respons 200 harus berisi data kanonis BMKG. Respons 429 harus memiliki kode `concurrency_limit`, correlation ID, dan `Retry-After: 1`; 429 yang memenuhi kontrak dilaporkan terpisah dari error tidak terkontrol. p95 request lengkap dan p95 respons 200 harus <300 ms, error tidak terkontrol <1%, dan setiap run harus mencatat sedikitnya 50 refresh berhasil serta query 200. Rate 429 tidak diberi batas tambahan; jumlah 200/rate layanan tetap dicatat.
+## Log progres dan pengujian helper
 
-Checker mencatat panggilan upstream lambat/503, last-known PVMBG dan metadata stale selama outage, progres ingestion BMKG, serta report PVMBG baru setelah recovery. Schema/delay/outage asli dibaca dari health PVMBG dan dipulihkan pada `finally`, termasuk saat threshold gagal. Layanan inti tidak direstart. Jangan menjalankan pemeriksaan lifecycle bersamaan. Hasil gagal dan hasil pemulihan tetap disimpan pada lokasi bukti.
-
-## Log progres pengujian
-
-Semua `check-*.py` menampilkan tahap pemeriksaan dan waktu berjalan ke **stderr**, langsung tanpa buffering. Polling panjang mencetak heartbeat kira-kira setiap 10 detik; P2 mencetak checkpoint koneksi/data pada detik 15, 30, dan 45 serta ringkasan metrik tiap run. Operasi build/start yang outputnya ditangkap menampilkan tahap sebelum operasi; detailnya tetap tersedia di file log atau Docker. Token, password, kredensial request, dan payload tidak dicetak oleh log progres.
-
-Command sebelumnya tetap berlaku. Gunakan nama project Docker yang benar, lihat `docker compose ls`; nama contoh `project-uji` harus diganti dengan project yang ingin diperiksa. Contoh untuk stack `tubesaat-15`:
-
-```sh
-python3 scripts/check-client-p2.py --env-file .env --project-name tubesaat-15 --evidence-dir /tmp/p2-check
-```
-
-Untuk menyimpan progres deployment sambil mempertahankan JSON stdout:
-
-```sh
-python3 scripts/check-deployment.py --env-file .env --project-name tubesaat-15 \
-  --output /tmp/deployment-check.json 2>/tmp/deployment-progress.log
-tail -f /tmp/deployment-progress.log
-```
-
-`tail -f` dijalankan di terminal lain. Untuk melihat sekaligus menyimpan output gabungan checker:
+Progres dikirim ke stderr tanpa buffering; JSON/stdout tetap terpisah. Polling panjang mencetak heartbeat; P2 mencetak checkpoint dan ringkasan tiap run. Secret/token tidak dicetak. Untuk menyimpan log gabungan:
 
 ```sh
 set -o pipefail
-python3 scripts/check-client-p2.py --env-file .env --project-name tubesaat-15 \
-  --evidence-dir /tmp/p2-check 2>&1 | tee /tmp/p2-progress.log
+python3 scripts/check-client-p2.py 2>&1 | tee /tmp/p2-progress.log
 ```
 
-File gabungan ini adalah log teks; hasil terstruktur P2 tetap di `/tmp/p2-check/p2-client-check.json`. Jangan menjalankan checker outage/lifecycle bersamaan pada project yang sama. Progres baru berlaku untuk proses yang dimulai setelah skrip diperbarui.
+Tes helper/konfigurasi/lifecycle tidak membutuhkan Docker:
+
+```sh
+python3 -B -m unittest discover -s scripts -p 'test_*.py'
+```
+
+Untuk pengujian modul Go dan integrasi storage/consumer, lihat [panduan pengujian](../tests/README.md).

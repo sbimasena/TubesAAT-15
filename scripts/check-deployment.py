@@ -7,26 +7,13 @@ import subprocess
 import urllib.request
 import uuid
 
-from demo_support import compose, now, redact, settings, wait_for
+from demo_support import options, run, now, redact, settings, wait_for
 from demo_support import progress
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--start", action="store_true", help="Build/start the default stack in the selected project")
-parser.add_argument("--output", type=Path)
+parser.add_argument("--output", type=Path, default=Path(options.evidence_dir) / "deployment-check.json")
 args = parser.parse_args()
-# The shared demos opt into operator access; deployment must prove the base file alone.
-deployment = compose[:-2]
-
-
-def run(*parts):
-    if parts and parts[0] in ("up", "stop", "start", "restart", "build"):
-        progress("Compose " + parts[0] + ": running selected lifecycle operation")
-    result = subprocess.run(deployment + list(parts), capture_output=True, text=True)
-    if result.returncode:
-        raise RuntimeError("Deployment Compose operation failed; inspect the selected project locally")
-    return result.stdout.strip()
-
-
 progress("Checking default deployment ownership, network isolation and health")
 config = json.loads(run("config", "--format", "json"))
 services = config["services"]

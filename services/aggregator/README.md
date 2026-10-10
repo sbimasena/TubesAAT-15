@@ -4,7 +4,13 @@ Aggregator mem-poll BMKG dan PVMBG secara mandiri setiap `POLL_INTERVAL_SECONDS`
 
 ## Akses internal
 
-Compose utama tidak mempublikasikan port Aggregator. Client API memanggil `http://aggregator:8083` melalui jaringan Docker. Untuk inspeksi host oleh operator tepercaya, gunakan `tests/compose-operator.yml` yang membuka port hanya pada localhost. Endpoint internal mengembalikan data penuh tanpa token; akses klien harus melalui Client API.
+Compose utama tidak mempublikasikan port Aggregator. Client API memanggil `http://aggregator:8083` melalui jaringan Docker. Operator/checker dapat membaca API dari dalam container tanpa overlay atau port host:
+
+```sh
+docker compose exec -T aggregator /service --inspect '/internal/v1/hazards?limit=5' operator-inspect
+```
+
+Mode `--inspect` menerima path health/hazards dan correlation ID, melakukan GET pada loopback container, dan gagal jika respons bukan 200 atau correlation ID berubah. Endpoint internal mengembalikan data penuh tanpa token; akses klien tetap melalui Client API. Overlay `tests/compose-operator.yml` tersedia untuk inspeksi host manual oleh operator tepercaya, tetapi tidak dipakai checker.
 
 ## API dan freshness sumber
 
@@ -72,7 +78,7 @@ Override menggunakan builder image, schema PostgreSQL sementara, dan exchange/qu
 Untuk alur skema/fanout/outage melalui API nyata, tanpa restart:
 
 ```sh
-python3 scripts/check-ingestion.py --output /tmp/tubesaat-ingestion-check.json
+python3 scripts/check-ingestion.py
 ```
 
 Jalankan dari root repository. Skrip mengembalikan PVMBG ke skema v1 dan outage=false; laporan yang sudah dibuat tetap ada. Lihat [README utama](../../README.md) untuk prasyarat dan efek pemeriksaan.

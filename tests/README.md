@@ -1,14 +1,14 @@
 # Pengujian Lintas Layanan
 
-Isi file environment lokal lengkap seperti README utama. Checker pada stack yang sudah berjalan menerima `--env-file` dan `--project-name`; gunakan project uji untuk outage/restart. Clean clone menghasilkan environment sendiri. Demo yang membaca Aggregator dari host membutuhkan `tests/compose-operator.yml`. Compose utama sendiri menutup port Aggregator/DB.
+Jalankan `python3 scripts/setup-env.py` sekali, lalu `docker compose up --build -d --wait`. Semua checker dapat dijalankan langsung pada stack ini; tidak perlu overlay operator. `--env-file`, `--project-name`, dan `--evidence-dir` tersedia untuk konfigurasi/hasil khusus. Hasil default berada di `artifacts/checks/<nama-checker>/`. Clean clone menghasilkan environment sendiri. Compose utama tetap menutup port Aggregator/DB.
 
 ```sh
-python3 scripts/check-deployment.py --env-file .env --output /tmp/deployment-check.json
-python3 -B -m unittest discover -s scripts -p test_demo_support.py
+python3 scripts/check-deployment.py
+python3 -B -m unittest discover -s scripts -p 'test_*.py'
 k6 --address '' run --quiet tests/check-load-summary.js
 ```
 
-Checker deployment memeriksa stack default dan alur HTTP terlindungi. Tes helper memeriksa pemilihan project, port host efektif, penerusan opsi checker, redaksi secret saat Compose gagal, serta penggunaan token baru setelah refresh. Cek summary k6 memastikan token dari data setup tidak disimpan pada hasil beban.
+Checker deployment memeriksa stack default dan alur HTTP terlindungi. Tes helper memeriksa pemilihan project, port efektif, pembacaan internal tanpa overlay, redaksi secret, token baru setelah refresh, pembuatan konfigurasi tanpa overwrite, pemulihan consumer saat checker gagal, serta penolakan kredensial silang. Cek summary k6 memastikan token dari data setup tidak disimpan pada hasil beban.
 
 
 ## Persistence PostgreSQL dan publisher RabbitMQ
@@ -30,7 +30,7 @@ Tanpa `TEST_DATABASE_URL`/`TEST_BROKER_URL`, tes integrasi lokal dilewati; tes H
 python3 scripts/check-stage-2.py
 ```
 
-Gunakan konfigurasi lokal `.env` dan lima layanan yang sudah berjalan. Skrip memerlukan Python stdlib/Docker serta tidak boleh dijalankan ketika consumer aktif. Ia stop/start broker sementara; memeriksa API 200, ingestion/outbox selama downtime, recovery tanpa restart Aggregator, serta pesan durable yang masih ada setelah restart. Probe queue memakai requeue, tidak ack permanen/purge; field redelivery dapat berubah. Statistik management setelah boot ditunggu hingga tersedia. Broker selalu di-start pada blok `finally` jika pemeriksaan downtime gagal.
+Jalankan langsung pada stack lengkap. Skrip mematikan kedua consumer, menunggu backlog, lalu stop/start broker sementara; memeriksa API 200, ingestion/outbox selama downtime, recovery tanpa restart Aggregator, serta pesan durable yang masih ada setelah restart. Probe queue memakai requeue, tidak ack permanen/purge; field redelivery dapat berubah. Statistik management setelah boot ditunggu hingga tersedia. Broker di-start pada blok `finally` jika pemeriksaan downtime gagal; hanya consumer yang sebelumnya berjalan yang dihidupkan kembali.
 
 Hasil pemeriksaan menunjukkan apakah ingestion, pending outbox, dan delivery pulih setelah broker tersedia kembali. Checker ini berfokus pada broker, bukan pengujian Auth/Client API.
 
@@ -47,7 +47,7 @@ Override menjalankan race detector pada dua modul mandiri, menggunakan file seme
 
 Skrip memakai broker nyata/konfigurasi `.env`: producer serta dashboard tetap berjalan ketika notifikasi offline; event yang sama dibaca notifikasi sesudah restart. Replay satu ID producer dilakukan sebelum/sesudah restart consumer, lalu jumlah hasil pada setiap jurnal diperiksa tetap satu. Replay aplikasi ini dapat memiliki redelivered=false; crash sebelum ack disimulasikan pada tes journal. Restart broker memeriksa health unavailable dan reconnect tanpa restart consumer/producer. Semua layanan yang dihentikan dipulihkan; volume dan queue tidak dihapus. Tujuh layanan harus sudah berjalan dan menghasilkan event mock periodik. Gunakan `--output <file.json>` untuk menentukan lokasi hasil pemeriksaan.
 
-Gunakan `check-stage-3.py` untuk stack dengan consumer aktif. Skrip `check-stage-2.py` khusus menguji broker dengan kedua consumer offline.
+`check-stage-3.py` memeriksa fanout/reconnect consumer; `check-stage-2.py` menyiapkan kondisi consumer offline sendiri untuk memeriksa durability backlog broker.
 
 ## Demo independensi container, storage, dan fanout event (P4/P5)
 
@@ -78,7 +78,7 @@ Cleanup hanya project clone dengan `down --volumes --remove-orphans`; ID/Started
 ## P2 melalui Client API
 
 ```sh
-python3 scripts/check-client-p2.py --env-file .env --project-name project-uji --evidence-dir /tmp/client-p2
+python3 scripts/check-client-p2.py
 ```
 
 Sembilan layanan harus healthy. Dua run masing-masing 50 VU/60 detik menggunakan query BMKG-only, pertama saat PVMBG delay 3000 ms, lalu saat PVMBG outage. K6 membuat sesi terpisah per VU dan refresh tanpa login ulang dengan access TTL 60 detik. Socket diambil pada detik sekitar 15/30/45 setelah persiapan sesi selesai; targetnya port Client API, bukan port Aggregator.

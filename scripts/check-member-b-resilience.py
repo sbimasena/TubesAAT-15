@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Stage 5 HTTP checkpoint; sustained P2 load and full-stack fanout are separate checks.
 
-Requires an already-running, explicitly named Compose checkpoint project.
+Requires an already-running Compose project.
 With --exercise-outages, toggle PVMBG outage and stop/start Auth and PostgreSQL
-in the named test project. Restore those services and the original PVMBG flag.
+in the selected project. Restore those services and the original PVMBG flag.
 Leaves the stack running and preserves volumes. Evidence omits credentials, tokens, and hazard payloads.
 """
 import argparse
@@ -19,27 +19,19 @@ import urllib.error
 import urllib.request
 import uuid
 from checker_progress import progress, heartbeat
+from demo_support import options, settings, compose as compose_command
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env-file", default=".env")
-    parser.add_argument("--project-name", required=True, help="Explicit Compose checkpoint project")
     parser.add_argument("--exercise-outages", action="store_true")
     parser.add_argument("--burst-connections", type=int, default=0, help="Optional short burst, not sustained P2 load (2-256)")
-    parser.add_argument("--output", type=Path)
+    parser.add_argument("--output", type=Path, default=Path(options.evidence_dir) / "resilience-check.json")
     args = parser.parse_args()
     progress("Starting configuration and prerequisite checks")
     assert args.burst_connections == 0 or 2 <= args.burst_connections <= 256, "Burst size must be 2-256"
-    env = {}
-    for line in Path(args.env_file).read_text(encoding="utf-8-sig").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, value = line.split("=", 1)
-            env[key.strip()] = value.strip().strip("\"'")
-    root = Path(__file__).resolve().parent.parent
-    command = ["docker", "compose", "--env-file", str(Path(args.env_file).resolve()),
-               "-p", args.project_name, "-f", str(root / "docker-compose.yml")]
+    env = settings
+    command = compose_command
 
     def compose(*parts):
         if parts and parts[0] in ("up", "stop", "start", "restart", "build"):
@@ -221,6 +213,7 @@ def main():
         if pvmbg_original is not None:
             call("pvmbg", "/admin/outage", {"enabled": pvmbg_original}, env["PVMBG_TOKEN"])
     if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
         progress("Result file saved")
     progress("PASS: resilience checks")
@@ -232,5 +225,5 @@ if __name__ == "__main__":
         main()
     except (AssertionError, OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
         detail = str(error) if isinstance(error, AssertionError) else type(error).__name__
-        print(f"FAIL: {detail}; inspect the named checkpoint project and local configuration.")
+        print(f"FAIL: {detail}; inspect the selected Compose project and local configuration.")
         raise SystemExit(1)

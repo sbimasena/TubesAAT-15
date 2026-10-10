@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -20,6 +23,17 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--inspect" {
+		if len(os.Args) != 4 {
+			fmt.Fprintln(os.Stderr, "usage: /service --inspect <path> <correlation-id>")
+			os.Exit(1)
+		}
+		if err := inspect(os.Args[2], os.Args[3], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "Aggregator inspection failed:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--healthcheck" {
 		client := &http.Client{Timeout: 4 * time.Second}
 		response, err := client.Get("http://127.0.0.1:" + envOr("AGGREGATOR_PORT", "8083") + "/health")
@@ -94,6 +108,32 @@ func main() {
 	stop()
 	<-pollersDone
 	<-publisherDone
+}
+
+// inspect lets local Docker operators read the running API without publishing a host port.
+func inspect(path, correlation string, output io.Writer) error {
+	parsed, err := url.ParseRequestURI(path)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || (parsed.Path != "/health" && parsed.Path != "/hazards" && parsed.Path != "/internal/v1/hazards") {
+		return errors.New("expected a local health or hazard path")
+	}
+	request, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:"+envOr("AGGREGATOR_PORT", "8083")+path, nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("X-Correlation-ID", correlation)
+	response, err := (&http.Client{Timeout: 15 * time.Second}).Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d", response.StatusCode)
+	}
+	if response.Header.Get("X-Correlation-ID") != correlation {
+		return errors.New("correlation ID changed")
+	}
+	_, err = io.Copy(output, response.Body)
+	return err
 }
 
 func envOr(key, fallback string) string {

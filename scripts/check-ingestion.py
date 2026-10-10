@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify runtime schema evolution, fanout and source freshness without restarting services.
 
-Requires the seven A/C development services using .env.example. Leaves PVMBG at
+Requires the running Compose stack. Leaves PVMBG at
 schema v1 and outage=false. Does not delete volumes, queues, or canonical data.
 """
 import argparse
@@ -12,11 +12,11 @@ import time
 from pathlib import Path
 import urllib.request
 
-from demo_support import journal, now, run, settings, wait_for
+from demo_support import options, aggregator_read, journal, now, run, settings, wait_for
 from demo_support import progress
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--output", default="/tmp/tubesaat-ingestion-check.json")
+parser.add_argument("--output", default=str(Path(options.evidence_dir) / "ingestion-check.json"))
 args = parser.parse_args()
 
 def development_states():
@@ -56,11 +56,11 @@ def admin(path, body):
 
 
 def health():
-    return request(settings["AGGREGATOR_PORT"], "/health")
+    return aggregator_read("/health")["body"]
 
 
 def hazards():
-    return request(settings["AGGREGATOR_PORT"], "/internal/v1/hazards?source=PVMBG&limit=1000")
+    return aggregator_read("/internal/v1/hazards?source=PVMBG&limit=1000")["body"]
 
 
 def canonical(reference):

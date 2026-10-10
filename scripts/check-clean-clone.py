@@ -17,7 +17,7 @@ from checker_progress import progress, heartbeat
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--revision", default="HEAD", help="Committed revision to verify")
-parser.add_argument("--evidence-dir", type=Path, default=Path("docs/evidence/anggota-c/integrasi/clean-clone"))
+parser.add_argument("--evidence-dir", type=Path, default=Path("artifacts/checks/clean-clone"))
 parser.add_argument("--project-name", help="Existing project to observe; default observes all existing Compose containers")
 args = parser.parse_args()
 progress("Starting isolated clean-checkout verification")
@@ -53,7 +53,7 @@ def wait_for(check, description):
 evidence = {"started_at": now(), "existing_states_before": existing_states(),
             "verification_tool_sha256": hashlib.sha256(checker.read_bytes()).hexdigest()}
 progress("Creating isolated checkout and disposable configuration")
-with tempfile.TemporaryDirectory(prefix="tubesaat-clean-", dir="/private/tmp") as temporary:
+with tempfile.TemporaryDirectory(prefix="tubesaat-clean-") as temporary:
     root = Path(temporary)
     clone = root / "repo"
     subprocess.run(["git", "clone", "--local", "--no-hardlinks", ".", str(clone)], capture_output=True, text=True, check=True)

@@ -16,23 +16,23 @@ from checker_progress import progress as _progress, heartbeat
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("--env-file", default=".env")
 parser.add_argument("--project-name")
-parser.add_argument("--evidence-dir", help="Directory for new demo evidence; preserves historical defaults when omitted")
+parser.add_argument("--evidence-dir", default=str(Path("artifacts/checks") / Path(sys.argv[0]).stem.removeprefix("check-")),
+                    help="Result directory (default: artifacts/checks/<checker>)")
 options, remaining = parser.parse_known_args()
-# Leave each checker its own flags while sharing the operator configuration.
+# Leave each checker its own flags while sharing the Compose configuration.
 sys.argv[1:] = remaining
 compose = ["docker", "compose", "--env-file", str(Path(options.env_file).resolve())]
 if options.project_name:
     compose += ["--project-name", options.project_name]
-compose += ["-f", "docker-compose.yml", "-f", "tests/compose-operator.yml"]
+compose += ["-f", "docker-compose.yml"]
 _progress("Reading selected Compose configuration")
 result = subprocess.run(compose + ["config", "--format", "json"], capture_output=True, text=True)
 if result.returncode:
-    raise SystemExit("Invalid demo configuration: fill the local environment file; inspect Compose locally.")
+    raise SystemExit("Invalid Compose configuration: run python3 scripts/setup-env.py, then inspect your .env locally.")
 config = json.loads(result.stdout)
 settings = {key: str(value) for service in config["services"].values()
             for key, value in service.get("environment", {}).items() if value is not None}
-for service, variable in (("bmkg", "BMKG_PORT"), ("pvmbg", "PVMBG_PORT"),
-                          ("aggregator", "AGGREGATOR_PORT"), ("auth", "AUTH_PORT"),
+for service, variable in (("bmkg", "BMKG_PORT"), ("pvmbg", "PVMBG_PORT"), ("auth", "AUTH_PORT"),
                           ("client-api", "CLIENT_API_PORT"), ("message-broker", "RABBITMQ_MANAGEMENT_PORT")):
     settings[variable] = str(config["services"][service]["ports"][0]["published"])
 
@@ -152,6 +152,14 @@ def http_call(port, path, body=None, token=None):
         return {"status": response.status, "correlation_id": correlation,
                 "body": json.loads(payload) if payload and response.headers.get_content_type() == "application/json" else None,
                 "elapsed_ms": (time.monotonic() - started) * 1000}
+
+
+def aggregator_read(path, correlation=None):
+    correlation = correlation or "c-check-" + uuid.uuid4().hex
+    started = time.monotonic()
+    body = json.loads(run("exec", "-T", "aggregator", "/service", "--inspect", path, correlation))
+    return {"status": 200, "correlation_id": correlation, "body": body,
+            "elapsed_ms": (time.monotonic() - started) * 1000}
 
 
 sessions = {}

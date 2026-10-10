@@ -56,8 +56,8 @@ Binary mendukung `/service --healthcheck`, dengan timeout 3 detik, menggunakan `
 Jalankan Auth, API Klien, dan Aggregator yang sudah memiliki data BMKG/PVMBG. Untuk Compose, gunakan file lingkungan lokal lengkap. Endpoint sementara sebaiknya dinonaktifkan (`ENABLE_PROVISIONAL_HAZARD_ENDPOINT=false`) selama pemeriksaan API publik.
 
 ```sh
-docker compose --env-file .env.member-b.local up --build -d --wait
-python scripts/check-member-b-auth.py --env-file .env.member-b.local --natural-expiry --output member-b-auth-checkpoint.json
+docker compose up --build -d --wait
+python3 scripts/check-member-b-auth.py --natural-expiry
 ```
 
 Skrip memeriksa login tiga peran, tujuh/sebelas field, penolakan permintaan mentah, rotasi, replay refresh token, dan penolakan access token lama sebelum expiry. `--natural-expiry` menunggu TTL nyata Tim Lapangan (default 60 detik, maksimal 300 detik untuk checkpoint), memeriksa `401`, lalu refresh tanpa login ulang dan memakai token baru. Jam sistem tidak diubah. Skrip tidak me-restart layanan, mengubah status sumber, atau menghapus volume. Output tidak berisi token, kredensial, atau payload hazard.
@@ -66,10 +66,10 @@ Jika URL publik berbeda, gunakan `--auth-url` dan `--client-url`. Hasil ini adal
 
 ## Pemeriksaan resiliensi
 
-Jalankan hanya pada project uji yang dipilih secara eksplisit dan memiliki enam layanan HTTP/storage yang sehat. Broker/consumer tidak diuji oleh checker ini. Jangan menjalankan demo yang mengubah sumber atau lifecycle secara bersamaan.
+Jalankan pada stack Compose yang sudah sehat. Checker mengikuti `.env` dan nama project Compose secara otomatis; `--env-file`/`--project-name` hanya diperlukan jika startup memakai konfigurasi khusus. Broker/consumer tidak diuji oleh checker ini. Jangan menjalankan demo yang mengubah sumber atau lifecycle secara bersamaan.
 
 ```sh
-python scripts/check-member-b-resilience.py --env-file .env.member-b.local --project-name member-b-checkpoint --exercise-outages --burst-connections 128 --output member-b-resilience-checkpoint.json
+python3 scripts/check-member-b-resilience.py --exercise-outages --burst-connections 128
 ```
 
 Pemeriksaan dasar memvalidasi envelope/proyeksi Media, filter kosong 200, galat JSON 400/403, refresh, correlation ID lintas proses, identitas login/refresh, latensi outbound, dan redaksi token/secret pada log B. `--exercise-outages` mengaktifkan outage PVMBG untuk memeriksa data terakhir 200/stale, independensi BMKG, dan recovery; kemudian menghentikan/menjalankan kembali hanya PostgreSQL dan Auth pada project tersebut untuk memeriksa 503/health/recovery. Flag outage asal dipulihkan, layanan yang dihentikan dipulihkan, dan volume tidak dihapus. Auth restart tetap menghapus sesi memori.

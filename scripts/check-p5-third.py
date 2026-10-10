@@ -66,7 +66,7 @@ try:
     assert evidence["producer_hashes_before"] == evidence["producer_hashes_after"]
     assert evidence["producer_commit_before"] == evidence["producer_commit_after"]
     assert evidence["aggregator_id_before"] == evidence["aggregator_id_after"]
-    folder = Path(options.evidence_dir or "docs/evidence/anggota-c/stage-4")
+    folder = Path(options.evidence_dir)
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "review-build.log").write_text(build_output + "\n")
 finally:

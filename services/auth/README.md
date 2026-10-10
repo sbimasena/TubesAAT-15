@@ -27,7 +27,7 @@ Argon2id memakai salt acak 16 byte, memori 64 MiB, tiga iterasi, parallelism emp
 
 ## Konfigurasi dan pengujian
 
-Isi `AUTH_PORT`, `JWT_SIGNING_SECRET`, `AUTH_INTERNAL_SECRET`, `REFRESH_TOKEN_TTL_SECONDS`, serta ID/password tiga klien melalui lingkungan. Kedua secret minimal 32 byte dan harus berbeda. `AUTH_INTERNAL_SECRET` hanya dibagikan kepada Auth/API Klien, terpisah dari kredensial upstream/downstream. `.env.example` menyediakan nama variabel dengan secret/password kosong. Jangan memasukkan konfigurasi nyata ke Git.
+Isi `AUTH_PORT`, `JWT_SIGNING_SECRET`, `AUTH_INTERNAL_SECRET`, `REFRESH_TOKEN_TTL_SECONDS`, serta ID/password tiga klien melalui lingkungan. Kedua secret minimal 32 byte dan harus berbeda. `AUTH_INTERNAL_SECRET` hanya dibagikan kepada Auth/API Klien, terpisah dari kredensial upstream/downstream. Untuk Compose, jalankan `python3 scripts/setup-env.py` dari root repository agar `.env` dibuat dengan kredensial acak; konfigurasi yang sudah ada tidak ditimpa. Jangan memasukkan konfigurasi nyata ke Git.
 
 Auth memakai port container 8084. Compose utama mempublikasikannya hanya ke localhost; `AUTH_PORT` memilih port host dan tidak mengubah URL internal `http://auth:8084`.
 

@@ -14,23 +14,19 @@ import urllib.error
 import urllib.request
 import uuid
 from checker_progress import progress
+from demo_support import options, settings, wait_for
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env-file", default=".env", help="Uncommitted client credentials")
     parser.add_argument("--auth-url", help="Published Auth origin; default localhost AUTH_PORT")
     parser.add_argument("--client-url", help="Published Client API origin; default localhost CLIENT_API_PORT")
     parser.add_argument("--natural-expiry", action="store_true", help="Wait for the actual access TTL (maximum 300s)")
-    parser.add_argument("--output", type=Path, help="Evidence without tokens, credentials, or hazard payloads")
+    parser.add_argument("--output", type=Path, default=Path(options.evidence_dir) / "auth-check.json",
+                        help="Evidence without tokens, credentials, or hazard payloads")
     args = parser.parse_args()
     progress("Starting configuration and prerequisite checks")
-    env = {}
-    for line in Path(args.env_file).read_text(encoding="utf-8-sig").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, value = line.split("=", 1)
-            env[key.strip()] = value.strip().strip("\"'")
+    env = settings
     auth = (args.auth_url or f"http://127.0.0.1:{env.get('AUTH_PORT', '8084')}").rstrip("/")
     client = (args.client_url or f"http://127.0.0.1:{env.get('CLIENT_API_PORT', '8080')}").rstrip("/")
     summary = {"hazard_id", "source", "hazard_type", "severity", "area_name", "occurred_at", "ingested_at"}
@@ -74,6 +70,11 @@ def main():
         assert pair["token_type"] == "Bearer" and pair["refresh_token"], "Incomplete token pair"
         assert pair["expires_in"] == int(env.get("ACCESS_TOKEN_TTL_SECONDS") or "60"), "Unexpected access TTL"
         return pair
+
+    def ready():
+        status, payload = call(client, "/hazards?limit=1000", access=login("field-team")["access_token"])
+        return status == 200 and {r["source"] for r in payload["data"]} == {"BMKG", "PVMBG"}
+    wait_for(ready, "both sources must be readable before authentication checks")
 
     assert call(client, "/hazards")[0] == 401, "Missing token accepted"
     assert call(client, "/hazards", access="invalid-token")[0] == 401, "Invalid token accepted"
@@ -131,6 +132,7 @@ def main():
                 "checks": checks, "natural_expiry_checked": args.natural_expiry,
                 "expiry_wait_seconds": elapsed, "correlation_prefix": prefix}
     if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
         progress("Result file saved")
     progress("PASS: authentication checks")

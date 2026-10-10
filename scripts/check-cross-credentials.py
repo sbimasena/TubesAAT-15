@@ -4,7 +4,6 @@ import argparse
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-import subprocess
 import urllib.error
 import urllib.request
 import uuid
@@ -62,22 +61,15 @@ def check_upstreams(services, checks=None):
 
 
 def main():
+    from demo_support import config, options
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env-file", default=".env")
-    parser.add_argument("--project-name")
-    parser.add_argument("--output", type=Path, help="Save statuses only; no credentials or response bodies")
+    parser.add_argument("--output", type=Path, default=Path(options.evidence_dir) / "cross-credentials.json",
+                        help="Save statuses only; no credentials or response bodies")
     args = parser.parse_args()
     progress("Starting configuration and prerequisite checks")
     evidence = {"started_at": datetime.now(timezone.utc).isoformat(), "checks": []}
-    command = ["docker", "compose", "--env-file", str(Path(args.env_file).resolve())]
-    if args.project_name:
-        command += ["--project-name", args.project_name]
-    command += ["-f", "docker-compose.yml", "config", "--format", "json"]
     try:
-        config = subprocess.run(command, capture_output=True, text=True, timeout=30)
-        if config.returncode:
-            raise ValueError("Invalid Compose configuration; inspect the selected environment locally")
-        check_upstreams(json.loads(config.stdout)["services"], evidence["checks"])
+        check_upstreams(config["services"], evidence["checks"])
         evidence["result"] = "PASS"
     except Exception:
         # Configuration, HTTP errors and payloads may contain secrets. Keep failures generic.

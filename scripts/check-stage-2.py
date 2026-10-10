@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-#Stage 2 check: stop/start RabbitMQ, keep polling/querying, recover durable queues.
+"""Pause consumers, test durable broker recovery, and restore the original running services."""
 import json
 from pathlib import Path
 import subprocess
 import time
-import urllib.request
 
-from demo_support import options, broker, now, run, settings, sql
+from demo_support import options, aggregator_read, broker, healthy, now, run, sql, states, wait_for
 from demo_support import progress, heartbeat
 
 
@@ -31,72 +30,95 @@ def probes():
     return samples
 
 
-progress("Checking durable backlog; both consumers must be offline")
-evidence = {"started_at": now(), "aggregator_id_before": run("ps", "-q", "aggregator"),
-            "queues_before": queues(), "queue_samples_before": probes()}
-assert all(q["durable"] and not q["auto_delete"] and q["consumers"] == 0 for q in evidence["queues_before"])
-left, right = evidence["queue_samples_before"]
-assert {k: v for k, v in left.items() if k != "queue"} == {k: v for k, v in right.items() if k != "queue"}
-baseline = int(sql("SELECT COALESCE(max(message_id),0) FROM hazard_outbox"))
-evidence["stop_requested_at"] = now()
-try:
-    run("stop", "message-broker")
-    evidence["broker_stopped_at"] = now()
-    progress("Waiting for pending outbox records while broker is offline")
-    for attempt in range(15):
-        heartbeat("pending outbox during broker downtime", attempt)
-        time.sleep(2)
-        count = int(sql(f"SELECT count(*) FROM hazard_outbox WHERE published_at IS NULL AND message_id>{baseline}"))
-        if count:
-            break
-    assert count > 0, "polling must persist new pending events during broker downtime"
-    evidence["pending_new_during_downtime"] = count
-    sample = json.loads(sql(f"SELECT row_to_json(t) FROM (SELECT message_id,hazard_id,correlation_id,published_at FROM hazard_outbox WHERE message_id>{baseline} AND published_at IS NULL ORDER BY message_id LIMIT 1) t"))
-    evidence["outbox_sample_offline"] = sample
-    for endpoint in ("health", "hazards?limit=1"):
-        with urllib.request.urlopen("http://127.0.0.1:" + settings["AGGREGATOR_PORT"] + "/" + endpoint, timeout=5) as response:
-            evidence["offline_" + endpoint.split("?")[0] + "_status"] = response.status
-            assert response.status == 200
-finally:
-    evidence["start_requested_at"] = now()
-    run("start", "message-broker")
+def check():
+    wait_for(lambda: all(q["consumers"] == 0 and q["messages_ready"] > 0 for q in queues()),
+             "durable queues must have backlog with both consumers paused")
+    progress("Checking durable backlog with consumers paused")
+    evidence = {"started_at": now(), "aggregator_id_before": run("ps", "-q", "aggregator"),
+                "queues_before": queues(), "queue_samples_before": probes()}
+    assert all(q["durable"] and not q["auto_delete"] and q["consumers"] == 0 for q in evidence["queues_before"])
+    baseline = int(sql("SELECT COALESCE(max(message_id),0) FROM hazard_outbox"))
+    evidence["stop_requested_at"] = now()
+    try:
+        run("stop", "message-broker")
+        evidence["broker_stopped_at"] = now()
+        progress("Waiting for pending outbox records while broker is offline")
+        for attempt in range(15):
+            heartbeat("pending outbox during broker downtime", attempt)
+            time.sleep(2)
+            count = int(sql(f"SELECT count(*) FROM hazard_outbox WHERE published_at IS NULL AND message_id>{baseline}"))
+            if count:
+                break
+        assert count > 0, "polling must persist new pending events during broker downtime"
+        evidence["pending_new_during_downtime"] = count
+        sample = json.loads(sql(f"SELECT row_to_json(t) FROM (SELECT message_id,hazard_id,correlation_id,published_at FROM hazard_outbox WHERE message_id>{baseline} AND published_at IS NULL ORDER BY message_id LIMIT 1) t"))
+        evidence["outbox_sample_offline"] = sample
+        for endpoint in ("health", "hazards?limit=1"):
+            response = aggregator_read("/" + endpoint)
+            evidence["offline_" + endpoint.split("?")[0] + "_status"] = response["status"]
+    finally:
+        evidence["start_requested_at"] = now()
+        run("start", "message-broker")
 
-published = "f"
-progress("Waiting for broker recovery and pending publication")
-for attempt in range(30):
-    heartbeat("broker recovery and queued publication", attempt)
-    time.sleep(2)
+    published = "f"
+    progress("Waiting for broker recovery and pending publication")
+    for attempt in range(30):
+        heartbeat("broker recovery and queued publication", attempt)
+        time.sleep(2)
+        try:
+            evidence["queues_after"] = queues()
+            published = sql(f"SELECT published_at IS NOT NULL FROM hazard_outbox WHERE message_id={sample['message_id']}")
+            if published == "t" and all(after["messages_ready"] >= before["messages_ready"]
+                                       for before, after in zip(evidence["queues_before"], evidence["queues_after"])):
+                break
+        except (OSError, KeyError, subprocess.CalledProcessError):
+            # Management queue statistics are temporarily absent immediately after boot.
+            continue
+    assert published == "t", "outbox should recover without restarting Aggregator"
+    evidence["recovered_at"] = now()
+    evidence["outbox_sample_recovered"] = json.loads(sql(f"SELECT row_to_json(t) FROM (SELECT message_id,hazard_id,correlation_id,published_at FROM hazard_outbox WHERE message_id={sample['message_id']}) t"))
+    evidence["queue_samples_after"] = probes()
+    assert evidence["queue_samples_before"] == evidence["queue_samples_after"], "persistent queued snapshots must survive broker restart"
+    for before, after in zip(evidence["queues_before"], evidence["queues_after"]):
+        assert after["messages_ready"] >= before["messages_ready"], "durable backlog must survive restart"
+    evidence["aggregator_id_after"] = run("ps", "-q", "aggregator")
+    assert evidence["aggregator_id_before"] == evidence["aggregator_id_after"]
+    records = []
+    for line in run("logs", "--no-log-prefix", "--since", evidence["started_at"], "aggregator").splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("msg") in ("outbox waiting for broker", "outbox publish pending", "outbox publisher connected") or record.get("message_id") == sample["message_id"]:
+            records.append(record)
+    evidence["publisher_logs"] = records
+    evidence["result"] = "PASS"
+    return evidence
+
+
+def main():
+    before = states()
+    running = [name for name in ("notification-consumer", "dashboard-consumer")
+               if before.get(name, {}).get("running")]
     try:
-        evidence["queues_after"] = queues()
-        published = sql(f"SELECT published_at IS NOT NULL FROM hazard_outbox WHERE message_id={sample['message_id']}")
-        if published == "t" and all(after["messages_ready"] >= before["messages_ready"]
-                                   for before, after in zip(evidence["queues_before"], evidence["queues_after"])):
-            break
-    except (OSError, KeyError, subprocess.CalledProcessError):
-        # Management queue statistics are temporarily absent immediately after boot.
-        continue
-assert published == "t", "outbox should recover without restarting Aggregator"
-evidence["recovered_at"] = now()
-evidence["outbox_sample_recovered"] = json.loads(sql(f"SELECT row_to_json(t) FROM (SELECT message_id,hazard_id,correlation_id,published_at FROM hazard_outbox WHERE message_id={sample['message_id']}) t"))
-evidence["queue_samples_after"] = probes()
-assert evidence["queue_samples_before"] == evidence["queue_samples_after"], "persistent queued snapshots must survive broker restart"
-for before, after in zip(evidence["queues_before"], evidence["queues_after"]):
-    assert after["messages_ready"] >= before["messages_ready"], "durable backlog must survive restart"
-evidence["aggregator_id_after"] = run("ps", "-q", "aggregator")
-assert evidence["aggregator_id_before"] == evidence["aggregator_id_after"]
-records = []
-for line in run("logs", "--no-log-prefix", "--since", evidence["started_at"], "aggregator").splitlines():
-    try:
-        record = json.loads(line)
-    except json.JSONDecodeError:
-        continue
-    if record.get("msg") in ("outbox waiting for broker", "outbox publish pending", "outbox publisher connected") or record.get("message_id") == sample["message_id"]:
-        records.append(record)
-evidence["publisher_logs"] = records
-evidence["result"] = "PASS"
-destination = Path(options.evidence_dir or "docs/evidence/anggota-c/stage-2") / "broker-recovery.json"
-destination.parent.mkdir(parents=True, exist_ok=True)
-destination.write_text(json.dumps(evidence, indent=2) + "\n")
-progress("Result file saved")
-print("PASS: pending during downtime; API 200; recovered without Aggregator restart; durable queued snapshots preserved")
-print(destination)
+        if running:
+            run("stop", *running)
+        evidence = check()
+    finally:
+        if running:
+            progress("Restoring consumers that were running before the check")
+            run("start", *running)
+            wait_for(lambda: all(healthy(name) for name in running), "consumers must reconnect after broker check")
+
+    evidence["restored_consumers"] = running
+    evidence["finished_at"] = now()
+    destination = Path(options.evidence_dir) / "broker-recovery.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(evidence, indent=2) + "\n")
+    progress("Result file saved")
+    print("PASS: pending during downtime; API 200; recovered without Aggregator restart; durable queued snapshots preserved")
+    print(destination)
+
+
+if __name__ == "__main__":
+    main()

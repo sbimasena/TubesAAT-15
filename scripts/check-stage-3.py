@@ -11,7 +11,7 @@ from demo_support import progress
 
 services = ("notification-consumer", "dashboard-consumer")
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--output", type=Path, default=Path(options.evidence_dir or "docs/evidence/anggota-c/stage-3") / "consumer-check.json")
+parser.add_argument("--output", type=Path, default=Path(options.evidence_dir) / "consumer-check.json")
 arguments = parser.parse_args()
 
 

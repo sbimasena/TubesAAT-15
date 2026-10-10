@@ -2,177 +2,147 @@
 
 Purwarupa koordinasi bencana BNPB yang menggabungkan gempa/peringatan tsunami BMKG dan laporan gunung api PVMBG menjadi `HazardEvent` kanonis.
 
-## Komponen dan tanggung jawab
+## 1. Jalankan sistem
 
-| Anggota | Komponen |
-|---|---|
-| A | Mock BMKG/PVMBG, polling mandiri, mapping/korelasi, API dan freshness Aggregator |
-| B | Auth, identitas/scope, JWT/refresh, Client API, proyeksi field dan resiliensi request |
-| C | Compose, PostgreSQL/JSONB, transactional outbox, RabbitMQ, consumer dan pengujian infrastruktur |
+Prasyarat: Docker Engine dengan Compose v2 aktif dan Python 3. Pada macOS, jalankan Docker Desktop. Semua perintah berikut dijalankan dari root repository; Go di host tidak diperlukan untuk menjalankan stack.
 
-Tujuh layanan Go memiliki modul dan Dockerfile sendiri; PostgreSQL dan RabbitMQ menjadi dua komponen infrastruktur. Semua komunikasi bisnis antarlayanan memakai HTTP atau AMQP. Go 1.27.1 dan `net/http` dipakai konsisten.
-
-Aggregator menyimpan hazard dan snapshot outbox dalam transaksi PostgreSQL yang sama. Worker menerbitkan snapshot ke exchange fanout `hazard.events`; queue durable `notification` dan `dashboard` memberikan subscription independen. Consumer menyimpan hasil simulasi pada jurnal persisten lalu melakukan ack, dengan deduplikasi ID pesan setelah restart.
-
-## Menjalankan stack lengkap
-
-Prasyarat: Docker Engine/Compose aktif dan Python 3 untuk checker. Pada macOS, jalankan Docker Desktop terlebih dahulu dan periksa `docker info`.
+Dari clone baru, buat konfigurasi lokal sekali:
 
 ```sh
-cp .env.example .env
+python3 scripts/setup-env.py
 ```
 
-Isi `JWT_SIGNING_SECRET`, `AUTH_INTERNAL_SECRET`, dan password ketiga klien di `.env`. Kedua secret minimal 32 byte dan berbeda. Untuk menghasilkan satu nilai lokal acak:
+Skrip menyalin konfigurasi `.env.example` ke `.env`, membuat secret/password acak, dan menyelaraskan URL database/broker dengan password tersebut. File dibuat dengan izin `0600`; file `.env` yang sudah ada dipertahankan. Jika sebelumnya sudah menyalin template dengan secret kosong, isi lima nilai wajib pada tabel konfigurasi sebelum lanjut. `.env` tidak masuk Git.
+
+Build dan jalankan seluruh sistem dengan satu perintah:
+
+```sh
+docker compose up --build -d --wait
+```
+
+Compose membangun tujuh aplikasi Go dan menjalankan PostgreSQL/RabbitMQ, menunggu dependency sehat, serta menyiapkan migrasi dan topology broker. Sesudah perintah selesai, langsung jalankan checker pada langkah 2. Checker menunggu ingestion yang dibutuhkan; tidak perlu mengaktifkan overlay operator.
+
+| Akses dari host | Alamat default |
+|---|---|
+| Client API | `http://localhost:8080` |
+| Auth | `http://127.0.0.1:8084` |
+| Mock BMKG / PVMBG | `http://localhost:8081` / `http://localhost:8082` |
+| RabbitMQ management | `http://127.0.0.1:15672` — akun dari `.env` |
+
+Aggregator dan PostgreSQL tidak membuka port host. Checker membaca API Aggregator dari dalam container melalui `docker compose exec`, sehingga deployment yang diperiksa sama dengan deployment biasa.
+
+## 2. Jalankan skenario satu per satu
+
+Setiap checker memakai `.env` dan project Compose yang sama dengan perintah startup di atas. Hasil terbaru otomatis disimpan di `artifacts/checks/<nama-checker>/`; skrip mencetak lokasi hasil dan progresnya. Exit code `0` berarti lulus, selain itu berarti gagal. Berhenti jika satu skenario gagal dan baca hasil/log sebelum melanjutkan. Volume tidak dihapus oleh checker pada stack ini.
+
+| Problem | Jalankan | Skenario yang dipicu |
+|---|---|---|
+| Deployment | `python3 scripts/check-deployment.py` | Sembilan layanan sehat, batas jaringan/secret, port Aggregator/DB tertutup, tiga identitas dan trace HTTP. |
+| P1: ingestion dan evolusi skema | `python3 scripts/check-ingestion.py` | Pemetaan PVMBG v1/v2 dan delivery ke dua consumer; outage PVMBG, freshness, data terakhir, independensi BMKG, recovery tanpa restart. PVMBG dikembalikan ke v1/outage=false. |
+| P2: lambat dan outage di bawah beban | `python3 scripts/check-client-p2.py` | Dua run k6, masing-masing 50 VU selama 60 detik: PVMBG delay 3000 ms lalu outage. Memeriksa latency, error, refresh, socket, data terakhir, dan recovery. Delay/schema/outage awal dipulihkan. **Perlu k6 dan lsof di host**, serta access TTL 60 detik. |
+| P3: kredensial upstream | `python3 scripts/check-cross-credentials.py` | Kredensial sumber sendiri harus diterima; kredensial silang dan request tanpa kredensial harus ditolak. Tidak mengubah layanan. |
+| P3: autentikasi downstream | `python3 scripts/check-member-b-auth.py --natural-expiry` | Login tiga peran, scope/proyeksi, penolakan field mentah, refresh/replay, token lama dan expiry alami. Menunggu TTL access yang nyata. |
+| P4: deployment mandiri dan storage | `python3 scripts/check-p4.py` | Rebuild PVMBG saja, JSONB v1/v2 tanpa migrasi tambahan, restart Aggregator/DB, isolasi storage, stop/start Auth/API dan trace. Schema PVMBG awal dipulihkan; restart Auth menghapus sesi lama. |
+| P5: fanout dan recovery | `python3 scripts/check-stage-3.py` | Notifikasi offline sementara dashboard tetap menerima; backlog, replay ID sama sebelum/sesudah restart consumer, lalu broker outage/reconnect. Layanan dipulihkan. |
+| P5: subscriber baru | `python3 scripts/check-p5-third.py` | Build/start subscriber ketiga, cocokkan event baru di tiga subscriber, periksa producer tidak berubah, lalu bersihkan subscriber/queue sementara. |
+
+Urutan praktis untuk memeriksa semua problem:
+
+```sh
+python3 scripts/check-deployment.py
+python3 scripts/check-ingestion.py
+python3 scripts/check-cross-credentials.py
+python3 scripts/check-member-b-auth.py --natural-expiry
+python3 scripts/check-p4.py
+python3 scripts/check-stage-3.py
+python3 scripts/check-p5-third.py
+python3 scripts/check-client-p2.py
+```
+
+Skenario tambahan:
+
+| Jalankan | Tujuan dan efek |
+|---|---|
+| `python3 scripts/check-stage-2.py` | Persistence backlog broker. Skrip mematikan kedua consumer, menunggu backlog, menghentikan/menjalankan broker, lalu menghidupkan hanya consumer yang sebelumnya berjalan. |
+| `python3 scripts/check-member-b-resilience.py` | Kontrak respons publik, filter kosong, galat JSON, refresh, trace dan redaksi log. |
+| `python3 scripts/check-member-b-resilience.py --exercise-outages --burst-connections 64` | Tambahkan outage PVMBG/DB/Auth dan burst singkat; dependency/outage dipulihkan. Burst ini berbeda dari pengukuran P2 selama 60 detik. |
+| `python3 scripts/check-p1-report.py` | Jalankan ingestion, lalu cocokkan payload BMKG/warning dan PVMBG dengan data kanonis, migrasi, identitas container, trace dan consumer. |
+| `python3 scripts/check-clean-clone.py` | Build/start **commit HEAD** pada project/volume baru dengan kredensial sendiri, periksa deployment/fanout, lalu hapus hanya resource sementara. Perubahan belum di-commit tidak ikut. Port 28081/28082/28084/28080/35672 harus bebas. |
+
+Detail threshold, efek dan opsi checker ada di [panduan skrip](scripts/README.md). Pengujian unit/integrasi tiap modul ada di [panduan pengujian](tests/README.md).
+
+## 3. Hentikan, lanjutkan, atau lihat log
+
+```sh
+docker compose ps
+docker compose logs --tail 100 aggregator client-api auth
+docker compose stop
+# Menjalankan kembali dengan data/volume yang sama:
+docker compose up -d --wait
+```
+
+Jika startup gagal, lihat `docker compose ps -a` dan log layanan yang gagal. Jika port host terpakai, ubah variabel port di `.env`, lalu ulangi startup; checker otomatis mengikuti port efektif Compose. Jangan memakai `docker compose down -v` untuk demo persistence karena volume data akan dihapus.
+
+## Variabel konfigurasi
+
+Nilai pada tabel adalah nilai template `.env.example`. `setup-env.py` mengganti semua kredensial contoh dengan nilai acak. Perubahan environment layanan diterapkan dengan `docker compose up -d`; setelah perubahan kode gunakan `docker compose up --build -d --wait`.
+
+| Variabel | Nilai template | Kegunaan |
+|---|---|---|
+| `BMKG_PORT`, `PVMBG_PORT` | `8081`, `8082` | Port host mock sumber. |
+| `CLIENT_API_PORT`, `AUTH_PORT` | `8080`, `8084` | Port host Client API/Auth; port container tetap 8080/8084. |
+| `AGGREGATOR_PORT` | `8083` | Port host hanya untuk overlay operator manual; tidak diperlukan checker. Port container tetap 8083. |
+| `RABBITMQ_MANAGEMENT_PORT` | `15672` | Port UI broker pada localhost. |
+| `BMKG_BASE_URL`, `PVMBG_BASE_URL` | `http://bmkg:8081`, `http://pvmbg:8082` | Alamat upstream dari Aggregator pada jaringan Compose. |
+| `AGGREGATOR_BASE_URL`, `AUTH_BASE_URL` | `http://aggregator:8083`, `http://auth:8084` | Dependency Client API pada jaringan Compose. |
+| `BMKG_API_KEY`, `PVMBG_TOKEN` | `dev-bmkg-key`, `dev-pvmbg-token` | Kredensial mock dan Aggregator; wajib nonkosong dan berbeda. |
+| `BMKG_GENERATE_INTERVAL_SECONDS`, `PVMBG_GENERATE_INTERVAL_SECONDS` | `15`, `15` | Interval pembuatan data mock. |
+| `PVMBG_DELAY_MS` | `750` | Delay respons mock PVMBG. |
+| `POLL_INTERVAL_SECONDS` | `3` | Interval polling Aggregator. |
+| `AGGREGATOR_REQUEST_TIMEOUT_MS`, `AUTH_REQUEST_TIMEOUT_MS` | `5000`, `5000` | Timeout dependency Client API. |
+| `CLIENT_API_MAX_CONCURRENT_REQUESTS` | `64` | Request hazard serentak; kapasitas penuh menghasilkan 429. |
+| `ENABLE_PROVISIONAL_HAZARD_ENDPOINT` | `false` | Alias endpoint hazard lama; tetap memerlukan Auth/proyeksi field. |
+| `JWT_SIGNING_SECRET` | **Wajib diisi** | Secret tanda tangan JWT, minimal 32 byte. |
+| `AUTH_INTERNAL_SECRET` | **Wajib diisi** | Secret Auth/API, minimal 32 byte dan berbeda dari signing secret. |
+| `ACCESS_TOKEN_TTL_SECONDS`, `REFRESH_TOKEN_TTL_SECONDS` | `60`, `3600` | Masa berlaku token; P2 mensyaratkan access TTL 60 detik. |
+| `MEDIA_CLIENT_ID`, `FIELD_TEAM_CLIENT_ID`, `INTERNAL_OPS_CLIENT_ID` | `media`, `field-team`, `internal-ops` | ID tiga klien, harus berbeda. |
+| `MEDIA_CLIENT_PASSWORD`, `FIELD_TEAM_CLIENT_PASSWORD`, `INTERNAL_OPS_CLIENT_PASSWORD` | **Wajib diisi** | Password tiap identitas. |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | `hazards`, `aggregator`, `dev-postgres-password` | Database dan akun PostgreSQL. |
+| `DATABASE_URL` | `postgres://aggregator:dev-postgres-password@canonical-store:5432/hazards?sslmode=disable` | Koneksi Aggregator; harus cocok dengan akun PostgreSQL. |
+| `RABBITMQ_DEFAULT_USER`, `RABBITMQ_DEFAULT_PASS` | `hazard`, `dev-broker-password` | Akun RabbitMQ. |
+| `BROKER_URL` | `amqp://hazard:dev-broker-password@message-broker:5672/` | Koneksi Aggregator/consumer; harus cocok dengan akun broker. |
+
+Biarkan URL internal memakai nama layanan Compose. Port host yang diubah tidak mengubah URL internal. Jika mengisi secret manual, buat setiap nilai secara terpisah:
 
 ```sh
 python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
 ```
 
-Jalankan kembali untuk setiap secret/password. `.env` diabaikan Git; `.env.example` sengaja tidak berisi secret Auth/password klien. Nilai PostgreSQL/RabbitMQ/upstream contoh hanya untuk development. File yang belum diisi akan gagal validasi Compose, termasuk saat memilih sebagian layanan.
+Jangan mengganti akun/password PostgreSQL atau RabbitMQ pada volume lama tanpa menyesuaikan akun di layanan tersebut; environment inisialisasi tidak otomatis mengubah akun yang sudah tersimpan. Encode karakter khusus password pada URL. Versi Go dipatok di Dockerfile/modul; tidak ada variabel environment untuk mengubahnya.
 
-```sh
-docker compose up --build -d --wait
-docker compose ps
-curl -fsS http://localhost:8080/health
-curl -fsS http://localhost:8084/health
-```
+## Alur data dan akses
 
-Compose utama menjalankan sembilan layanan beserta healthcheck, environment, dan dependency Auth/API. `AUTH_PORT`, `CLIENT_API_PORT`, serta port mock memilih port host; port container tetap. Auth memakai port internal 8084; URL internal API adalah `http://auth:8084` dan `http://aggregator:8083`.
+| Komponen | Tanggung jawab |
+|---|---|
+| BMKG / PVMBG | Mock upstream dengan kredensial terpisah dan generator data periodik. |
+| Aggregator | Polling sumber mandiri, mapping/korelasi, freshness, API kanonis internal. |
+| PostgreSQL | Hazard JSONB dan snapshot transactional outbox pada transaksi yang sama. |
+| RabbitMQ | Exchange fanout `hazard.events`; queue durable `notification` dan `dashboard`. |
+| Notification / Dashboard consumer | Simulasi notifikasi dan state/audit; jurnal persisten, ack setelah commit, deduplikasi setelah restart. |
+| Auth | Identitas/scope, JWT dan rotasi refresh token. Sesi berada di memori. |
+| Client API | Autentikasi, proyeksi field, filter, timeout dependency dan batas konkurensi. |
 
-Healthcheck mock memeriksa proses HTTP; flag outage PVMBG tetap memungkinkan `/health` 200. Readiness ingestion diperiksa dari metadata sumber, bukan hanya status container.
+Klien login melalui `POST /login` Auth dengan `client_id`/`password`, lalu memakai `access_token` pada `GET /hazards` Client API dengan `Authorization: Bearer <token>`. `POST /refresh` merotasi token; access token generasi lama ditolak. Media menerima tujuh field ringkasan; Field Team/Internal Ops menerima sebelas field kanonis. Media yang meminta field mentah menerima 403.
 
-## Membaca data sebagai klien
+Filter publik: `source`, `hazard_type`, `since`, `limit`. Respons berbentuk `data/count/sources`. `sources` memuat ketersediaan dan freshness BMKG/PVMBG. Outage upstream tetap memungkinkan pembacaan data terakhir dengan status 200; kegagalan storage menghasilkan 503. Gangguan broker menahan outbox pending sambil ingestion/query Aggregator yang sudah berjalan tetap berlanjut.
 
-Login melalui `POST /login` Auth dengan JSON `client_id` dan `password`. Gunakan `access_token` pada `GET /hazards` Client API dengan header `Authorization: Bearer <token>`. Gunakan `POST /refresh` Auth untuk rotasi tanpa login ulang.
+Freshness mengukur pipeline polling/commit, bukan umur tiap hazard atau keberhasilan consumer. Ambangnya adalah nilai terbesar antara 15 detik dan tiga interval polling. Aggregator sendiri mengakses jaringan storage dan `DATABASE_URL`; Auth/API/consumer tidak membaca Canonical Store langsung. Signing secret hanya masuk Auth; internal secret hanya Auth/API.
 
-- Media menerima tujuh field Ringkasan; permintaan `include_raw=true` atau field mentah menghasilkan 403.
-- Field Team/Internal Ops menerima sebelas field kanonis, termasuk `attributes` tambahan.
-- JWT memiliki TTL awal 60 detik; refresh TTL awal 3600 detik. Token akses generasi lama ditolak setelah refresh.
-- Sesi Auth berada di memori. Restart Auth memerlukan login ulang.
-- Batas konkurensi awal API adalah 64; kapasitas penuh menghasilkan 429 dengan `Retry-After: 1`. Timeout dependency awal 5000 ms; tuning harus mengikuti hasil pengukuran.
+## Batas implementasi dan referensi
 
-Filter `source`, `hazard_type`, `since`, dan `limit` tersedia. Respons berbentuk `data/count/sources`; query storage yang berhasil tetap 200 saat upstream mati atau hasil filter kosong. Detail endpoint/galat ada di [README Auth](services/auth/README.md) dan [README Client API](services/client-api/README.md).
+P2 mensyaratkan p95 <300 ms dan error tidak terkontrol <1%; angka bergantung pada mesin/config. Hasil pengujian terdahulu tidak menjamin run sekarang lulus. PostgreSQL/RabbitMQ masing-masing satu instance. Delivery at-least-once bergantung pada binding/volume yang dipertahankan; consumer belum memiliki DLQ. Notifikasi berupa simulasi dan dashboard consumer belum memiliki UI. Subscriber demo tidak menerima riwayat sebelum binding.
 
-## Batas akses dan inspeksi operator
+- Kontrak endpoint: [Auth](services/auth/README.md), [Client API](services/client-api/README.md), [Aggregator](services/aggregator/README.md).
+- Infrastruktur: [PostgreSQL](infrastructure/canonical-store/README.md), [RabbitMQ](infrastructure/message-broker/README.md).
 
-Compose utama tidak mempublikasikan port Aggregator atau PostgreSQL. Hanya Aggregator berbagi jaringan `storage` dengan PostgreSQL dan menerima `DATABASE_URL`. Auth/API/consumer tidak mengakses Canonical Store langsung. Signing secret hanya masuk Auth; internal secret hanya dibagikan kepada Auth/API.
-
-Untuk demo lama yang membaca API internal dari host, operator dapat mengaktifkan overlay lokal:
-
-```sh
-docker compose --env-file .env -f docker-compose.yml -f tests/compose-operator.yml up -d aggregator
-curl -fsS 'http://127.0.0.1:8083/internal/v1/hazards?limit=5'
-```
-
-Overlay hanya membuka `127.0.0.1:${AGGREGATOR_PORT}:8083`. Endpoint tersebut mengembalikan data penuh tanpa token: gunakan hanya sebagai akses operator tepercaya, jangan sebagai endpoint klien. Pengguna lain pada host yang sama tetap dapat menjangkaunya. Untuk kembali ke deployment default:
-
-```sh
-docker compose up -d aggregator
-```
-
-RabbitMQ management UI tersedia di `http://127.0.0.1:15672`; AMQP hanya pada jaringan `events`. Inspeksi SQL administratif dilakukan melalui `docker compose exec canonical-store`, bukan port DB host.
-
-## Freshness dan kegagalan
-
-`sources` publik selalu memuat BMKG/PVMBG dengan `available`, `last_ingested_at`, `stale`, `stale_since`, dan `stale_after_seconds`. `available` menandai fetch upstream; `last_ingested_at` menandai siklus lengkap yang sudah tersimpan. Kegagalan mapping/commit atau interval ingestion melebihi ambang membuat sumber stale. Ambangnya adalah nilai terbesar antara 15 detik dan tiga interval polling.
-
-Freshness menunjukkan kondisi pipeline, bukan umur tiap hazard atau keberhasilan consumer. API tetap membaca data terakhir saat upstream mati; kegagalan storage menghasilkan 503. Gangguan broker menahan outbox pending tanpa menghentikan query/ingestion pada Aggregator yang sudah berjalan. Rincian ada di [README Aggregator](services/aggregator/README.md).
-
-## Pemeriksaan deployment dan integrasi
-
-```sh
-python3 scripts/check-deployment.py --env-file .env --output /tmp/deployment-check.json
-python3 scripts/check-member-b-auth.py --env-file .env --natural-expiry --output /tmp/auth-check.json
-```
-
-Checker deployment memeriksa sembilan container healthy, port Aggregator/DB tertutup, ownership konfigurasi, query kedua sumber lewat ketiga identitas, serta correlation ID/latensi pada log Client API, Auth, dan Aggregator. Gunakan `--start` untuk build/start Compose utama. `--project-name` memilih project uji; siapkan file environment dengan port host yang bebas jika stack lain sedang berjalan.
-
-Checker autentikasi memeriksa scope, refresh/replay, token lama, dan expiry alami. Ia tidak mengubah lifecycle atau status sumber. Checker outage/resiliensi harus memakai project uji yang dipilih secara eksplisit.
-
-Checker C yang memakai `demo_support.py` menerima `--env-file` (awal `.env`), `--project-name`, dan `--evidence-dir` untuk hasil baru, serta memakai overlay operator:
-
-```sh
-python3 scripts/check-ingestion.py --env-file .env --output /tmp/ingestion-check.json
-python3 scripts/check-p4.py --env-file .env --evidence-dir /tmp/p4-check
-python3 scripts/check-stage-3.py --env-file .env --output /tmp/fanout-check.json
-python3 scripts/check-p5-third.py --env-file .env
-```
-
-Pemeriksaan P2 publik dan clean clone:
-
-```sh
-python3 scripts/check-client-p2.py --env-file .env --project-name project-uji --evidence-dir /tmp/client-p2
-python3 scripts/check-clean-clone.py --evidence-dir /tmp/clean-clone
-```
-
-Clean clone menghasilkan kredensial sendiri; `--project-name` pada checker clone hanya memilih project lama yang diamati.
-
-Pastikan project yang diperiksa sudah berjalan dengan overlay operator jika checker membutuhkan HTTP Aggregator dari host. Jalankan skenario satu per satu; skrip dapat mengubah schema/outage atau restart layanan. Volume utama dipertahankan. [Panduan skrip](scripts/README.md) dan [panduan pengujian](tests/README.md) menjelaskan efek masing-masing pemeriksaan.
-
-## Urutan pemeriksaan penerimaan P1–P5
-
-Jalankan dari root repository pada project uji tersendiri. Salin `.env` yang sudah lengkap ke `.env.acceptance.local`, lalu pilih port host yang bebas untuk `BMKG_PORT`, `PVMBG_PORT`, `AUTH_PORT`, `CLIENT_API_PORT`, `AGGREGATOR_PORT`, dan `RABBITMQ_MANAGEMENT_PORT`. Nama project memisahkan container/volume, tetapi tidak mengubah port host. P2 memerlukan k6/lsof native dan TTL akses 60 detik. Jalankan skenario satu per satu.
-
-```sh
-cp .env .env.acceptance.local
-# Edit port host di .env.acceptance.local sebelum menjalankan stack uji.
-export ACCEPTANCE_ENV=.env.acceptance.local
-export ACCEPTANCE_PROJECT=tubesaat-acceptance
-export ACCEPTANCE_RESULTS="$(mktemp -d /tmp/tubesaat-acceptance.XXXXXX)"
-
-# Stack default: sembilan layanan, ownership storage, scope, dan trace HTTP.
-docker compose --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" up --build -d --wait
-python3 scripts/check-deployment.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --output "$ACCEPTANCE_RESULTS/deployment.json"
-
-# P3: silang kredensial upstream, scope, expiry alami, dan rotasi token.
-python3 scripts/check-cross-credentials.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --output "$ACCEPTANCE_RESULTS/p3-upstream.json"
-python3 scripts/check-member-b-auth.py --env-file "$ACCEPTANCE_ENV" --natural-expiry --output "$ACCEPTANCE_RESULTS/p3-downstream.json"
-
-# Akses operator localhost untuk checker berikutnya.
-docker compose --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" -f docker-compose.yml -f tests/compose-operator.yml up -d --wait aggregator
-
-# P1: schema v1/v2 tanpa restart, fanout, dan freshness saat outage.
-python3 scripts/check-ingestion.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --output "$ACCEPTANCE_RESULTS/p1-ingestion.json"
-
-# P4: rebuild/restart mandiri, JSONB, dan isolasi storage.
-python3 scripts/check-p4.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --evidence-dir "$ACCEPTANCE_RESULTS/p4"
-
-# P5: backlog/reconnect/idempotensi dan subscriber ketiga.
-python3 scripts/check-stage-3.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --output "$ACCEPTANCE_RESULTS/p5-consumers.json"
-python3 scripts/check-p5-third.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --evidence-dir "$ACCEPTANCE_RESULTS/p5-third"
-
-# P2: API publik, 50 koneksi/60 detik per kondisi, slow/outage/recovery.
-python3 scripts/check-client-p2.py --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" --evidence-dir "$ACCEPTANCE_RESULTS/p2"
-
-# Sesudah perubahan aplikasi di-commit: clone HEAD pada project/volume baru.
-python3 scripts/check-clean-clone.py --project-name "$ACCEPTANCE_PROJECT" --evidence-dir "$ACCEPTANCE_RESULTS/clean-clone"
-```
-
-Hentikan urutan jika satu perintah gagal, periksa hasilnya, lalu ulangi skenario setelah penyebabnya diperbaiki. File hasil tidak berarti lulus; periksa status `PASS` dan threshold. Clone hanya memakai commit yang dipilih; perubahan aplikasi/config yang belum di-commit tidak ikut diuji. Port clone 28081/28082/28084/28080/35672 harus bebas.
-
-Hasil berada di direktori sementara `ACCEPTANCE_RESULTS`; tim dapat menyalinnya ke lokasi laporan sendiri. Checker upstream hanya melakukan GET dan menyimpan status tanpa kredensial/payload. Checker lain dapat menambah data, mengubah schema/outage, atau restart layanan; efek pemulihannya dijelaskan dalam [panduan skrip](scripts/README.md). Untuk menutup port operator dan menghentikan stack uji tanpa menghapus volume:
-
-```sh
-docker compose --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" up -d --no-deps --wait aggregator
-docker compose --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT" stop
-```
-
-## Artefak laporan Member A
-
-[Bukti P1](docs/evidence/member-a/p1/README.md) memuat JSON/log pengujian nyata dan gambar terminal untuk Gambar 1–3. [Diagram Bab 3](docs/diagrams/README.md) menyediakan SVG, PNG, dan perintah rendering. [Panduan tambahan laporan](docs/report/member-a-additions.md) menjelaskan lokasi paragraf dan tabel; [audit Google Docs](docs/report/google-docs-audit.md) mencatat koreksi terhadap versi laporan yang diperiksa pada 10 Oktober 2026.
-
-Pengumpulan bukti baru memakai `scripts/check-p1-report.py`; gambar terminal memakai Freeze dan `scripts/show-p1-evidence.py`. Perintah rendering membaca hasil tersimpan dan tidak menjalankan ulang pengujian. Simpan hasil run baru di direktori berbeda agar ID/timestamp pada bukti yang sudah dirujuk laporan tetap tersedia. Hasil P1 ini tidak menggantikan pengukuran P2.
-
-## Batas hasil dan implementasi
-
-Pengukuran lokal 6 Oktober 2026 mencatat p95 API publik 562 ms saat PVMBG lambat dan 539 ms saat outage, melampaui target <300 ms. Pemeriksaan ulang 7 Oktober pada Docker 8 CPU/sekitar 4 GB RAM lulus: setelah reuse koneksi HTTP dan penghapusan decode envelope berulang, p95 mencapai 203 ms dan 221 ms. Setiap kondisi memakai 50 koneksi selama 60 detik, 50 refresh berhasil, nol error tidak terkontrol/429, serta last-known data dan recovery yang lulus. Query BMKG memakai limit 100; generator sementara 1 detik digunakan untuk menyiapkan katalog penuh.
-
-Baseline pada stack uji yang sama juga lulus (209/224 ms); kegagalan 6 Oktober tidak tereproduksi pada run ini. Latensi membaik sedikit, sementara jumlah query 200 selama pengukuran bertambah dari 31.037/30.096 menjadi 33.634/30.987. Angka ini berlaku pada mesin/config yang diuji; tim perlu mengulang checker pada lingkungan demo akhir dan menyimpan hasilnya sendiri.
-
-- Checker P2 API publik memakai 50 sesi/VU selama 60 detik per kondisi lambat/outage, refresh per VU, bukti socket, serta metrik 200/429/error/latensi. Hasil pengukuran bergantung pada mesin/config yang diuji.
-- Checker clone menjalankan sembilan layanan dari HEAD dengan Compose utama dan secret sementara sendiri, tanpa port operator/DB. Perubahan workspace yang belum di-commit tidak ikut checkout; SHA aplikasi selalu dicatat.
-- PostgreSQL/RabbitMQ memakai satu instance dan volume, tanpa high availability atau cleanup otomatis outbox/jurnal. Cursor/cache sumber tetap di memori dan dibangun ulang dari riwayat upstream saat restart.
-- Delivery bersifat at-least-once pada binding/volume yang dipertahankan. Confirm tidak membuktikan consumer selesai; mandatory hanya membuktikan sedikitnya satu route. Consumer menolak payload tidak valid tanpa requeue dan belum memiliki DLQ.
-- Notifikasi berupa simulasi; dashboard consumer menyimpan audit/state tanpa UI. Subscriber ketiga untuk demo memakai queue sementara dan tidak memperoleh riwayat sebelum binding.
-
-Jangan memakai `docker compose down -v` pada stack utama untuk demo persistence. Startup broker pada volume kosong dan reconnect consumer dijelaskan pada [README RabbitMQ](infrastructure/message-broker/README.md).
+Hasil checker baru disimpan terpisah dari bukti laporan lama. Cara menampilkan hasil dan merender gambar dijelaskan di [panduan skrip](scripts/README.md).

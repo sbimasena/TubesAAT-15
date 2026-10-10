@@ -17,6 +17,7 @@ class DemoConfigurationTest(unittest.TestCase):
                                        ("auth", 18084), ("client-api", 18080), ("message-broker", 25672))}
         services["auth"]["environment"] = {"AUTH_PORT": "8084", "JWT_SIGNING_SECRET": "private-signing-value",
                                             "ACCESS_TOKEN_TTL_SECONDS": "60"}
+        services["aggregator"] = {"environment": {"AGGREGATOR_PORT": "8083"}}
         result = subprocess.CompletedProcess([], 0, json.dumps({"services": services}), "")
         spec = importlib.util.spec_from_file_location("demo_under_test", Path(__file__).with_name("demo_support.py"))
         module = importlib.util.module_from_spec(spec)
@@ -26,7 +27,13 @@ class DemoConfigurationTest(unittest.TestCase):
         self.assertEqual(module.settings["AUTH_PORT"], "18084")
         self.assertEqual(module.options.evidence_dir, "new-evidence")
         self.assertIn("isolated", module.compose)
-        self.assertEqual(module.compose[-4:], ["-f", "docker-compose.yml", "-f", "tests/compose-operator.yml"])
+        self.assertEqual(module.compose[-2:], ["-f", "docker-compose.yml"])
+        self.assertNotIn("tests/compose-operator.yml", module.compose)
+        with patch.object(module, "run", return_value='{"storage":{"available":true}}') as run:
+            response = module.aggregator_read("/health", "inspect-test")
+            self.assertEqual(response["body"], {"storage": {"available": True}})
+            self.assertEqual(response["correlation_id"], "inspect-test")
+            run.assert_called_once_with("exec", "-T", "aggregator", "/service", "--inspect", "/health", "inspect-test")
         self.assertEqual(module.redact("60 private-signing-value"), "60 [REDACTED]")
         output, errors = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):

@@ -1,6 +1,6 @@
 # Tambahan laporan Member A
 
-Panduan ini dibuat dari snapshot laporan lokal sebelum penyuntingan Google Docs. Petunjuk dan koreksi historis di bawah perlu dicocokkan dengan [audit versi Google Docs 9 Oktober 2026](google-docs-audit.md); sebagian koreksi, termasuk angka waktu tunggu expiry dan definisi freshness, sudah diterapkan pada versi tersebut.
+Panduan ini dibuat dari snapshot laporan lokal sebelum penyuntingan Google Docs. Petunjuk dan koreksi historis di bawah perlu dicocokkan dengan [audit versi Google Docs 10 Oktober 2026](google-docs-audit.md); sebagian koreksi, termasuk angka waktu tunggu expiry dan definisi freshness, sudah diterapkan pada versi tersebut.
 
 Panduan ini mengikuti judul, tabel, dan kalimat pada `IF4031_M1_FithraGaMasukKelas.md`, serta nomor halaman pada PDF yang telah dibaca. Bagian “Lokasi dan tindakan” merupakan petunjuk penyuntingan, sedangkan paragraf dan tabel setelahnya merupakan isi siap tempel. Screenshot P1 menggunakan nomor Gambar 1, 2, dan 3 agar rujukan Gambar 4 sampai 27 yang sudah ada tetap dapat dipakai. Nomor halaman mengacu pada versi PDF awal dan dapat berubah setelah penyuntingan.
 
@@ -115,7 +115,7 @@ freeze --execute 'python3 -B scripts/show-p1-evidence.py runtime --input /tmp/tu
   --output /tmp/tubesaat-p1-new-evidence/runtime.png
 ```
 
-`check-p1-report.py` menjalankan `check-ingestion.py` untuk perubahan skema, fanout, outage, dan recovery, kemudian menambah pemeriksaan pemetaan BMKG/PVMBG serta catatan migrasi. Pengujian menambah record dan hasil jurnal, lalu mengembalikan PVMBG ke skema versi 1 serta `outage=false`. Skrip tidak menghapus data atau me-restart layanan. Freeze mengambil gambar keluaran terminal dari `show-p1-evidence.py`, yang membaca hasil JSON tersimpan. Perintah gambar ketiga bagian serta log checker asli tersedia pada [README bukti](../evidence/member-a/p1/README.md). `render-p1-evidence.py` merupakan renderer HTML versi awal.
+`check-p1-report.py` menjalankan `check-ingestion.py` untuk perubahan skema, fanout, outage, dan recovery, kemudian menambah pemeriksaan pemetaan BMKG/PVMBG serta catatan migrasi. Pengujian menambah record dan hasil jurnal, lalu mengembalikan PVMBG ke skema versi 1 serta `outage=false`. Skrip tidak menghapus data atau me-restart layanan. Freeze mengambil gambar keluaran terminal dari `show-p1-evidence.py`, yang membaca hasil JSON tersimpan. Perintah gambar ketiga bagian serta log checker asli tersedia pada [README bukti](../evidence/member-a/p1/README.md).
 
 ## 7. Bab 7.1: rancangan solusi dan mekanisme P1 (halaman 12)
 

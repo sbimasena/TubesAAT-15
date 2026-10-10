@@ -39,8 +39,7 @@ def main():
             env[key.strip()] = value.strip().strip("\"'")
     root = Path(__file__).resolve().parent.parent
     command = ["docker", "compose", "--env-file", str(Path(args.env_file).resolve()),
-               "-p", args.project_name, "-f", str(root / "docker-compose.yml"),
-               "-f", str(root / "tests/compose-member-b.yml")]
+               "-p", args.project_name, "-f", str(root / "docker-compose.yml")]
 
     def compose(*parts):
         if parts and parts[0] in ("up", "stop", "start", "restart", "build"):

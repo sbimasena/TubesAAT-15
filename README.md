@@ -159,7 +159,7 @@ docker compose --env-file "$ACCEPTANCE_ENV" --project-name "$ACCEPTANCE_PROJECT"
 
 ## Artefak laporan Member A
 
-[Bukti P1](docs/evidence/member-a/p1/README.md) memuat JSON/log pengujian nyata dan gambar terminal untuk Gambar 1–3. [Diagram Bab 3](docs/diagrams/README.md) menyediakan SVG, PNG, dan perintah rendering. [Panduan tambahan laporan](docs/report/member-a-additions.md) menjelaskan lokasi paragraf dan tabel; [audit Google Docs](docs/report/google-docs-audit.md) mencatat koreksi terhadap versi laporan yang diperiksa pada 9 Oktober 2026.
+[Bukti P1](docs/evidence/member-a/p1/README.md) memuat JSON/log pengujian nyata dan gambar terminal untuk Gambar 1–3. [Diagram Bab 3](docs/diagrams/README.md) menyediakan SVG, PNG, dan perintah rendering. [Panduan tambahan laporan](docs/report/member-a-additions.md) menjelaskan lokasi paragraf dan tabel; [audit Google Docs](docs/report/google-docs-audit.md) mencatat koreksi terhadap versi laporan yang diperiksa pada 10 Oktober 2026.
 
 Pengumpulan bukti baru memakai `scripts/check-p1-report.py`; gambar terminal memakai Freeze dan `scripts/show-p1-evidence.py`. Perintah rendering membaca hasil tersimpan dan tidak menjalankan ulang pengujian. Simpan hasil run baru di direktori berbeda agar ID/timestamp pada bukti yang sudah dirujuk laporan tetap tersedia. Hasil P1 ini tidak menggantikan pengukuran P2.
 
@@ -169,7 +169,7 @@ Pengukuran lokal 6 Oktober 2026 mencatat p95 API publik 562 ms saat PVMBG lambat
 
 Baseline pada stack uji yang sama juga lulus (209/224 ms); kegagalan 6 Oktober tidak tereproduksi pada run ini. Latensi membaik sedikit, sementara jumlah query 200 selama pengukuran bertambah dari 31.037/30.096 menjadi 33.634/30.987. Angka ini berlaku pada mesin/config yang diuji; tim perlu mengulang checker pada lingkungan demo akhir dan menyimpan hasilnya sendiri.
 
-- Checker P2 API publik memakai 50 sesi/VU selama 60 detik per kondisi lambat/outage, refresh per VU, bukti socket, serta metrik 200/429/error/latensi. Baseline langsung Aggregator tetap terpisah. Hasil pengukuran bergantung pada mesin/config yang diuji.
+- Checker P2 API publik memakai 50 sesi/VU selama 60 detik per kondisi lambat/outage, refresh per VU, bukti socket, serta metrik 200/429/error/latensi. Hasil pengukuran bergantung pada mesin/config yang diuji.
 - Checker clone menjalankan sembilan layanan dari HEAD dengan Compose utama dan secret sementara sendiri, tanpa port operator/DB. Perubahan workspace yang belum di-commit tidak ikut checkout; SHA aplikasi selalu dicatat.
 - PostgreSQL/RabbitMQ memakai satu instance dan volume, tanpa high availability atau cleanup otomatis outbox/jurnal. Cursor/cache sumber tetap di memori dan dibangun ulang dari riwayat upstream saat restart.
 - Delivery bersifat at-least-once pada binding/volume yang dipertahankan. Confirm tidak membuktikan consumer selesai; mandatory hanya membuktikan sedikitnya satu route. Consumer menolak payload tidak valid tanpa requeue dan belum memiliki DLQ.

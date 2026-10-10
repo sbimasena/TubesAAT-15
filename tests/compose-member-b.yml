@@ -1,6 +1,0 @@
-# Compatibility overlay for the protected legacy checkpoint alias.
-# Auth/Client API deployment is configured in docker-compose.yml.
-services:
-  client-api:
-    environment:
-      ENABLE_PROVISIONAL_HAZARD_ENDPOINT: ${ENABLE_PROVISIONAL_HAZARD_ENDPOINT:-false}

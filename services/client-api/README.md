@@ -49,27 +49,7 @@ Timeout penulisan respons server minimal 15 detik dan selalu menyediakan jeda 5 
 
 Setelah variabel lingkungan wajib diisi, jalankan `go run ./cmd/server` dari direktori `services/client-api`, lalu periksa `GET /health` pada port `CLIENT_API_PORT`. Pengujian unit modul: `go test ./...` dari direktori yang sama.
 
-Binary mendukung `/service --healthcheck`, dengan timeout 3 detik, menggunakan `CLIENT_API_PORT` atau nilai awal 8080. Compose utama menyediakan environment, dependency, dan healthcheck kedua service tanpa memberi akses Canonical Store. Overlay `tests/compose-member-b.yml` mempertahankan konfigurasi alias checkpoint; checker fondasi juga memakai overlay operator untuk membandingkan API internal.
-
-## Checkpoint fondasi
-
-Siapkan file environment lokal, misalnya `.env.member-b.local`, dari `.env.example`. Isi password/secret lokal, termasuk `AUTH_INTERNAL_SECRET`, TTL refresh positif, dan `ENABLE_PROVISIONAL_HAZARD_ENDPOINT=true`. File `.env.*` diabaikan Git. Jangan memakai kredensial produksi pada checkpoint.
-
-Jalankan dari root repositori dengan Docker Engine aktif dan Python 3:
-
-```sh
-python scripts/check-member-b.py --env-file .env.member-b.local --start --check-lifecycle --output member-b-checkpoint.json
-```
-
-Skrip menggunakan Compose utama dan overlay B. Opsi `--start` membangun/menjalankan sembilan service; `--check-lifecycle` menghentikan lalu menjalankan kembali hanya Auth/API Klien. Skrip login sebagai Operasi Internal, lalu memeriksa health binary/HTTP, data kedua sumber melalui alias terlindungi, filter, field kanonis, correlation ID, log latensi, dan konfigurasi isolasi storage. Checker fondasi ini tetap membaca freshness langsung pada Aggregator; checker autentikasi/resiliensi memeriksa proyeksi sumber publik. Skrip tidak mengubah skema/outage sumber atau menghapus volume. Setelah sukses, stack tetap berjalan. Tanpa kedua opsi tersebut, skrip hanya memeriksa stack yang sudah berjalan.
-
-`--project-name` memilih project Compose. Untuk project uji terpisah, gunakan port host yang kosong melalui file environment: `CLIENT_API_PORT`, `AUTH_PORT`, `BMKG_PORT`, `PVMBG_PORT`, `AGGREGATOR_PORT`, dan `RABBITMQ_MANAGEMENT_PORT`.
-
-Checkpoint fondasi ini hanya memakai login Operasi Internal; pemeriksaan tiga scope, refresh, dan expiry ada pada checker autentikasi. Keduanya belum membuktikan penerimaan P2/P3 seluruh tim. Untuk menghentikan stack dengan mempertahankan volume:
-
-```sh
-docker compose --env-file .env.member-b.local -f docker-compose.yml -f tests/compose-operator.yml -f tests/compose-member-b.yml stop
-```
+Binary mendukung `/service --healthcheck`, dengan timeout 3 detik, menggunakan `CLIENT_API_PORT` atau nilai awal 8080. Compose utama menyediakan environment, dependency, dan healthcheck kedua service tanpa memberi akses Canonical Store.
 
 ## Pemeriksaan autentikasi
 

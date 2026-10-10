@@ -63,18 +63,6 @@ P5 memakai program `services/dashboard-consumer/cmd/review` pada container terse
 
 Skrip fanout/recovery `check-stage-3.py` memakai helper `demo_support.py` dan argumen `--output` untuk menyimpan rekaman demo terpisah dari hasil pemeriksaan sebelumnya.
 
-## Uji beban, outage, dan recovery Aggregator (P2)
-
-```sh
-python3 scripts/check-p2.py
-```
-
-Memerlukan native k6 dan lsof, Python stdlib/Docker, serta tujuh layanan development yang sudah berjalan. `tests/load-p2.js` menjalankan 50 VU konstan selama 60 detik, HTTP keep-alive, query BMKG-only dengan limit 100; threshold p95 waktu request lengkap <300 ms dan non-200 <1%. Semua 429 ikut dihitung error karena endpoint Aggregator yang diuji tidak memiliki limiter. Correlation ID dan data kanonis diperiksa setiap request. Sampel lsof pada detik sekitar 15/30/45 mencatat socket ESTABLISHED milik proses k6, bukan hanya jumlah VU.
-
-`tests/compose-load.yml` merecreate PVMBG saja dengan delay 3000 ms. Skrip memeriksa log panggilan lambat saat load, simulasi 503 melalui admin/outage, data vulkanik lama/status sumber, polling BMKG berlanjut, dan report baru sesudah recovery tanpa restart Aggregator. `finally` memulihkan delay file environment yang dipilih, outage=false dan schema v2. Jangan jalankan bersamaan dengan demo lain. Scope langsung Aggregator; Pengukuran berkelanjutan melalui Auth/Client API belum dicakup checker ini.
-
-Metrik mencakup throughput, p50/p95/p99, error rate, dan jumlah respons 429. `bmkg_elapsed_ms` mengukur waktu sejak sebelum request sampai seluruh body diterima, termasuk connection setup; `http_req_duration` bawaan k6 mengukur sending/waiting/receiving. Respons Aggregator menyediakan available/last_success_at/last_error untuk status sumber; `last_success_at` menandai fetch upstream; `last_ingested_at` menandai siklus lengkap yang sudah commit. `stale`/`stale_since` menandai kegagalan atau pipeline yang melewati ambang waktu, bukan usia tiap rekaman atau delivery broker. Lihat kontrak freshness di README Aggregator.
-
 ## Reproduksi dari commit pada volume kosong
 
 ```sh

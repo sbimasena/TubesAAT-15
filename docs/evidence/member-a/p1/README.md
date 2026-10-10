@@ -12,10 +12,8 @@ Project uji `tubesaat-p1-report` menjalankan sembilan container. Polling 3 detik
 | `p1-01-bmkg-tsunami.png` | Gambar 1: pemetaan kejadian BMKG dan korelasi warning tsunami. |
 | `p1-02-pvmbg-schema-evolution.png` | Gambar 2: pemetaan PVMBG v1/v2 dan nilai confidence yang dipertahankan. |
 | `p1-03-runtime-verification.png` | Gambar 3: container/migrasi tetap, trace fetch–commit–publish, serta dua consumer. |
-| `p1-ingestion-run-terminal.png` | Keluaran checker asli pada `ingestion-run.log`, ditangkap melalui Freeze. Bukti tambahan, belum diberi nomor gambar dalam laporan. |
-| `p1-*.html` dan `html-archive/` | Tampilan HTML dan gambar versi awal, disimpan sebagai arsip. |
 
-PNG Gambar 1–3 saat ini dibuat menggunakan `freeze --execute` dari keluaran `scripts/show-p1-evidence.py`. Perintah tersebut membaca hasil pengujian yang sudah tersimpan; tidak menjalankan ulang ingestion. Payload, timestamp, ID container, catatan migrasi, dan log berasal dari hasil checker pada run yang sama. `p1-ingestion-run-terminal.png` menampilkan keluaran checker asli yang disimpan pada `ingestion-run.log`. Bukti ini tidak mengukur throughput, p95, atau kapasitas beban P2.
+PNG Gambar 1–3 saat ini dibuat menggunakan `freeze --execute` dari keluaran `scripts/show-p1-evidence.py`. Perintah tersebut membaca hasil pengujian yang sudah tersimpan; tidak menjalankan ulang ingestion. Payload, timestamp, ID container, catatan migrasi, dan log berasal dari hasil checker pada run yang sama. Bukti ini tidak mengukur throughput, p95, atau kapasitas beban P2.
 
 ## Membuat ulang gambar terminal
 
@@ -36,11 +34,6 @@ freeze --execute 'python3 -B scripts/show-p1-evidence.py runtime' \
   --config base --window --font.size 20 --margin 0 --padding 24 \
   --border.radius 0 --shadow.blur 0 --shadow.x 0 --shadow.y 0 \
   --output docs/evidence/member-a/p1/p1-03-runtime-verification.png
-
-freeze --execute 'cat docs/evidence/member-a/p1/ingestion-run.log' \
-  --config base --window --font.size 20 --margin 0 --padding 24 \
-  --border.radius 0 --shadow.blur 0 --shadow.x 0 --shadow.y 0 \
-  --output docs/evidence/member-a/p1/p1-ingestion-run-terminal.png
 ```
 
 `show-p1-evidence.py` juga dapat dijalankan langsung di terminal. Gunakan `--input` untuk membaca hasil run lain. Gambar runtime menampilkan 12 karakter awal ID container; identitas lengkap tersedia pada JSON.
@@ -62,7 +55,7 @@ freeze --execute 'python3 -B scripts/show-p1-evidence.py runtime --input /tmp/tu
   --output /tmp/tubesaat-p1-new-evidence/runtime.png
 ```
 
-Checker memerlukan Python 3 dan Docker Compose; gambar terminal memerlukan Freeze. Jalankan dari root repo. Output baru ditempatkan di direktori terpisah agar bukti run ini tetap tersedia. `render-p1-evidence.py` tetap tersedia untuk membuat tampilan HTML versi awal dengan Google Chrome; jangan menjalankannya pada direktori bukti utama jika ingin mempertahankan PNG terminal.
+Checker memerlukan Python 3 dan Docker Compose; gambar terminal memerlukan Freeze. Jalankan dari root repo. Output baru ditempatkan di direktori terpisah agar bukti run ini tetap tersedia.
 
 Checker menambah data dan jurnal serta menguji skema v1/v2 dan outage, lalu mengembalikan PVMBG ke versi 1 dengan outage nonaktif. Checker tidak me-restart container atau menghapus volume. ID, timestamp, dan nilai confidence dapat berbeda pada run berikutnya.
 

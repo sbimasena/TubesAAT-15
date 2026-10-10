@@ -13,8 +13,6 @@ Checker membaca konfigurasi Compose utama untuk mendapatkan kredensial dan port 
 
 Exit code 0 berarti lulus, 1 berarti gagal. Output hanya memuat status/correlation ID; kredensial dan body tidak ditulis. Jika gagal sebelum request, periksa konfigurasi dan konektivitas lokal; jika gagal setelah request, status yang sudah diamati tetap disimpan. Tes lokal tidak memerlukan Docker dan memastikan server yang menerima kredensial asing tidak dapat lolos.
 
-Checkpoint fondasi B memakai konfigurasi lokal dan overlay khusus: lihat [README API Klien](../services/client-api/README.md#checkpoint-fondasi). `check-member-b.py` memeriksa Auth/API Klien dan alur HTTP ke Aggregator; opsi `--check-lifecycle` menghentikan/menjalankan kembali hanya kedua service B. Ini bukan tes penerimaan P2/P3.
-
 Pemeriksaan autentikasi memakai `check-member-b-auth.py`: login tiga identitas, scope, penolakan field mentah, rotasi/replay, serta penolakan access token lama. Opsi `--natural-expiry` menunggu TTL nyata sebelum refresh tanpa login ulang. Skrip membutuhkan Auth/API Klien/Aggregator dengan data kedua sumber; tidak mengubah lifecycle atau status sumber. Baca [panduan autentikasi](../services/client-api/README.md#pemeriksaan-autentikasi). Uji ini belum mencakup silang kredensial upstream, beban P2, atau fanout.
 
 Pemeriksaan resiliensi memakai `check-member-b-resilience.py` pada project uji yang dipilih lewat `--project-name`. Pemeriksaan dasar mencakup proyeksi sumber aman, filter kosong 200, galat JSON, serta trace/redaksi log. `--exercise-outages` mengubah flag outage PVMBG dan menghentikan/menjalankan kembali PostgreSQL/Auth pada project tersebut, lalu memulihkan flag/layanan tanpa menghapus volume. `--burst-connections` menguji burst singkat dan mencatat 200/429 yang teramati; ini bukan beban P2 60 detik. Baca [panduan resiliensi](../services/client-api/README.md#pemeriksaan-resiliensi). Jangan jalankan bersamaan dengan demo lain yang mengubah sumber atau lifecycle.
@@ -54,18 +52,15 @@ docker compose --env-file .env -f docker-compose.yml -f tests/compose-operator.y
 
 Hasil JSON mencatat ID pesan, correlation ID, dan timestamp selama pengujian. Cocokkan ID producer dengan kedua consumer untuk memeriksa fanout. Angka queue pada UI sesudah recovery bisa sudah nol karena backlog telah dikonsumsi.
 
-## Uji beban, outage, dan startup dari clone
+## Startup dari clone
 
 ```sh
-python3 scripts/check-p2.py
 python3 scripts/check-clean-clone.py
 ```
 
-- P2 memerlukan native k6/lsof. Merecreate PVMBG dengan delay 3 detik, menjalankan 50 VU/60 detik serta mengambil tiga sampel 50 socket TCP, lalu melakukan outage 503/recovery. Aggregator, storage, dan consumer tetap berjalan. Delay kembali ke file environment yang dipilih, schema v2/outage=false pada `finally`. Jangan menjalankan demo lainnya bersamaan.
-- Clone menjalankan sembilan layanan dari commit HEAD tanpa patch source, pada project/volume baru dan port 28081/28082/28084/28080/35672. Secret/password sementara dihasilkan sendiri di luar checkout. Akses data melalui Auth/API; Aggregator/DB tetap tanpa port host. Hanya resource project clone yang dihapus; container project yang sudah ada diperiksa tetap.
-- Untuk menguji bootstrap yang diperbaiki pada volume broker lama dan reconnect consumer, pakai skrip yang sudah ada: `python3 scripts/check-stage-3.py --output /tmp/broker-recovery.json`.
+Clone menjalankan sembilan layanan dari commit HEAD tanpa patch source, pada project/volume baru dan port 28081/28082/28084/28080/35672. Secret/password sementara dihasilkan sendiri di luar checkout. Akses data melalui Auth/API; Aggregator/DB tetap tanpa port host. Hanya resource project clone yang dihapus; container project yang sudah ada diperiksa tetap.
 
-Parameter beban, definisi latensi, dan threshold dijelaskan di [panduan pengujian](../tests/README.md). Baseline langsung Aggregator tetap terpisah dari pengukuran API publik terautentikasi di bawah.
+Pengukuran P2 memakai [checker Client API terautentikasi](#beban-client-api-terautentikasi). Parameter beban, definisi latensi, dan threshold dijelaskan di [panduan pengujian](../tests/README.md).
 
 ## Pemeriksaan ingestion dan freshness Anggota A
 
@@ -88,7 +83,7 @@ python3 -B scripts/show-p1-evidence.py runtime --input /tmp/p1-report/report-che
 
 Checker menambah data/jurnal dan memulihkan PVMBG ke v1/outage=false; tidak melakukan restart atau penghapusan volume. `show-p1-evidence.py` hanya menampilkan hasil JSON tersimpan dan menerima bagian `bmkg`, `pvmbg`, atau `runtime`. [README bukti P1](../docs/evidence/member-a/p1/README.md) menyediakan perintah Freeze untuk Gambar 1–3 dan log checker asli.
 
-`render-p1-evidence.py` adalah renderer HTML versi awal yang memerlukan Chrome dan menulis PNG di sebelah JSON input. Jangan menjalankannya pada direktori bukti utama jika ingin mempertahankan gambar terminal. `render-report-diagrams.py` membuat SVG dan PNG arsitektur tanpa mengubah kode aplikasi; lokasi gambar, caption, dan dependensinya ada pada [README diagram](../docs/diagrams/README.md).
+`render-report-diagrams.py` membuat SVG dan PNG arsitektur tanpa mengubah kode aplikasi; lokasi gambar, caption, dan dependensinya ada pada [README diagram](../docs/diagrams/README.md).
 
 ## Deployment default
 

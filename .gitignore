@@ -13,3 +13,6 @@ coverage.out
 *.test
 __pycache__/
 *.py[cod]
+
+docs/evidence
+artifacts/checks/

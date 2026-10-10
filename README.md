@@ -83,6 +83,90 @@ docker compose up -d --wait
 
 Jika startup gagal, lihat `docker compose ps -a` dan log layanan yang gagal. Jika port host terpakai, ubah variabel port di `.env`, lalu ulangi startup; checker otomatis mengikuti port efektif Compose. Jangan memakai `docker compose down -v` untuk demo persistence karena volume data akan dihapus.
 
+## 4. Lihat event dan gunakan Client API
+
+Pastikan stack sudah berjalan. API mengembalikan JSON; dashboard consumer belum memiliki halaman web. Semua contoh berikut dijalankan dari root repository dan mengikuti port/kredensial pada `.env`.
+
+### Login dan baca event kanonis
+
+Muat konfigurasi lokal, lalu login sebagai Tim Lapangan agar seluruh sebelas field kanonis terlihat:
+
+```sh
+source .env
+
+TOKEN=$(curl -fsS "http://localhost:${AUTH_PORT:-8084}/login" \
+  -H 'Content-Type: application/json' \
+  -d "{\"client_id\":\"$FIELD_TEAM_CLIENT_ID\",\"password\":\"$FIELD_TEAM_CLIENT_PASSWORD\"}" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+
+curl -fsS "http://localhost:${CLIENT_API_PORT:-8080}/hazards?limit=5" \
+  -H "Authorization: Bearer $TOKEN" \
+  | python3 -m json.tool
+```
+
+Respons berisi `data` (event kanonis), `count`, dan `sources` (ketersediaan/freshness BMKG serta PVMBG). Data sudah tersimpan di Canonical Store; query tidak menunggu polling upstream. Kredensial pada contoh mengikuti format yang dihasilkan `setup-env.py`. Access token secara default berlaku 60 detik; ulangi login jika mendapat `401`, termasuk setelah restart Auth.
+
+Filter dapat digabung pada URL:
+
+| Parameter | Contoh | Kegunaan |
+|---|---|---|
+| `source` | `BMKG` atau `PVMBG` | Pilih instansi sumber. |
+| `hazard_type` | `SEISMIC` atau `VOLCANIC` | Pilih jenis hazard. |
+| `limit` | `5` | Batasi jumlah event, diurutkan berdasarkan waktu kejadian terbaru. |
+| `since` | `2026-10-10T00:00:00Z` | Pilih kejadian sejak timestamp RFC3339. |
+
+Contoh lima event BMKG terbaru, memakai token dari login di atas:
+
+```sh
+curl -fsS "http://localhost:${CLIENT_API_PORT:-8080}/hazards?source=BMKG&limit=5" \
+  -H "Authorization: Bearer $TOKEN" \
+  | python3 -m json.tool
+```
+
+Untuk mencoba peran Media, ganti variabel login menjadi `MEDIA_CLIENT_ID` dan `MEDIA_CLIENT_PASSWORD`. Media menerima tujuh field ringkasan; Tim Lapangan/Internal Ops menerima sebelas field termasuk `attributes`.
+
+### Lihat event asli dari mock
+
+Setelah menjalankan `source .env`, gunakan kredensial masing-masing instansi:
+
+```sh
+# Kejadian seismik BMKG
+curl -fsS "http://localhost:${BMKG_PORT:-8081}/seismic-events" \
+  -H "X-BMKG-Key: $BMKG_API_KEY" | python3 -m json.tool
+
+# Peringatan tsunami BMKG
+curl -fsS "http://localhost:${BMKG_PORT:-8081}/tsunami-warnings" \
+  -H "X-BMKG-Key: $BMKG_API_KEY" | python3 -m json.tool
+
+# Laporan vulkanik PVMBG
+curl -fsS "http://localhost:${PVMBG_PORT:-8082}/volcanic-reports" \
+  -H "Authorization: Bearer $PVMBG_TOKEN" | python3 -m json.tool
+```
+
+Endpoint sumber mengembalikan array JSON dalam format instansi masing-masing. Secara default kedua mock membuat event baru setiap 10 detik, lalu Aggregator melakukan polling setiap 3 detik.
+
+### Ikuti log event dan consumer
+
+```sh
+docker compose logs -f --tail=20 bmkg pvmbg notification-consumer dashboard-consumer
+```
+
+Log menunjukkan pembuatan event dan pemrosesan oleh dua consumer. Tekan `Ctrl+C` untuk berhenti mengikuti log; layanan tetap berjalan.
+
+### Gunakan Postman
+
+1. Buat request `POST http://localhost:8084/login`. Pilih **Body → raw → JSON**, lalu isi `client_id` dan `password` dari `FIELD_TEAM_CLIENT_ID`/`FIELD_TEAM_CLIENT_PASSWORD` pada `.env`:
+
+   ```json
+   {"client_id":"field-team","password":"<password dari .env>"}
+   ```
+
+2. Salin nilai `access_token` dari respons login.
+3. Buat request `GET http://localhost:8080/hazards?limit=5`. Pada **Authorization → Bearer Token**, tempel token tersebut, lalu pilih **Send**.
+4. Tambahkan filter pada tab **Params** sesuai tabel di atas. Sesuaikan port URL jika `AUTH_PORT` atau `CLIENT_API_PORT` pada `.env` diubah.
+
+Membuka `/hazards` langsung di browser tanpa header Bearer menghasilkan `401`. Untuk pemeriksaan health tanpa token, buka `http://localhost:8080/health` atau `http://127.0.0.1:8084/health`. Jangan menyertakan password/token dalam screenshot laporan atau file yang di-commit.
+
 ## Variabel konfigurasi
 
 Nilai pada tabel adalah nilai template `.env.example`. `setup-env.py` mengganti semua kredensial contoh dengan nilai acak. Perubahan environment layanan diterapkan dengan `docker compose up -d`; setelah perubahan kode gunakan `docker compose up --build -d --wait`.

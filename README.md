@@ -96,7 +96,7 @@ Nilai pada tabel adalah nilai template `.env.example`. `setup-env.py` mengganti 
 | `BMKG_BASE_URL`, `PVMBG_BASE_URL` | `http://bmkg:8081`, `http://pvmbg:8082` | Alamat upstream dari Aggregator pada jaringan Compose. |
 | `AGGREGATOR_BASE_URL`, `AUTH_BASE_URL` | `http://aggregator:8083`, `http://auth:8084` | Dependency Client API pada jaringan Compose. |
 | `BMKG_API_KEY`, `PVMBG_TOKEN` | `dev-bmkg-key`, `dev-pvmbg-token` | Kredensial mock dan Aggregator; wajib nonkosong dan berbeda. |
-| `BMKG_GENERATE_INTERVAL_SECONDS`, `PVMBG_GENERATE_INTERVAL_SECONDS` | `15`, `15` | Interval pembuatan data mock. |
+| `BMKG_GENERATE_INTERVAL_SECONDS`, `PVMBG_GENERATE_INTERVAL_SECONDS` | `10`, `10` | Interval pembuatan data mock untuk skenario M1. |
 | `PVMBG_DELAY_MS` | `750` | Delay respons mock PVMBG. |
 | `POLL_INTERVAL_SECONDS` | `3` | Interval polling Aggregator. |
 | `AGGREGATOR_REQUEST_TIMEOUT_MS`, `AUTH_REQUEST_TIMEOUT_MS` | `5000`, `5000` | Timeout dependency Client API. |

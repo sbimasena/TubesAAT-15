@@ -20,6 +20,8 @@ class SetupEnvironmentTest(unittest.TestCase):
             self.assertGreaterEqual(len(values["JWT_SIGNING_SECRET"]), 32)
             self.assertNotEqual(values["JWT_SIGNING_SECRET"], values["AUTH_INTERNAL_SECRET"])
             self.assertNotEqual(values["BMKG_API_KEY"], values["PVMBG_TOKEN"])
+            self.assertEqual(values["BMKG_GENERATE_INTERVAL_SECONDS"], "10")
+            self.assertEqual(values["PVMBG_GENERATE_INTERVAL_SECONDS"], "10")
             for role in ("MEDIA", "FIELD_TEAM", "INTERNAL_OPS"):
                 self.assertTrue(values[role + "_CLIENT_PASSWORD"])
             self.assertIn(":" + values["POSTGRES_PASSWORD"] + "@", values["DATABASE_URL"])

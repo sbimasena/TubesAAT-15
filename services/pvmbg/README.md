@@ -1,6 +1,6 @@
 # Mock PVMBG
 
-PVMBG is an independent Go service that seeds 20 historical volcanic reports and generates reports periodically. The default response delay is 750 ms; set `PVMBG_DELAY_MS=3000` to reproduce the slow-upstream scenario. Supported delay values are 500–3000 ms.
+PVMBG is an independent Go service that seeds 20 historical volcanic reports and generates reports every `PVMBG_GENERATE_INTERVAL_SECONDS` (default: 10 seconds). The default response delay is 750 ms; set `PVMBG_DELAY_MS=3000` to reproduce the slow-upstream scenario. Supported delay values are 500–3000 ms.
 
 ## API
 

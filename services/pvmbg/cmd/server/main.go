@@ -133,7 +133,7 @@ func newCatalog(now time.Time) *catalog {
 }
 
 func (c *catalog) generatePeriodically(ctx context.Context, logger *slog.Logger) {
-	interval := durationFromEnv("PVMBG_GENERATE_INTERVAL_SECONDS", 15*time.Second)
+	interval := durationFromEnv("PVMBG_GENERATE_INTERVAL_SECONDS", 10*time.Second)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {

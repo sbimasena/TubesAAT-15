@@ -1,6 +1,6 @@
 # Mock BMKG
 
-BMKG is an independent Go service that serves simulated seismic events and tsunami warnings. It seeds 20 historical events on startup and generates another event every `BMKG_GENERATE_INTERVAL_SECONDS` (default: 15 seconds).
+BMKG is an independent Go service that serves simulated seismic events and tsunami warnings. It seeds 20 historical events on startup and generates another event every `BMKG_GENERATE_INTERVAL_SECONDS` (default: 10 seconds).
 
 ## API
 

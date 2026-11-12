@@ -18,7 +18,7 @@ import (
 
 type unavailableRepository struct{}
 
-func (unavailableRepository) Upsert(context.Context, []domain.HazardEvent, string) ([]domain.HazardEvent, error) {
+func (unavailableRepository) Upsert(context.Context, int64, []domain.HazardEvent, string) ([]domain.HazardEvent, error) {
 	return nil, errors.New("database offline")
 }
 

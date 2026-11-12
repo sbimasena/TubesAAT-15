@@ -53,7 +53,7 @@ func TestPostgresRepository(t *testing.T) {
 	}
 	upsert := func(events []domain.HazardEvent, correlationID string, want int) {
 		t.Helper()
-		changed, err := repo.Upsert(ctx, events, correlationID)
+		changed, err := repo.Upsert(ctx, 0, events, correlationID)
 		if err != nil || len(changed) != want {
 			t.Fatalf("Upsert: changed=%d want=%d err=%v", len(changed), want, err)
 		}
@@ -119,7 +119,7 @@ func TestPostgresRepository(t *testing.T) {
 	newEvent.HazardID, newEvent.SourceRefID = "rollback-hazard", "rollback-source"
 	invalid := newEvent
 	invalid.HazardID, invalid.SourceRefID, invalid.Severity = "invalid-hazard", "invalid-source", "INVALID"
-	if _, err := repo.Upsert(ctx, []domain.HazardEvent{newEvent, invalid}, "test-rollback"); err == nil {
+	if _, err := repo.Upsert(ctx, 0, []domain.HazardEvent{newEvent, invalid}, "test-rollback"); err == nil {
 		t.Fatal("invalid batch must fail")
 	}
 	counts(3, 4)
@@ -127,7 +127,7 @@ func TestPostgresRepository(t *testing.T) {
 		CHECK (correlation_id <> 'force-outbox-failure')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Upsert(ctx, []domain.HazardEvent{newEvent}, "force-outbox-failure"); err == nil {
+	if _, err := repo.Upsert(ctx, 0, []domain.HazardEvent{newEvent}, "force-outbox-failure"); err == nil {
 		t.Fatal("outbox failure must roll back the canonical write")
 	}
 	counts(3, 4)
@@ -137,7 +137,7 @@ func TestPostgresRepository(t *testing.T) {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			if _, err := repo.Upsert(ctx, []domain.HazardEvent{newEvent}, "test-concurrent"); err != nil {
+			if _, err := repo.Upsert(ctx, 0, []domain.HazardEvent{newEvent}, "test-concurrent"); err != nil {
 				t.Error(err)
 			}
 		}()

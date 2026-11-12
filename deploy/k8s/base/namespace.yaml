@@ -1,0 +1,6 @@
+# Name fixed by the Tester Agent (TESTER_APP_NAMESPACE). No Pod Security labels:
+# they must not restrict the tester (kontrak-m2.md §2).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sistem-informasi-kebencanaan-bnpb

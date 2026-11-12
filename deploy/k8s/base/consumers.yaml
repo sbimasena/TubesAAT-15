@@ -1,0 +1,99 @@
+# Event consumers (role=consumer). Each keeps its journal/dedup state in /data, so it
+# runs as a single Recreate replica on a local-path volume, like the M1 compose volume.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-consumer
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: notification-consumer}
+  template:
+    metadata:
+      labels: {app: notification-consumer, role: consumer}
+    spec:
+      containers:
+        - name: notification-consumer
+          image: bnpb/notification-consumer
+          ports: [{name: http, containerPort: 8080}]
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom: {secretKeyRef: {name: broker-credentials, key: RABBITMQ_DEFAULT_USER}}
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom: {secretKeyRef: {name: broker-credentials, key: RABBITMQ_DEFAULT_PASS}}
+            - name: BROKER_URL
+              value: amqp://$(RABBITMQ_DEFAULT_USER):$(RABBITMQ_DEFAULT_PASS)@rabbitmq:5672/
+          resources:
+            requests: {memory: 128Mi}
+            limits: {memory: 256Mi}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: http}
+            periodSeconds: 10
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: notification-data}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: notification-data
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 1Gi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard-consumer
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: dashboard-consumer}
+  template:
+    metadata:
+      labels: {app: dashboard-consumer, role: consumer}
+    spec:
+      containers:
+        - name: dashboard-consumer
+          image: bnpb/dashboard-consumer
+          ports: [{name: http, containerPort: 8080}]
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom: {secretKeyRef: {name: broker-credentials, key: RABBITMQ_DEFAULT_USER}}
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom: {secretKeyRef: {name: broker-credentials, key: RABBITMQ_DEFAULT_PASS}}
+            - name: BROKER_URL
+              value: amqp://$(RABBITMQ_DEFAULT_USER):$(RABBITMQ_DEFAULT_PASS)@rabbitmq:5672/
+          resources:
+            requests: {memory: 128Mi}
+            limits: {memory: 256Mi}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: http}
+            periodSeconds: 10
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: dashboard-data}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dashboard-data
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests: {storage: 1Gi}

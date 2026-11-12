@@ -1,0 +1,28 @@
+# Base manifests for every BNPB service (D-DEPLOY). Overlays set image tags.
+# Secrets are not generated here: scripts/k8s/deploy.sh creates them from .env.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: sistem-informasi-kebencanaan-bnpb
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: bnpb
+    includeSelectors: false
+
+resources:
+  - namespace.yaml
+  - config.yaml
+  - mocks.yaml
+  - store.yaml
+  - broker.yaml
+  - aggregator.yaml
+  - api.yaml
+  - consumers.yaml
+
+configMapGenerator:
+  # The k8s copy of infrastructure/message-broker; it diverges in M2 (quorum queues, 3 nodes).
+  - name: broker-topology
+    files:
+      - broker/definitions.json
+      - broker/start-with-topology.sh
+      - broker/10-limits.conf

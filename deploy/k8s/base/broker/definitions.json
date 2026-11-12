@@ -1,0 +1,13 @@
+{
+  "exchanges": [
+    {"name": "hazard.events", "vhost": "/", "type": "fanout", "durable": true, "auto_delete": false, "internal": false, "arguments": {}}
+  ],
+  "queues": [
+    {"name": "notification", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {"x-queue-type": "classic"}},
+    {"name": "dashboard", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {"x-queue-type": "classic"}}
+  ],
+  "bindings": [
+    {"source": "hazard.events", "vhost": "/", "destination": "notification", "destination_type": "queue", "routing_key": "", "arguments": {}},
+    {"source": "hazard.events", "vhost": "/", "destination": "dashboard", "destination_type": "queue", "routing_key": "", "arguments": {}}
+  ]
+}

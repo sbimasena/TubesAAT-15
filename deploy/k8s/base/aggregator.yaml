@@ -1,0 +1,69 @@
+# Aggregator (role=aggregator). One replica until leader election lands (P2, owner A);
+# the only workload with store credentials (context-m2.md §6.4).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aggregator
+spec:
+  replicas: 1
+  strategy:
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels: {app: aggregator}
+  template:
+    metadata:
+      labels: {app: aggregator, role: aggregator}
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: aggregator
+          image: bnpb/aggregator
+          ports: [{name: http, containerPort: 8083}]
+          envFrom: [{configMapRef: {name: bnpb-config}}]
+          env:
+            - name: AGGREGATOR_PORT
+              value: "8083"
+            - name: BMKG_API_KEY
+              valueFrom: {secretKeyRef: {name: source-credentials, key: BMKG_API_KEY}}
+            - name: PVMBG_TOKEN
+              valueFrom: {secretKeyRef: {name: source-credentials, key: PVMBG_TOKEN}}
+            - name: POSTGRES_DB
+              valueFrom: {secretKeyRef: {name: store-credentials, key: POSTGRES_DB}}
+            - name: POSTGRES_USER
+              valueFrom: {secretKeyRef: {name: store-credentials, key: POSTGRES_USER}}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: store-credentials, key: POSTGRES_PASSWORD}}
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom: {secretKeyRef: {name: broker-credentials, key: RABBITMQ_DEFAULT_USER}}
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom: {secretKeyRef: {name: broker-credentials, key: RABBITMQ_DEFAULT_PASS}}
+            # Credentials must be URL-safe (no @ : / ? #); deploy.sh rejects unsafe values.
+            - name: DATABASE_URL
+              value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@store-0.store:5432/$(POSTGRES_DB)?sslmode=disable
+            - name: BROKER_URL
+              value: amqp://$(RABBITMQ_DEFAULT_USER):$(RABBITMQ_DEFAULT_PASS)@rabbitmq:5672/
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+          resources:
+            requests: {memory: 256Mi}
+            limits: {memory: 512Mi}
+          # /health reports storage availability: it gates traffic, not restarts.
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: http}
+            periodSeconds: 10
+          lifecycle:
+            preStop:
+              sleep: {seconds: 5}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aggregator
+spec:
+  selector: {app: aggregator}
+  ports: [{name: http, port: 8083, targetPort: http}]

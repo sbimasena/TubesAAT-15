@@ -1,0 +1,14 @@
+{
+  "_comment": "Single action list shared by the Makefile, the Control Console and the runbook (context-m2.md §8.2). Add an entry together with every new make target.",
+  "actions": [
+    {"id": "dev-up", "group": "Umum", "label": "Buat/nyalakan cluster k3d", "make": "dev-up", "destructive": false},
+    {"id": "dev-down", "group": "Umum", "label": "Hapus cluster k3d", "make": "dev-down", "destructive": true},
+    {"id": "deploy", "group": "Umum", "label": "Deploy seluruh sistem", "make": "deploy", "destructive": false},
+    {"id": "status", "group": "Umum", "label": "Status node dan pod", "make": "status", "destructive": false},
+    {"id": "logs", "group": "Umum", "label": "Log satu service", "make": "logs", "params": ["S"], "destructive": false},
+    {"id": "tester-list", "group": "Umum", "label": "Daftar skenario Tester Agent", "make": "tester-list", "destructive": false},
+    {"id": "tester", "group": "Umum", "label": "Jalankan skenario latihan Tester Agent", "make": "tester", "params": ["S"], "destructive": true},
+    {"id": "open", "group": "Umum", "label": "Buka UI (port-forward)", "make": "open", "destructive": false},
+    {"id": "reset", "group": "Reset", "label": "Kembalikan sistem ke normal", "make": "reset", "destructive": false}
+  ]
+}

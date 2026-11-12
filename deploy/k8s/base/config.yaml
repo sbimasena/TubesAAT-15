@@ -4,6 +4,7 @@
 #   store-credentials:  POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD (Aggregator + store only)
 #   broker-credentials: RABBITMQ_DEFAULT_USER, RABBITMQ_DEFAULT_PASS
 #   auth-credentials:   AUTH_INTERNAL_SECRET, JWT_SIGNING_SECRET, *_CLIENT_PASSWORD
+#   pantai-token:       token (PANTAI_AUTH_TOKEN; name fixed by the Sensor Pantai manifest)
 apiVersion: v1
 kind: ConfigMap
 metadata:

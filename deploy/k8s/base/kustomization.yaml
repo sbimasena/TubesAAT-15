@@ -18,6 +18,7 @@ resources:
   - aggregator.yaml
   - api.yaml
   - consumers.yaml
+  - sensor-pantai.yaml
 
 configMapGenerator:
   # The k8s copy of infrastructure/message-broker; it diverges in M2 (quorum queues, 3 nodes).

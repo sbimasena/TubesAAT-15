@@ -1,0 +1,43 @@
+# Sensor Pantai: the assistants' example manifest (if4031-sensor-pantai@772f2c6) unchanged,
+# plus what it lacks per kontrak-m2.md §6: resources ("Komponen lain") and a Service.
+# The image digest must not change. PANTAI_PROFILE becomes "exam" only for the demo.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: sensor-pantai, labels: {role: sensor}}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: sensor-pantai}}
+  template:
+    metadata: {labels: {app: sensor-pantai, role: sensor}}
+    spec:
+      containers:
+        - name: sensor
+          image: sustuna/sensor-pantai@sha256:51fbd90d3891ad6e9f5768ad330ffb65205644cb29e50da65c7538f2e0b4397d
+          env:
+            - {name: PANTAI_PROFILE, value: practice}
+            - {name: PANTAI_SEED, value: "42"}
+            - {name: PANTAI_SPEED, value: "60"}
+            - name: PANTAI_AUTH_TOKEN
+              valueFrom: {secretKeyRef: {name: pantai-token, key: token}}
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /healthz, port: 8080}}
+          resources:
+            requests: {memory: 128Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            # Demo only: Secret 'pantai-key' holding the assistants' 'key' file.
+            # - {name: key, mountPath: /var/run/pantai, readOnly: true}
+      volumes:
+        - {name: data, emptyDir: {}}
+        # - name: key
+        #   secret: {secretName: pantai-key}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sensor-pantai
+spec:
+  selector: {app: sensor-pantai}
+  ports: [{name: http, port: 8080, targetPort: http}]

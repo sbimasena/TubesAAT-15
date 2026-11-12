@@ -49,9 +49,10 @@ spec:
           resources:
             requests: {memory: 256Mi}
             limits: {memory: 512Mi}
-          # /health reports storage availability: it gates traffic, not restarts.
+          # Not /health: it fails while any store is down, and the API must still answer
+          # (partial: true) during kill-store instead of losing every endpoint.
           readinessProbe:
-            httpGet: {path: /health, port: http}
+            tcpSocket: {port: http}
             periodSeconds: 5
           livenessProbe:
             tcpSocket: {port: http}

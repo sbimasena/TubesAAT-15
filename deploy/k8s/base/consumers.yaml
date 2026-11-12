@@ -1,5 +1,7 @@
 # Event consumers (role=consumer). Each keeps its journal/dedup state in /data, so it
 # runs as a single Recreate replica on a local-path volume, like the M1 compose volume.
+# The volume is bound to one node, so consumers stay on the control-plane node (node-a),
+# which is never a node-failure target (D-TOPO); elsewhere wipe-node would leave them Pending.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,6 +15,7 @@ spec:
     metadata:
       labels: {app: notification-consumer, role: consumer}
     spec:
+      nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
       containers:
         - name: notification-consumer
           image: bnpb/notification-consumer
@@ -62,6 +65,7 @@ spec:
     metadata:
       labels: {app: dashboard-consumer, role: consumer}
     spec:
+      nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
       containers:
         - name: dashboard-consumer
           image: bnpb/dashboard-consumer

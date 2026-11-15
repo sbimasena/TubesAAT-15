@@ -29,6 +29,12 @@ Cluster: `node-a` (control plane + worker, 192.168.18.201), `node-c` (worker, 19
 - Perlu ditanyakan ke asisten: apa saja yang diblokir `block_internode`, apakah lalu lintas pod antar-node seharusnya ikut terputus, dan mengapa agent `node-b` tidak ikut.
 - Untuk laporan P1: ketahanan terhadap unit yang tidak terjangkau dibuktikan dengan poweroff `node-c` (lihat `bukti-p1-cluster.md`). Dari sisi Aggregator kondisinya setara dengan partisi: koneksi menggantung tanpa RST, timeout per unit bekerja, dan unit yang hilang tercatat di `unavailable_units`.
 
+## schema (practice, 15 Nov 2026)
+
+- Langkah: `t+5s call_mock_admin`. Gagal di 15:45:21 UTC: `tidak ada Service role=mock pada namespace sistem-informasi-kebencanaan-bnpb`, meskipun log tetap melaporkan "keadaan bersih".
+- Penyebab: agent mencari **Service** berlabel `role=mock`, sedangkan kontrak §1.1 hanya mewajibkan label `role` pada pod. Label di pod saja tidak cukup.
+- Perbaikan: `labels: {role: mock}` pada Service `bmkg` dan `pvmbg`, plus `role: sensor` pada Service `sensor-pantai` untuk berjaga-jaga. Uji ulang dengan `make tester S=schema` setelah deploy, lalu `make reset`.
+
 ## kill-store (practice, 15 Nov 2026, cluster 3 node berisi data)
 
 - Satu langkah: `t+5s stop_pod role=store nodes=any`. Terpilih `store-2` di `node-c` (13:01:23 UTC).

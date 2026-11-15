@@ -35,6 +35,8 @@ Semua waktu dalam UTC.
 - **Node lambat tidak menghambat ingest.** Pada run 15:26, `node-b` tidak sanggup menulis 500 event dalam `operationTimeout` 3 s. Write ke store-0 dibatalkan di setiap potongan, dan log mencatat 53 baris `lags`/`rows copied` untuk store-0. Ingest tetap sukses karena replika lain sudah commit, lalu anti-entropy menyusulkan store-0 dalam < 30 s. Selama jeda itu event tersebut hanya punya 1 salinan.
 - Penyebab `node-b` lebih lambat belum diketahui (disk atau CPU VM). Untuk dataset asisten, gunakan `CHUNK=100`.
 
+**Kepemilikan storage ditegakkan platform** (`make p1-netpol`, NetworkPolicy `store-ingress`, 15:4x). Dua pod uji dibuat dengan image yang sama dan hanya berbeda label. Pod `role=api` (meniru client-api) mendapat `store-0.store:5432 - no response`. Pod `role=aggregator` mendapat `accepting connections`. Secret `store-credentials` hanya di-mount ke Aggregator dan store. Setelah policy dipasang, Aggregator tetap utuh: 5436+5471+5467 = 2×8187. Uji ulang Tester Agent dengan policy aktif: `kill-store` (15:44:46, store-2) berakhir "keadaan bersih", dan checksum 20 s kemudian `count:8223`, `partial:false`. `schema` gagal karena Service mock belum berlabel `role=mock`; penyebabnya bukan policy (lihat `temuan-tester-agent.md`).
+
 **P1.7, dashboard = Audit API:** pada 15:24:48 UTC, dashboard (`make p1-dashboard` lewat SSH tunnel, rentang "Semua") menunjukkan **1.981 kejadian**, dan `make p1-checksum` pada saat yang sama menunjukkan `count:1981`, `partial:false`, `unavailable_units:[]`.
 
 `make p1-audit` (15:1x): halaman `events?source=BMKG&limit=2` mengembalikan `next_cursor` dan `partial:false`. `location` untuk `haz_07844eed…` menunjukkan `primary` store-2 (node-c) dan `replica` store-1 (node-a), yaitu dua node berbeda.

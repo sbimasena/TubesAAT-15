@@ -150,6 +150,21 @@ func TestReconcileReReplicatesAndRebalances(t *testing.T) {
 	}
 	wantSum := checksumOf("", refs, time.Time{}).Checksum
 
+	// Map created while only store-0 answered: store-1 and store-2 share partitions with no
+	// recorded replica, and must not wait on each other forever.
+	m := r.current().m.clone()
+	delete(m.Incarnations, "store-1")
+	delete(m.Incarnations, "store-2")
+	if err := r.commitLocked(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.reconcileOnce(ctx, 0, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.current().m.Incarnations; len(got) != 3 {
+		t.Fatalf("unrecorded units must be refilled and recorded, got %v", got)
+	}
+
 	// Every unit holds exactly the events of the partitions it serves.
 	checkPlacement := func(stage string) {
 		t.Helper()

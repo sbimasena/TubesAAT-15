@@ -124,9 +124,12 @@ func (r *Router) recoverAmnesia(ctx context.Context, epoch int64, l *layout, m p
 			if !slices.Contains(l.writes[p], u) {
 				continue
 			}
-			others := slices.DeleteFunc(slices.Clone(l.replicas[p]), func(o *unit) bool { return o == u })
+			others := slices.DeleteFunc(slices.Clone(l.replicas[p]), func(o *unit) bool { return o == u || !l.serves(o) })
 			if len(others) == 0 {
-				continue // sole copy (single-unit Compose): nothing to copy from
+				// No vouched copy anywhere: sole copy (single-unit Compose), or the other replica
+				// is unrecorded too (both were down when the map was created). Waiting would
+				// deadlock the pair; anti-entropy reconciles them once both serve.
+				continue
 			}
 			if !r.syncFromAny(ctx, epoch, p, others, u, l, dead) {
 				complete = false

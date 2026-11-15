@@ -85,7 +85,7 @@ TEST_DATABASE_URL='postgres://postgres@127.0.0.1:55432/postgres?sslmode=disable'
 
 ## Sisa pekerjaan P1
 
-- [ ] Bukti `wipe-node` dan `partition` di cluster, catat di `temuan-tester-agent.md`.
+- [x] Bukti `wipe-node` dan `partition` di cluster (`bukti-p1-cluster.md`, `temuan-tester-agent.md`); `partition` tidak menyekat pod, tanyakan ke asisten.
 - [ ] Jalankan `p1-load`/`p1-surge` dengan dataset asisten (dibagikan setelah 20 Nov), simpan tabel beban per unit sebagai bukti.
 - [ ] Reconciler hanya di leader setelah `internal/leader` dari A masuk (sekarang epoch 0 di `cmd/server/main.go`).
 - [ ] Akses Audit API dari luar cluster (menunggu jawaban asisten).

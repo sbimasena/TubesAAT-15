@@ -54,6 +54,7 @@ func main() {
 	bmkgBaseURL := requiredEnv(logger, "BMKG_BASE_URL")
 	pvmbgBaseURL := requiredEnv(logger, "PVMBG_BASE_URL")
 	brokerURL := requiredEnv(logger, "BROKER_URL")
+	auditToken := requiredEnv(logger, "AUDIT_TOKEN")
 	if bmkgKey == pvmbgToken {
 		logger.Error("upstream credentials must be different", "variables", "BMKG_API_KEY,PVMBG_TOKEN")
 		os.Exit(1)
@@ -90,6 +91,7 @@ func main() {
 	}()
 
 	api := httpapi.NewServer(repository, manager, logger)
+	api.EnableAudit(repository, auditToken)
 	server := &http.Server{
 		Addr:              ":" + port,
 		Handler:           api.Handler(),

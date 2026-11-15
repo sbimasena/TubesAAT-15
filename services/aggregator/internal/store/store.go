@@ -12,6 +12,9 @@ import (
 // storage unit has already accepted (D-FENCE).
 var ErrFenced = errors.New("store: stale epoch")
 
+// ErrInvalidCursor is returned by Query for a cursor it did not issue.
+var ErrInvalidCursor = errors.New("store: invalid cursor")
+
 type Filter struct {
 	Source     string
 	HazardType string

@@ -19,6 +19,8 @@ type Server struct {
 	repository store.Repository
 	manager    *ingest.Manager
 	logger     *slog.Logger
+	audit      store.Store
+	auditToken string
 }
 
 func NewServer(repository store.Repository, manager *ingest.Manager, logger *slog.Logger) *Server {
@@ -30,6 +32,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /hazards", s.listHazards)
 	mux.HandleFunc("GET /internal/v1/hazards", s.listHazards)
+	if s.audit != nil {
+		mux.HandleFunc("GET /internal/audit/events", s.requireAuditToken(s.auditEvents))
+		mux.HandleFunc("GET /internal/audit/checksum", s.requireAuditToken(s.auditChecksum))
+		mux.HandleFunc("GET /internal/audit/location", s.requireAuditToken(s.auditLocation))
+	}
 	return s.withRequestLogging(mux)
 }
 

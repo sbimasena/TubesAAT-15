@@ -309,7 +309,7 @@ func decodeCursor(value string) (*pageCursor, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(value)
 	var c pageCursor
 	if err != nil || json.Unmarshal(raw, &c) != nil || c.HazardID == "" {
-		return nil, errors.New("invalid cursor")
+		return nil, ErrInvalidCursor
 	}
 	return &c, nil
 }

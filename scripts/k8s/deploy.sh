@@ -38,7 +38,7 @@ fi
 load_env
 REQUIRED=(BMKG_API_KEY PVMBG_TOKEN POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD
   RABBITMQ_DEFAULT_USER RABBITMQ_DEFAULT_PASS AUTH_INTERNAL_SECRET JWT_SIGNING_SECRET
-  MEDIA_CLIENT_PASSWORD FIELD_TEAM_CLIENT_PASSWORD INTERNAL_OPS_CLIENT_PASSWORD PANTAI_AUTH_TOKEN)
+  MEDIA_CLIENT_PASSWORD FIELD_TEAM_CLIENT_PASSWORD INTERNAL_OPS_CLIENT_PASSWORD PANTAI_AUTH_TOKEN AUDIT_TOKEN)
 for key in "${REQUIRED[@]}"; do
   [[ -n "${!key:-}" ]] || die "$key is empty in .env"
 done
@@ -71,6 +71,7 @@ apply_secret auth-credentials \
   --from-literal=FIELD_TEAM_CLIENT_PASSWORD="$FIELD_TEAM_CLIENT_PASSWORD" \
   --from-literal=INTERNAL_OPS_CLIENT_PASSWORD="$INTERNAL_OPS_CLIENT_PASSWORD"
 apply_secret pantai-token --from-literal=token="$PANTAI_AUTH_TOKEN"
+apply_secret audit-token --from-literal=token="$AUDIT_TOKEN"
 # Pods restart when a credential changes: the hash goes into a pod template annotation.
 SECRETS_HASH="$(for key in "${REQUIRED[@]}"; do printf '%s=%s\n' "$key" "${!key}"; done | sha256 | cut -c1-16)"
 

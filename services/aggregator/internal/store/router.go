@@ -417,6 +417,63 @@ func (r *Router) Checksum(ctx context.Context, source string) (ChecksumResult, e
 	return sum, nil
 }
 
+// Analytics counts events with occurred_at in [from, to) into n buckets. Zero from/to
+// mean the span of the data. Copies are unioned by hazard_id exactly like Checksum.
+// shortcut: ships every row in range to the Aggregator; push GROUP BY down per partition
+// if the catalog outgrows unitReadTimeout.
+func (r *Router) Analytics(ctx context.Context, from, to time.Time, n int) (Analytics, error) {
+	l := r.current()
+	lo, hi := from, to
+	if hi.IsZero() {
+		hi = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+	results := gather(ctx, l.readable(r.units), unitReadTimeout, func(ctx context.Context, u *unit) ([]analyticRow, error) {
+		return u.repo.analyticRows(ctx, lo, hi, l.held(u))
+	})
+	if err := noUnitAnswered(results); err != nil {
+		return Analytics{}, err
+	}
+	pl := plan(r, l, results)
+	rows := map[string]analyticRow{}
+	for _, res := range results {
+		for _, row := range res.value {
+			rows[row.hazardID] = row
+		}
+	}
+	if from.IsZero() || to.IsZero() {
+		var first, last time.Time
+		for _, row := range rows {
+			if first.IsZero() || row.occurred.Before(first) {
+				first = row.occurred
+			}
+			if row.occurred.After(last) {
+				last = row.occurred
+			}
+		}
+		if from.IsZero() {
+			lo = first
+		}
+		if to.IsZero() {
+			hi = last.Add(time.Nanosecond)
+		}
+	}
+	a := Analytics{From: lo.UTC(), To: hi.UTC(), Series: map[string][]int{}, BySeverity: map[string]int{},
+		ByArea: map[string]int{}, Total: len(rows), Partial: pl.partial, UnavailableUnits: pl.unavailable}
+	width := max(hi.Sub(lo)/time.Duration(n), time.Nanosecond)
+	for i := range n {
+		a.Buckets = append(a.Buckets, a.From.Add(time.Duration(i)*width))
+	}
+	for _, row := range rows {
+		if a.Series[row.hazardType] == nil {
+			a.Series[row.hazardType] = make([]int, n)
+		}
+		a.Series[row.hazardType][min(int(row.occurred.Sub(lo)/width), n-1)]++
+		a.BySeverity[row.severity]++
+		a.ByArea[row.area]++
+	}
+	return a, nil
+}
+
 // Locate asks every replica of the hazard's partition. No locations with partial=true
 // means the answer is unknown (a replica that might hold it did not answer), not 404.
 func (r *Router) Locate(ctx context.Context, hazardID string) ([]Location, bool, error) {

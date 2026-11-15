@@ -103,6 +103,7 @@ func main() {
 
 	api := httpapi.NewServer(repository, manager, logger)
 	api.EnableAudit(repository, auditToken)
+	api.EnableAnalytics(repository)
 	server := &http.Server{
 		Addr:              ":" + port,
 		Handler:           api.Handler(),

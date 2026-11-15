@@ -21,6 +21,7 @@ type Server struct {
 	logger     *slog.Logger
 	audit      store.Store
 	auditToken string
+	analytics  analyzer
 }
 
 func NewServer(repository store.Repository, manager *ingest.Manager, logger *slog.Logger) *Server {
@@ -36,6 +37,11 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /internal/audit/events", s.requireAuditToken(s.auditEvents))
 		mux.HandleFunc("GET /internal/audit/checksum", s.requireAuditToken(s.auditChecksum))
 		mux.HandleFunc("GET /internal/audit/location", s.requireAuditToken(s.auditLocation))
+		mux.HandleFunc("POST /internal/admin/load", s.requireAuditToken(s.loadCatalog))
+	}
+	if s.analytics != nil {
+		mux.HandleFunc("GET /dashboard", s.dashboard)
+		mux.HandleFunc("GET /internal/analytics", s.analyticsData)
 	}
 	return s.withRequestLogging(mux)
 }

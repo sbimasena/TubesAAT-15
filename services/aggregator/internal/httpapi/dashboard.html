@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard Analitik BNPB</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root { --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --grid: #e4e3df;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
+    --warn-bg: #fff4d6; --crit-bg: #fbe1e1; }
+  @media (prefers-color-scheme: dark) { :root { --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --grid: #383835;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+    --warn-bg: #3d3210; --crit-bg: #4a1f1f; } }
+  body { margin: 0; padding: 16px; background: var(--surface); color: var(--ink); font: 14px/1.4 system-ui, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; display: grid; gap: 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; justify-content: space-between; }
+  h1 { font-size: 20px; margin: 0; } h2 { font-size: 15px; margin: 0 0 8px; }
+  .muted { color: var(--ink-2); }
+  #banner { display: none; padding: 10px 12px; border-radius: 6px; }
+  #banner.warn { display: block; background: var(--warn-bg); } #banner.crit { display: block; background: var(--crit-bg); }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .chart { position: relative; height: 300px; }
+  .total { font-size: 32px; font-weight: 600; }
+  table { border-collapse: collapse; } td, th { padding: 2px 12px 2px 0; text-align: left; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Dashboard Analitik Kejadian Bahaya</h1>
+    <label>Rentang
+      <select id="range">
+        <option value="24h">24 jam</option><option value="168h">7 hari</option>
+        <option value="720h">30 hari</option><option value="8760h">1 tahun</option>
+        <option value="all" selected>Semua</option>
+      </select>
+    </label>
+  </header>
+  <div id="banner" role="status"></div>
+  <section>
+    <div class="total" id="total">–</div>
+    <div class="muted" id="span"></div>
+    <div class="muted">Dengan rentang "Semua", total ini harus sama dengan <code>count</code> di <code>GET /internal/audit/checksum</code>.</div>
+  </section>
+  <section><h2>Kejadian per jenis bahaya terhadap waktu</h2><div class="chart"><canvas id="time" aria-label="Kejadian per jenis bahaya terhadap waktu"></canvas></div></section>
+  <div class="grid">
+    <section><h2>Per severity</h2><div class="chart"><canvas id="severity" aria-label="Kejadian per severity"></canvas></div></section>
+    <section><h2>15 area teratas</h2><div class="chart"><canvas id="area" aria-label="Kejadian per area"></canvas></div></section>
+  </div>
+  <details><summary>Tabel</summary><div class="grid" id="tables"></div></details>
+</main>
+<script>
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+// Color follows the hazard type, never its rank (fixed slots; unknown types take the next free slot).
+const slots = ["SEISMIC", "VOLCANIC", "COASTAL", "FIRE"];
+const colorOf = type => { if (!slots.includes(type)) slots.push(type); return css("--s" + Math.min(slots.indexOf(type) + 1, 8)); };
+const charts = {};
+function draw(id, config) {
+  if (charts[id]) { charts[id].destroy(); }
+  Chart.defaults.color = css("--ink-2");
+  Chart.defaults.borderColor = css("--grid");
+  charts[id] = new Chart(document.getElementById(id), config);
+}
+const fmt = new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short" });
+const sorted = obj => Object.entries(obj).sort((a, b) => b[1] - a[1]);
+const barOpts = horizontal => ({ maintainAspectRatio: false, indexAxis: horizontal ? "y" : "x", plugins: { legend: { display: false } },
+  scales: { [horizontal ? "x" : "y"]: { beginAtZero: true, ticks: { precision: 0 } }, [horizontal ? "y" : "x"]: { grid: { display: false } } } });
+const bar = (labels, data, horizontal) => ({ type: "bar", options: barOpts(horizontal),
+  data: { labels, datasets: [{ data, backgroundColor: css("--s1"), borderRadius: 4, maxBarThickness: 28 }] } });
+function table(title, rows) {
+  return `<table><caption class="muted">${title}</caption>` +
+    rows.map(([k, v]) => `<tr><td>${k || "(kosong)"}</td><td class="n">${v}</td></tr>`).join("") + "</table>";
+}
+async function load() {
+  const range = document.getElementById("range").value;
+  const query = range === "all" ? "" : "?from=" + new Date(Date.now() - parseInt(range) * 3600e3).toISOString();
+  const banner = document.getElementById("banner");
+  let a;
+  try {
+    const response = await fetch("/internal/analytics" + query);
+    if (!response.ok) { throw new Error("HTTP " + response.status); }
+    a = await response.json();
+  } catch (err) {
+    banner.className = "crit";
+    banner.textContent = "Data tidak dapat dimuat (" + err.message + "): tidak ada unit store yang menjawab.";
+    return;
+  }
+  const missing = a.unavailable_units.join(", ");
+  banner.className = a.partial ? "crit" : missing ? "warn" : "";
+  banner.textContent = a.partial
+    ? "⚠ Data belum lengkap: unit " + missing + " tidak terjangkau dan sebagian partisi tidak punya replika hidup. Angka di bawah lebih kecil dari sebenarnya."
+    : missing ? "ⓘ Unit " + missing + " tidak terjangkau; semua partisi tetap dilayani replika lain, jadi angka lengkap." : "";
+  document.getElementById("total").textContent = a.total.toLocaleString("id-ID") + " kejadian";
+  document.getElementById("span").textContent = fmt.format(new Date(a.from)) + " – " + fmt.format(new Date(a.to));
+  const types = Object.keys(a.series).sort((x, y) => slots.indexOf(x) - slots.indexOf(y));
+  draw("time", { type: "line", options: { maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+      plugins: { legend: { position: "top", align: "start" } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 } }, x: { grid: { display: false }, ticks: { maxTicksLimit: 8 } } } },
+    data: { labels: a.buckets.map(b => fmt.format(new Date(b))),
+      datasets: types.map(t => ({ label: t, data: a.series[t], borderColor: colorOf(t), backgroundColor: colorOf(t),
+        borderWidth: 2, pointRadius: 0, pointHoverRadius: 5, tension: 0.2 })) } });
+  const sev = sorted(a.by_severity), area = sorted(a.by_area).slice(0, 15);
+  draw("severity", bar(sev.map(r => r[0]), sev.map(r => r[1]), false));
+  draw("area", bar(area.map(r => r[0] || "(kosong)"), area.map(r => r[1]), true));
+  document.getElementById("tables").innerHTML =
+    table("Per jenis", types.map(t => [t, a.series[t].reduce((s, n) => s + n, 0)])) + table("Per severity", sev) + table("Per area", sorted(a.by_area));
+}
+document.getElementById("range").addEventListener("change", load);
+load();
+setInterval(load, 10000);
+</script>
+</body>
+</html>

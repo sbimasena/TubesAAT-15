@@ -178,6 +178,15 @@ func TestRouterReplication(t *testing.T) {
 	if sum, err := r.Checksum(ctx, "BMKG"); err != nil || sum.Count != 30 || sum.Checksum != wantSum {
 		t.Fatalf("checksum: %+v err=%v", sum, err)
 	}
+	// Dashboard counts each hazard once despite RF=2, so Total matches the checksum count.
+	if a, err := r.Analytics(ctx, time.Time{}, time.Time{}, 3); err != nil || a.Total != 30 || a.Partial ||
+		!slices.Equal(a.Series["SEISMIC"], []int{10, 10, 10}) || a.BySeverity["SIAGA"] != 30 || a.ByArea["Kalimantan Tengah"] != 30 {
+		t.Fatalf("analytics: %+v err=%v", a, err)
+	}
+	// occurred_at = base-60s+i; from base-59s drops only the first event.
+	if a, err := r.Analytics(ctx, base.Add(-59*time.Second), time.Time{}, 1); err != nil || a.Total != 29 {
+		t.Fatalf("analytics with from: total %d err=%v, want 29", a.Total, err)
+	}
 	if list, err := r.List(ctx, Filter{Limit: 5}, "router-list"); err != nil || len(list) != 5 || list[0].HazardID != events[29].HazardID {
 		t.Fatalf("list: %v err=%v", list, err)
 	}

@@ -355,6 +355,24 @@ func (r *PostgresRepository) refIDs(ctx context.Context, source string, parts []
 	})
 }
 
+type analyticRow struct {
+	hazardID, hazardType, severity, area string
+	occurred                             time.Time
+}
+
+func (r *PostgresRepository) analyticRows(ctx context.Context, from, to time.Time, parts []int32) ([]analyticRow, error) {
+	rows, err := r.pool.Query(ctx, `SELECT hazard_id, hazard_type, severity, area_name, occurred_at FROM hazard_events
+		WHERE partition_id = ANY($3::int[]) AND occurred_at >= $1 AND occurred_at < $2`, from, to, parts)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (analyticRow, error) {
+		var a analyticRow
+		err := row.Scan(&a.hazardID, &a.hazardType, &a.severity, &a.area, &a.occurred)
+		return a, err
+	})
+}
+
 func checksumOf(source string, ids []string, asOf time.Time) ChecksumResult {
 	sort.Strings(ids)
 	digest := sha256.Sum256([]byte(strings.Join(ids, "\n")))

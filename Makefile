@@ -12,7 +12,7 @@ endif
 SH = "$(BASH)"
 
 .DEFAULT_GOAL := help
-.PHONY: help dev-up dev-down deploy status logs tester-list tester open reset p1-checksum p1-distribution
+.PHONY: help dev-up dev-down deploy status logs tester-list tester open reset p1-checksum p1-distribution p1-load p1-surge p1-wipe-node p1-dashboard
 
 help: ## Daftar target
 	@$(SH) scripts/k8s/help.sh Makefile
@@ -46,6 +46,18 @@ p1-checksum: ## Checksum Audit API per sumber dan semua sumber
 
 p1-distribution: ## Sebaran data (rows, partisi) per unit store/node
 	@$(SH) scripts/k8s/ops.sh p1-distribution
+
+p1-dashboard: ## Port-forward dan buka dashboard analitik P1
+	@$(SH) scripts/k8s/ops.sh p1-dashboard
+
+p1-wipe-node: ## Checksum awal lalu Tester Agent wipe-node (P1.4)
+	@$(SH) scripts/k8s/ops.sh p1-wipe-node
+
+p1-load: ## Muat katalog gempa + ukur tulis per unit: make p1-load FILE=katalog.ndjson
+	@$(SH) scripts/k8s/ops.sh p1-load "$(FILE)"
+
+p1-surge: ## Lonjakan gempa satu wilayah + ukur tulis per unit: make p1-surge N=3000 REGION="Sulawesi Tengah"
+	@$(SH) scripts/k8s/ops.sh p1-surge "$(or $(N),3000)" "$(or $(REGION),Sulawesi Tengah)"
 
 reset: ## Kembalikan manifest (replika, image) dan mode mock PVMBG ke normal
 	@$(SH) scripts/k8s/ops.sh reset

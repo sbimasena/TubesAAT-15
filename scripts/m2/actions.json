@@ -11,6 +11,10 @@
     {"id": "open", "group": "Umum", "label": "Buka UI (port-forward)", "make": "open", "destructive": false},
     {"id": "p1-checksum", "group": "P1", "label": "Checksum Audit API semua sumber", "make": "p1-checksum", "destructive": false},
     {"id": "p1-distribution", "group": "P1", "label": "Sebaran data per node/unit", "make": "p1-distribution", "destructive": false},
+    {"id": "p1-dashboard", "group": "P1", "label": "Buka dashboard analitik", "make": "p1-dashboard", "destructive": false},
+    {"id": "p1-wipe-node", "group": "P1", "label": "Checksum awal + Tester Agent wipe-node", "make": "p1-wipe-node", "destructive": true},
+    {"id": "p1-load", "group": "P1", "label": "Muat katalog gempa + ukur beban per unit", "make": "p1-load", "params": ["FILE"], "destructive": false},
+    {"id": "p1-surge", "group": "P1", "label": "Lonjakan gempa satu wilayah + ukur beban per unit", "make": "p1-surge", "params": ["N", "REGION"], "destructive": false},
     {"id": "reset", "group": "Reset", "label": "Kembalikan sistem ke normal", "make": "reset", "destructive": false}
   ]
 }

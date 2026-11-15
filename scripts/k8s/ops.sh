@@ -88,6 +88,70 @@ SQL
     run kubectl -n "$NS" get configmap store-partition-map -o 'jsonpath={.data.map\.json}'
     echo
     ;;
+  p1-dashboard)
+    forward svc/aggregator 18083:8083
+    echo "Dashboard analitik: http://127.0.0.1:18083/dashboard (Ctrl+C untuk menutup)"
+    wait
+    ;;
+  p1-wipe-node)
+    # P1.4: record the checksum first; the node only comes back after a manual power-on.
+    bash "$0" p1-checksum
+    bash "$0" tester wipe-node
+    echo "Setelah node kembali Ready: make p1-distribution lalu make p1-checksum; count dan checksum harus sama dengan di atas."
+    ;;
+  p1-load|p1-surge)
+    # Load a catalog (P1.1) or a one-region surge (P1.2) and measure the writes each store
+    # unit absorbed; with hash(hazard_id) placement the deltas stay even despite skewed data.
+    work="$(mktemp -d)"
+    if [[ "$1" == p1-load ]]; then
+      [[ -f "${2:-}" ]] || die "usage: make p1-load FILE=<catalog.ndjson|catalog.json> (field BMKG: event_id, region_name, epicenter_lat, epicenter_lon, magnitude, depth_km, occurred_at)"
+      if [[ "$(head -c 200 "$2" | tr -d ' \t\r\n' | head -c 1)" == "[" ]]; then
+        need jq
+        jq -c '.[]' "$2" >"$work/events"
+      else
+        cp "$2" "$work/events"
+      fi
+    else
+      # Synthetic aftershock swarm around one epicentre (default Palu, Sulawesi Tengah).
+      awk -v n="${2:-3000}" -v region="${3:-Sulawesi Tengah}" -v id="SURGE-$(date -u +%s)" -v now="$(date -u +%s)" 'BEGIN {
+        srand()
+        for (i = 0; i < n; i++)
+          printf "{\"event_id\":\"%s-%d\",\"region_name\":\"%s\",\"epicenter_lat\":%.3f,\"epicenter_lon\":%.3f,\"magnitude\":%.1f,\"depth_km\":%.0f,\"occurred_at\":\"%s\"}\n",
+            id, i, region, -0.9 + rand() - 0.5, 119.8 + rand() - 0.5, 2.5 + rand() * 2.5, 5 + rand() * 30, strftime("%Y-%m-%dT%H:%M:%SZ", now - (n - i), 1)
+      }' >"$work/events"
+    fi
+    mkdir -p "$ROOT/artifacts/m2/runs"
+    log="$ROOT/artifacts/m2/runs/$(date -u +%Y%m%dT%H%M%SZ)-$1.log"
+    exec > >(tee "$log") 2>&1
+    stats() {
+      for pod in $(kubectl -n "$NS" get pods -l app=store -o name); do
+        printf '%s|' "${pod#pod/}"
+        kubectl -n "$NS" exec -i "$pod" -c postgres -- sh -c 'psql -qAt -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL' || echo "-|0|0"
+SELECT coalesce(current_setting('bnpb.node_name', true), '?'), tup_inserted + tup_updated, (SELECT count(*) FROM hazard_events)
+FROM pg_stat_database WHERE datname = current_database();
+SQL
+      done | sort
+    }
+    token="$(secret_value audit-token token)"
+    forward svc/aggregator 18083:8083
+    stats >"$work/before"
+    (while :; do kubectl -n "$NS" top pod -l app=store --no-headers 2>/dev/null | sed "s/^/$(date -u +%T) top /"; sleep 5; done) &
+    FORWARDS+=("$!")
+    split -l "${CHUNK:-500}" "$work/events" "$work/chunk."
+    echo "memuat $(wc -l <"$work/events") event dalam potongan ${CHUNK:-500}"
+    started=$(date +%s)
+    for chunk in "$work"/chunk.*; do
+      curl -fsS -X POST http://127.0.0.1:18083/internal/admin/load -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/x-ndjson" --data-binary "@$chunk" -w " http_s=%{time_total}\n" \
+        || die "potongan $chunk gagal; muat ulang aman (upsert idempoten per event_id)"
+    done
+    echo "selesai dalam $(($(date +%s) - started)) s"
+    stats >"$work/after"
+    echo "unit | node | tulis (tup_inserted+updated) selama run | rows sesudah"
+    join -t'|' "$work/before" "$work/after" | awk -F'|' '{ printf "%s | %s | %d | %d\n", $1, $5, $6 - $3, $7 }'
+    echo "log: $log"
+    rm -rf "$work"
+    ;;
   *)
     die "unknown command '${1:-}'; see make help"
     ;;

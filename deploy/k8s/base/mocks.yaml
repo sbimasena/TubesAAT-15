@@ -12,6 +12,7 @@ spec:
     metadata:
       labels: {app: bmkg, role: mock}
     spec:
+      enableServiceLinks: false # Service "bmkg"/"pvmbg" would inject BMKG_PORT=tcp://..., clobbering the listen port
       containers:
         - name: bmkg
           image: bnpb/bmkg
@@ -50,6 +51,7 @@ spec:
     metadata:
       labels: {app: pvmbg, role: mock}
     spec:
+      enableServiceLinks: false # Service "bmkg"/"pvmbg" would inject BMKG_PORT=tcp://..., clobbering the listen port
       containers:
         - name: pvmbg
           image: bnpb/pvmbg

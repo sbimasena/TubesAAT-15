@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
-	"strconv"
 	"testing"
 	"time"
 
@@ -114,7 +113,7 @@ func TestOutboxPublisher(t *testing.T) {
 			if err := json.Unmarshal(delivery.Body, &body); err != nil {
 				t.Fatal(err)
 			}
-			if delivery.MessageId != strconv.FormatInt(message.MessageID, 10) || body.HazardID != event.HazardID ||
+			if delivery.MessageId != messageID(message) || body.HazardID != event.HazardID ||
 				delivery.CorrelationId != schema || delivery.Headers["X-Correlation-ID"] != schema ||
 				delivery.Headers["schema_version"] != int32(1) || delivery.Headers["hazard_revision"] != int64(1) || delivery.DeliveryMode != 2 {
 				t.Fatal("persistent message body/identity/correlation/revision mismatch")

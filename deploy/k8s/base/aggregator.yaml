@@ -38,8 +38,10 @@ spec:
             - name: RABBITMQ_DEFAULT_PASS
               valueFrom: {secretKeyRef: {name: broker-credentials, key: RABBITMQ_DEFAULT_PASS}}
             # Credentials must be URL-safe (no @ : / ? #); deploy.sh rejects unsafe values.
+            # One URL per store unit; the unit name is the first label of the host (D-P1).
             - name: DATABASE_URL
-              value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@store-0.store:5432/$(POSTGRES_DB)?sslmode=disable
+              value: >-
+                postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@store-0.store:5432/$(POSTGRES_DB)?sslmode=disable,postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@store-1.store:5432/$(POSTGRES_DB)?sslmode=disable,postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@store-2.store:5432/$(POSTGRES_DB)?sslmode=disable
             - name: BROKER_URL
               value: amqp://$(RABBITMQ_DEFAULT_USER):$(RABBITMQ_DEFAULT_PASS)@rabbitmq:5672/
             - name: POD_NAME

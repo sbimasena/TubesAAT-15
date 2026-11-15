@@ -31,6 +31,7 @@ type migration struct {
 var migrations = []migration{
 	{version: 1, file: "migrations/001_canonical.sql"},
 	{version: 2, file: "migrations/002_m2.sql", after: backfillPartitions},
+	{version: 3, file: "migrations/003_cursor_seq.sql"},
 }
 
 // migrationLockID serialises migrations when several Aggregator replicas start together.
@@ -38,46 +39,43 @@ const migrationLockID = 4031_0002
 
 const operationTimeout = 3 * time.Second
 
-var (
-	_ Store      = (*PostgresRepository)(nil)
-	_ Repository = (*PostgresRepository)(nil)
-)
-
-// PostgresRepository is a single storage unit. Until the partition router lands it
-// serves as the whole Store: every partition lives here with this unit as primary.
+// PostgresRepository is one storage unit (one store-N pod). The Router spreads
+// partitions over units; reads here are scoped to the partitions the caller names.
 type PostgresRepository struct {
-	pool     *pgxpool.Pool
-	logger   *slog.Logger
-	identity Location
+	pool   *pgxpool.Pool
+	logger *slog.Logger
 }
 
-func OpenPostgres(ctx context.Context, databaseURL string, logger *slog.Logger) (*PostgresRepository, error) {
+// newUnit creates the pool without connecting, so a dead unit never blocks startup.
+func newUnit(databaseURL string, logger *slog.Logger) (*PostgresRepository, error) {
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, errors.New("invalid DATABASE_URL configuration")
 	}
 	config.MaxConns = 8
 	config.ConnConfig.ConnectTimeout = operationTimeout
-	pool, err := pgxpool.NewWithConfig(ctx, config)
+	pool, err := pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
 		return nil, fmt.Errorf("create canonical connection pool: %w", err)
 	}
-	repo := &PostgresRepository{pool: pool, logger: logger,
-		identity: Location{Unit: "store-0", Role: "primary"}}
+	return &PostgresRepository{pool: pool, logger: logger}, nil
+}
+
+// OpenPostgres opens one unit and migrates it before returning.
+func OpenPostgres(ctx context.Context, databaseURL string, logger *slog.Logger) (*PostgresRepository, error) {
+	repo, err := newUnit(databaseURL, logger)
+	if err != nil {
+		return nil, err
+	}
 	if err := repo.Ping(ctx); err != nil {
-		pool.Close()
+		repo.Close()
 		return nil, fmt.Errorf("connect canonical store: %w", err)
 	}
 	if err := repo.migrate(ctx); err != nil {
-		pool.Close()
+		repo.Close()
 		return nil, fmt.Errorf("migrate canonical store: %w", err)
 	}
 	return repo, nil
-}
-
-// SetIdentity names this unit and the Kubernetes node it runs on, as reported by Locate.
-func (r *PostgresRepository) SetIdentity(unit, node string) {
-	r.identity.Unit, r.identity.Node = unit, node
 }
 
 func (r *PostgresRepository) Close() { r.pool.Close() }
@@ -277,19 +275,16 @@ func clampLimit(limit int) int {
 	return limit
 }
 
-func (r *PostgresRepository) List(ctx context.Context, filter Filter, correlationID string) (events []domain.HazardEvent, err error) {
-	started := time.Now()
-	defer func() { r.logCall("canonical-list", correlationID, started, err) }()
-	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
-	defer cancel()
+// listParts serves the M1 read API: newest occurred_at first.
+func (r *PostgresRepository) listParts(ctx context.Context, filter Filter, parts []int32) ([]domain.HazardEvent, error) {
 	var since *time.Time
 	if !filter.Since.IsZero() {
 		since = &filter.Since
 	}
 	rows, err := r.pool.Query(ctx, `SELECT `+eventColumns+` FROM hazard_events
-		WHERE ($1 = '' OR source = $1) AND ($2 = '' OR hazard_type = $2)
+		WHERE partition_id = ANY($5::int[]) AND ($1 = '' OR source = $1) AND ($2 = '' OR hazard_type = $2)
 		AND ($3::timestamptz IS NULL OR occurred_at >= $3)
-		ORDER BY occurred_at DESC, hazard_id LIMIT $4`, filter.Source, filter.HazardType, since, clampLimit(filter.Limit))
+		ORDER BY occurred_at DESC, hazard_id LIMIT $4`, filter.Source, filter.HazardType, since, clampLimit(filter.Limit), parts)
 	if err != nil {
 		return nil, err
 	}
@@ -319,14 +314,8 @@ func decodeCursor(value string) (*pageCursor, error) {
 	return &c, nil
 }
 
-// Query pages through events in Audit API order: ingested_at ascending, then hazard_id.
-func (r *PostgresRepository) Query(ctx context.Context, filter Filter, cursor string) (Page, error) {
-	after, err := decodeCursor(cursor)
-	if err != nil {
-		return Page{}, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
-	defer cancel()
+// queryParts returns up to limit events in Audit API order (ingested_at, hazard_id) after the cursor.
+func (r *PostgresRepository) queryParts(ctx context.Context, filter Filter, after *pageCursor, parts []int32, limit int) ([]domain.HazardEvent, error) {
 	var since, afterTime *time.Time
 	var afterID string
 	if !filter.IngestedSince.IsZero() {
@@ -335,44 +324,35 @@ func (r *PostgresRepository) Query(ctx context.Context, filter Filter, cursor st
 	if after != nil {
 		afterTime, afterID = &after.IngestedAt, after.HazardID
 	}
-	limit := clampLimit(filter.Limit)
 	rows, err := r.pool.Query(ctx, `SELECT `+eventColumns+` FROM hazard_events
-		WHERE ($1 = '' OR source = $1) AND ($2 = '' OR hazard_type = $2)
+		WHERE partition_id = ANY($7::int[]) AND ($1 = '' OR source = $1) AND ($2 = '' OR hazard_type = $2)
 		AND ($3::timestamptz IS NULL OR ingested_at >= $3)
 		AND ($4::timestamptz IS NULL OR (ingested_at, hazard_id) > ($4, $5))
 		ORDER BY ingested_at, hazard_id LIMIT $6`,
-		filter.Source, filter.HazardType, since, afterTime, afterID, limit+1)
+		filter.Source, filter.HazardType, since, afterTime, afterID, limit, parts)
 	if err != nil {
-		return Page{}, err
+		return nil, err
 	}
-	events, err := scanEvents(rows)
-	if err != nil {
-		return Page{}, err
-	}
-	page := Page{Items: events, UnavailableUnits: []string{}}
-	if len(events) > limit {
-		page.Items = events[:limit]
-		last := page.Items[limit-1]
-		next := encodeCursor(pageCursor{IngestedAt: last.IngestedAt, HazardID: last.HazardID})
-		page.NextCursor = &next
-	}
-	return page, nil
+	return scanEvents(rows)
 }
 
-// Checksum follows kontrak-m2.md §7.3; an empty source covers every source.
-func (r *PostgresRepository) Checksum(ctx context.Context, source string) (ChecksumResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
-	defer cancel()
-	asOf := time.Now().UTC()
-	rows, err := r.pool.Query(ctx, "SELECT source_ref_id FROM hazard_events WHERE ($1 = '' OR source = $1)", source)
+type partRef struct {
+	hazardID string
+	ref      string
+}
+
+// refIDs feeds the checksum (kontrak-m2.md §7.3); an empty source covers every source.
+func (r *PostgresRepository) refIDs(ctx context.Context, source string, parts []int32) ([]partRef, error) {
+	rows, err := r.pool.Query(ctx, `SELECT hazard_id, source_ref_id FROM hazard_events
+		WHERE partition_id = ANY($2::int[]) AND ($1 = '' OR source = $1)`, source, parts)
 	if err != nil {
-		return ChecksumResult{}, err
+		return nil, err
 	}
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil {
-		return ChecksumResult{}, err
-	}
-	return checksumOf(source, ids, asOf), nil
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (partRef, error) {
+		var p partRef
+		err := row.Scan(&p.hazardID, &p.ref)
+		return p, err
+	})
 }
 
 func checksumOf(source string, ids []string, asOf time.Time) ChecksumResult {
@@ -382,23 +362,15 @@ func checksumOf(source string, ids []string, asOf time.Time) ChecksumResult {
 		AsOf: asOf, UnavailableUnits: []string{}}
 }
 
-func (r *PostgresRepository) Locate(ctx context.Context, hazardID string) ([]Location, bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
-	defer cancel()
-	var exists bool
-	if err := r.pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM hazard_events WHERE hazard_id = $1)",
-		hazardID).Scan(&exists); err != nil {
-		return nil, false, err
-	}
-	if !exists {
-		return nil, false, nil
-	}
-	return []Location{r.identity}, false, nil
+// locate reports whether this unit holds hazardID and the node it runs on
+// (bnpb.node_name is set from the Downward API in deploy/k8s/base/store.yaml).
+func (r *PostgresRepository) locate(ctx context.Context, hazardID string) (exists bool, node string, err error) {
+	err = r.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM hazard_events WHERE hazard_id = $1),
+		coalesce(current_setting('bnpb.node_name', true), '')`, hazardID).Scan(&exists, &node)
+	return exists, node, err
 }
 
-func (r *PostgresRepository) SaveCursor(ctx context.Context, epoch int64, source, cursor string) error {
-	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
-	defer cancel()
+func (r *PostgresRepository) saveCursor(ctx context.Context, epoch, seq int64, source, cursor string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -407,23 +379,27 @@ func (r *PostgresRepository) SaveCursor(ctx context.Context, epoch int64, source
 	if err := checkFence(ctx, tx, epoch); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO ingest_cursor (source, cursor_value, epoch) VALUES ($1, $2, $3)
+	if _, err := tx.Exec(ctx, `INSERT INTO ingest_cursor (source, cursor_value, epoch, seq) VALUES ($1, $2, $3, $4)
 		ON CONFLICT (source) DO UPDATE SET cursor_value = EXCLUDED.cursor_value,
-		epoch = EXCLUDED.epoch, updated_at = CURRENT_TIMESTAMP`, source, cursor, epoch); err != nil {
+		epoch = EXCLUDED.epoch, seq = EXCLUDED.seq, updated_at = CURRENT_TIMESTAMP`, source, cursor, epoch, seq); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-func (r *PostgresRepository) LoadCursor(ctx context.Context, source string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
-	defer cancel()
-	var cursor string
-	err := r.pool.QueryRow(ctx, "SELECT cursor_value FROM ingest_cursor WHERE source = $1", source).Scan(&cursor)
+type savedCursor struct {
+	value      string
+	epoch, seq int64
+}
+
+// loadCursor returns found=false when no cursor has been saved for source on this unit.
+func (r *PostgresRepository) loadCursor(ctx context.Context, source string) (c savedCursor, found bool, err error) {
+	err = r.pool.QueryRow(ctx, "SELECT cursor_value, epoch, seq FROM ingest_cursor WHERE source = $1", source).
+		Scan(&c.value, &c.epoch, &c.seq)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
+		return c, false, nil
 	}
-	return cursor, err
+	return c, err == nil, err
 }
 
 func (r *PostgresRepository) logCall(operation, correlationID string, started time.Time, err error) {

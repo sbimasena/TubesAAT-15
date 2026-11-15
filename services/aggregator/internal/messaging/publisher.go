@@ -2,11 +2,12 @@ package messaging
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
-	"strconv"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -76,7 +77,7 @@ func (p *publisher) publish(ctx context.Context, message store.OutboxMessage) er
 	defer abort()
 	confirmation, err := p.channel.PublishWithDeferredConfirmWithContext(ctx, p.exchange, "", true, false, amqp.Publishing{
 		ContentType: "application/json", DeliveryMode: amqp.Persistent,
-		MessageId: strconv.FormatInt(message.MessageID, 10), CorrelationId: message.CorrelationID,
+		MessageId: messageID(message), CorrelationId: message.CorrelationID,
 		Timestamp: message.CreatedAt, Type: "HazardEvent", Body: message.Payload,
 		Headers: amqp.Table{"X-Correlation-ID": message.CorrelationID, "schema_version": int32(1), "hazard_revision": message.Revision},
 	})
@@ -101,7 +102,20 @@ func (p *publisher) publish(ctx context.Context, message store.OutboxMessage) er
 
 // Run uses one worker per Aggregator instance. ponytail: M1 runs one replica;
 // add row leases before deploying multiple publishers to avoid unnecessary duplicates.
-func Run(ctx context.Context, repository *store.PostgresRepository, brokerURL, exchange string, logger *slog.Logger) {
+// messageID is the consumer dedup key. Every store replica queues its own copy and
+// revisions can diverge between copies, so it comes from the content: same snapshot,
+// same ID on every unit; new content, new ID.
+func messageID(message store.OutboxMessage) string {
+	digest := sha256.Sum256(message.Payload)
+	return message.HazardID + ":" + hex.EncodeToString(digest[:8])
+}
+
+type outbox interface {
+	PendingOutbox(context.Context) ([]store.OutboxMessage, error)
+	MarkPublished(context.Context, store.OutboxMessage) error
+}
+
+func Run(ctx context.Context, repository outbox, brokerURL, exchange string, logger *slog.Logger) {
 	var p *publisher
 	defer func() {
 		if p != nil {
@@ -128,7 +142,7 @@ func Run(ctx context.Context, repository *store.PostgresRepository, brokerURL, e
 					started := time.Now()
 					err := p.publish(ctx, message)
 					if err == nil {
-						err = repository.MarkPublished(ctx, message.MessageID)
+						err = repository.MarkPublished(ctx, message)
 					}
 					attrs := []any{"service", "aggregator", "target", "message-broker", "message_id", message.MessageID,
 						"hazard_id", message.HazardID, "hazard_revision", message.Revision, "correlation_id", message.CorrelationID,

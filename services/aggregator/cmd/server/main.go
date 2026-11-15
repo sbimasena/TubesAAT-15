@@ -60,14 +60,21 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	startupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	repository, err := store.OpenPostgres(startupCtx, requiredEnv(logger, "DATABASE_URL"), logger)
-	cancel()
+	repository, err := store.OpenRouter(requiredEnv(logger, "DATABASE_URL"), logger)
 	if err != nil {
 		logger.Error("canonical store initialization failed", "error", err)
 		os.Exit(1)
 	}
 	defer repository.Close()
+	// Best effort: a dead unit must not keep the Aggregator down; Run keeps retrying it.
+	startupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	repository.CheckUnits(startupCtx)
+	cancel()
+	routerDone := make(chan struct{})
+	go func() {
+		defer close(routerDone)
+		repository.Run(ctx)
+	}()
 	bmkg := source.NewBMKGClient(bmkgBaseURL, bmkgKey, logger)
 	pvmbg := source.NewPVMBGClient(pvmbgBaseURL, pvmbgToken, logger)
 	manager := ingest.NewManager(bmkg, pvmbg, repository, interval, logger)
@@ -108,6 +115,7 @@ func main() {
 	stop()
 	<-pollersDone
 	<-publisherDone
+	<-routerDone
 }
 
 // inspect lets local Docker operators read the running API without publishing a host port.

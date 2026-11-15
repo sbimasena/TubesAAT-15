@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -56,8 +55,8 @@ func integer(value any) int64 {
 func decode(delivery amqp.Delivery) (record, error) {
 	r := record{MessageID: delivery.MessageId, Revision: integer(delivery.Headers["hazard_revision"]),
 		CorrelationID: delivery.CorrelationId, Payload: delivery.Body, ReceivedAt: time.Now().UTC()}
-	id, err := strconv.ParseInt(r.MessageID, 10, 64)
-	if err != nil || id <= 0 || len(r.CorrelationID) == 0 || len(r.CorrelationID) > 128 ||
+	// MessageId is hazard_id:<payload hash>, identical across store replicas (dedup key).
+	if r.MessageID == "" || len(r.MessageID) > 256 || len(r.CorrelationID) == 0 || len(r.CorrelationID) > 128 ||
 		delivery.Headers["X-Correlation-ID"] != r.CorrelationID || integer(delivery.Headers["schema_version"]) != 1 ||
 		r.Revision <= 0 || delivery.ContentType != "application/json" || len(r.Payload) > maxBody {
 		return r, errors.New("invalid HazardEvent metadata")

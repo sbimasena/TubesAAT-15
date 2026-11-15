@@ -43,6 +43,10 @@ func TestPostgresRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repo.Close()
+	router, err := newRouter([]string{"store-0"}, []*PostgresRepository{repo}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	occurred := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
 	seismic := domain.MapSeismic(domain.SeismicEvent{EventID: "seismic-1", RegionName: "Test Area",
 		Magnitude: 5.5, EpicenterLat: -7, EpicenterLon: 110, OccurredAt: occurred}, nil, occurred)
@@ -99,7 +103,7 @@ func TestPostgresRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	upsert([]domain.HazardEvent{v2}, "test-schema-v2", 1)
-	rows, err := repo.List(ctx, Filter{Source: "PVMBG", HazardType: "VOLCANIC", Limit: 10}, "test-read")
+	rows, err := router.List(ctx, Filter{Source: "PVMBG", HazardType: "VOLCANIC", Limit: 10}, "test-read")
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("read v1+v2 together: rows=%d err=%v", len(rows), err)
 	}
@@ -109,7 +113,7 @@ func TestPostgresRepository(t *testing.T) {
 	if _, exists := rows[1].Attributes["confidence_level"]; exists {
 		t.Fatal("old record must not invent a confidence_level")
 	}
-	filtered, err := repo.List(ctx, Filter{Since: occurred.Add(time.Minute), Limit: 1}, "test-filter")
+	filtered, err := router.List(ctx, Filter{Since: occurred.Add(time.Minute), Limit: 1}, "test-filter")
 	if err != nil || len(filtered) != 1 || filtered[0].HazardID != v2.HazardID {
 		t.Fatal("since, ordering, or limit filter is incorrect", err)
 	}

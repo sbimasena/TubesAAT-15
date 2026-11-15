@@ -9,6 +9,7 @@
     {"id": "tester-list", "group": "Umum", "label": "Daftar skenario Tester Agent", "make": "tester-list", "destructive": false},
     {"id": "tester", "group": "Umum", "label": "Jalankan skenario latihan Tester Agent", "make": "tester", "params": ["S"], "destructive": true},
     {"id": "open", "group": "Umum", "label": "Buka UI (port-forward)", "make": "open", "destructive": false},
+    {"id": "obs-open", "group": "Umum", "label": "Buka Grafana + Jaeger (port-forward)", "make": "obs-open", "destructive": false},
     {"id": "p1-checksum", "group": "P1", "label": "Checksum Audit API semua sumber", "make": "p1-checksum", "destructive": false},
     {"id": "p1-distribution", "group": "P1", "label": "Sebaran data per node/unit", "make": "p1-distribution", "destructive": false},
     {"id": "p1-dashboard", "group": "P1", "label": "Buka dashboard analitik", "make": "p1-dashboard", "destructive": false},

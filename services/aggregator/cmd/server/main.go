@@ -15,11 +15,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/httpapi"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/ingest"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/messaging"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/source"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/store"
+	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/telemetry"
 )
 
 func main() {
@@ -61,6 +64,12 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	shutdownTracing := telemetry.Setup(ctx, "aggregator", logger)
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTracing(flushCtx)
+	}()
 	repository, err := store.OpenRouter(requiredEnv(logger, "DATABASE_URL"), logger)
 	if err != nil {
 		logger.Error("canonical store initialization failed", "error", err)
@@ -76,6 +85,7 @@ func main() {
 		os.Exit(1)
 	}
 	cancel()
+	registerStoreMetrics(repository)
 	routerDone := make(chan struct{})
 	go func() {
 		defer close(routerDone)
@@ -131,6 +141,33 @@ func main() {
 	<-publisherDone
 	<-routerDone
 	<-reconcilerDone
+}
+
+// registerStoreMetrics exposes P1 placement per unit for the Grafana Overview.
+func registerStoreMetrics(r *store.Router) {
+	for _, unit := range r.UnitStats() {
+		name := unit.Name
+		stat := func() store.UnitStat {
+			for _, s := range r.UnitStats() {
+				if s.Name == name {
+					return s
+				}
+			}
+			return store.UnitStat{}
+		}
+		labels := prometheus.Labels{"unit": name}
+		promauto.NewGaugeFunc(prometheus.GaugeOpts{Name: "bnpb_store_partitions", ConstLabels: labels,
+			Help: "Replica slots the partition map assigns to the unit (16 each when 3 units are balanced)."},
+			func() float64 { return float64(stat().Partitions) })
+		promauto.NewGaugeFunc(prometheus.GaugeOpts{Name: "bnpb_store_unit_up", ConstLabels: labels,
+			Help: "1 when the unit answered a health check in the last 15 s."},
+			func() float64 {
+				if stat().Up {
+					return 1
+				}
+				return 0
+			})
+	}
 }
 
 // inspect lets local Docker operators read the running API without publishing a host port.

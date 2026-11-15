@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  # Any app pod labelled bnpb/scrape: "true" is scraped on its container port named
+  # "http" at /metrics. A service opts in with that label; no change here is needed.
+  - job_name: bnpb
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces: {names: [sistem-informasi-kebencanaan-bnpb]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_bnpb_scrape]
+        regex: "true"
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        regex: http
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        target_label: service
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        target_label: node

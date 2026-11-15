@@ -66,6 +66,15 @@ case "${1:-}" in
       echo
     done
     ;;
+  obs-open)
+    # Metrics dashboard and traces (context-m2.md §8.1); the analytics dashboard is p1-dashboard.
+    NS=observability forward svc/grafana 3000:3000
+    NS=observability forward svc/jaeger 16686:16686
+    echo "Grafana (BNPB Overview): http://127.0.0.1:3000"
+    echo "Jaeger (trace per request, cari service aggregator): http://127.0.0.1:16686"
+    echo "Press Ctrl+C to close the port-forwards."
+    wait
+    ;;
   p1-checksum)
     # Audit API checksum per source and over all sources (kontrak-m2.md §7.3).
     token="$(secret_value audit-token token)"

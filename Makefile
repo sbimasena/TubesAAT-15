@@ -12,7 +12,7 @@ endif
 SH = "$(BASH)"
 
 .DEFAULT_GOAL := help
-.PHONY: help dev-up dev-down deploy status logs tester-list tester open reset p1-checksum p1-distribution p1-load p1-surge p1-wipe-node p1-dashboard p1-amnesia p1-audit p1-netpol
+.PHONY: help dev-up dev-down deploy status logs tester-list tester open reset p1-checksum p1-distribution p1-load p1-surge p1-wipe-node p1-dashboard p1-amnesia p1-audit p1-netpol obs-open
 
 help: ## Daftar target
 	@$(SH) scripts/k8s/help.sh Makefile
@@ -40,6 +40,9 @@ tester: ## Jalankan skenario latihan Tester Agent + log: make tester S=kill-stor
 
 open: ## Port-forward RabbitMQ UI dan tampilkan URL layanan
 	@$(SH) scripts/k8s/ops.sh open
+
+obs-open: ## Port-forward Grafana (metrik) dan Jaeger (trace)
+	@$(SH) scripts/k8s/ops.sh obs-open
 
 p1-checksum: ## Checksum Audit API per sumber dan semua sumber
 	@$(SH) scripts/k8s/ops.sh p1-checksum

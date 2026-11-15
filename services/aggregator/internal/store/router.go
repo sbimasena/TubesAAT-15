@@ -15,7 +15,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/domain"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var tracer = otel.Tracer("aggregator/store")
 
 // ReplicationFactor is fixed by D-P1: with 3 units each holds 2/3 of the data.
 const ReplicationFactor = 2
@@ -162,6 +167,23 @@ func (r *Router) check(ctx context.Context, u *unit) {
 	}
 }
 
+// UnitStat is one store unit's state for the metrics endpoint.
+type UnitStat struct {
+	Name       string
+	Partitions int  // replica slots the partition map gives it (16 of 48 when balanced)
+	Up         bool // answered a health check within the last 15 s (checks run every 5 s)
+}
+
+func (r *Router) UnitStats() []UnitStat {
+	load := r.current().m.load()
+	stats := make([]UnitStat, len(r.units))
+	for i, u := range r.units {
+		stats[i] = UnitStat{Name: u.name, Partitions: load[u.name],
+			Up: time.Since(time.Unix(0, u.lastSeen.Load())) < 15*time.Second}
+	}
+	return stats
+}
+
 func (r *Router) log(level slog.Level, msg string, attrs ...any) {
 	if r.logger != nil {
 		r.logger.Log(context.Background(), level, msg, append([]any{"service", "aggregator"}, attrs...)...)
@@ -178,11 +200,24 @@ type result[T any] struct {
 func gather[T any](ctx context.Context, units []*unit, timeout time.Duration, fn func(context.Context, *unit) (T, error)) []result[T] {
 	results := make([]result[T], len(units))
 	var wg sync.WaitGroup
+	// A span per unit only inside a traced request: the reconciler's background passes
+	// would otherwise flood Jaeger with root traces every 10 s.
+	traced := trace.SpanFromContext(ctx).SpanContext().IsValid()
 	for i, u := range units {
 		wg.Go(func() {
 			ctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
+			var span trace.Span
+			if traced {
+				ctx, span = tracer.Start(ctx, "store "+u.name)
+			}
 			value, err := fn(ctx, u)
+			if span != nil {
+				if err != nil {
+					span.SetStatus(codes.Error, err.Error())
+				}
+				span.End()
+			}
 			results[i] = result[T]{unit: u, value: value, err: err}
 		})
 	}

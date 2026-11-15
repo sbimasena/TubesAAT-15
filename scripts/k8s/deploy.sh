@@ -118,9 +118,13 @@ mkdir -p "$GENERATED"
 
 run kubectl apply -k "$GENERATED"
 run kubectl apply -f "$TESTER_MANIFEST"
+run kubectl apply -k "$ROOT/deploy/k8s/observability"
 
 for workload in $(kubectl -n "$NS" get deployment,statefulset -o name); do
   run kubectl -n "$NS" rollout status "$workload" --timeout=240s
 done
 run kubectl -n "$TESTER_NS" rollout status ds/tester-agent --timeout=240s
+for workload in $(kubectl -n observability get deployment -o name); do
+  run kubectl -n observability rollout status "$workload" --timeout=240s
+done
 echo "deployed $TAG" >&2

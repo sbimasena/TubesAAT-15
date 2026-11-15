@@ -27,3 +27,5 @@ data:
   MEDIA_CLIENT_ID: media
   FIELD_TEAM_CLIENT_ID: field-team
   INTERNAL_OPS_CLIENT_ID: internal-ops
+  # Traces from any service using internal/telemetry go to Jaeger (deploy/k8s/observability).
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger.observability:4318

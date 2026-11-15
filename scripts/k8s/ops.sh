@@ -160,8 +160,8 @@ SQL
     stats >"$work/before"
     (while :; do kubectl -n "$NS" top pod -l app=store --no-headers 2>/dev/null | sed "s/^/$(date -u +%T) top /"; sleep 5; done) &
     FORWARDS+=("$!")
-    split -l "${CHUNK:-500}" "$work/events" "$work/chunk."
-    echo "memuat $(wc -l <"$work/events") event dalam potongan ${CHUNK:-500}"
+    split -l "${CHUNK:-100}" "$work/events" "$work/chunk."
+    echo "memuat $(wc -l <"$work/events") event dalam potongan ${CHUNK:-100}"
     started=$(date +%s)
     for chunk in "$work"/chunk.*; do
       curl -fsS -X POST http://127.0.0.1:18083/internal/admin/load -H "Authorization: Bearer $token" \

@@ -15,6 +15,8 @@ make help      # semua target
 
 Client API tersedia di `http://127.0.0.1:8080` (k3d). Untuk cluster demo 3 node: `make deploy OVERLAY=cluster REGISTRY=docker.io/<user>` dengan kubeconfig cluster tersebut sebagai context aktif; image di-push sebagai `linux/amd64`. Manifest ada di `deploy/k8s` (Kustomize `base` + overlay `dev`/`cluster`), skrip di `scripts/k8s`, dan daftar aksi bersama di `scripts/m2/actions.json`.
 
+Storage terdistribusi (P1): sharding/replikasi, Audit API, loader katalog, dashboard analitik, dan target `make p1-*` dijelaskan di [docs/m2/p1-storage.md](docs/m2/p1-storage.md).
+
 ## 1. Jalankan sistem
 
 Prasyarat: Docker Engine dengan Compose v2 aktif dan Python 3. Pada macOS, jalankan Docker Desktop. Semua perintah berikut dijalankan dari root repository; Go di host tidak diperlukan untuk menjalankan stack.
@@ -205,7 +207,7 @@ Nilai pada tabel adalah nilai template `.env.example`. `setup-env.py` mengganti 
 | `MEDIA_CLIENT_ID`, `FIELD_TEAM_CLIENT_ID`, `INTERNAL_OPS_CLIENT_ID` | `media`, `field-team`, `internal-ops` | ID tiga klien, harus berbeda. |
 | `MEDIA_CLIENT_PASSWORD`, `FIELD_TEAM_CLIENT_PASSWORD`, `INTERNAL_OPS_CLIENT_PASSWORD` | **Wajib diisi** | Password tiap identitas. |
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | `hazards`, `aggregator`, `dev-postgres-password` | Database dan akun PostgreSQL. |
-| `DATABASE_URL` | `postgres://aggregator:dev-postgres-password@canonical-store:5432/hazards?sslmode=disable` | Koneksi Aggregator; harus cocok dengan akun PostgreSQL. |
+| `DATABASE_URL` | `postgres://aggregator:dev-postgres-password@canonical-store:5432/hazards?sslmode=disable` | Koneksi Aggregator; harus cocok dengan akun PostgreSQL. M2: daftar URL dipisah koma, satu per unit store (nama unit = label pertama host, mis. `store-1`); partisi disebar dengan RF=2. |
 | `RABBITMQ_DEFAULT_USER`, `RABBITMQ_DEFAULT_PASS` | `hazard`, `dev-broker-password` | Akun RabbitMQ. |
 | `BROKER_URL` | `amqp://hazard:dev-broker-password@message-broker:5672/` | Koneksi Aggregator/consumer; harus cocok dengan akun broker. |
 

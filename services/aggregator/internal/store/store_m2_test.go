@@ -88,12 +88,16 @@ func TestStoreM2(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	databaseURL, _ := testSchema(t, ctx)
-	repo, err := OpenPostgres(ctx, databaseURL, nil)
+	// The store pod sets bnpb.node_name with -c; a startup parameter does the same here.
+	repo, err := OpenPostgres(ctx, databaseURL+"&bnpb.node_name=node-b", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer repo.Close()
-	repo.SetIdentity("store-1", "node-b")
+	router, err := newRouter([]string{"store-1"}, []*PostgresRepository{repo}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	base := time.Date(2026, 11, 12, 2, 0, 0, 0, time.UTC)
 	fire := m2Event("SATELIT", "WILDFIRE", "fire-1", base)
@@ -117,48 +121,48 @@ func TestStoreM2(t *testing.T) {
 		t.Fatalf("partition_id=%d leaked into outbox=%v", partition, leaked)
 	}
 
-	first, err := repo.Query(ctx, Filter{Limit: 2}, "")
+	first, err := router.Query(ctx, Filter{Limit: 2}, "")
 	if err != nil || len(first.Items) != 2 || first.NextCursor == nil || first.Items[0].HazardID != fire.HazardID {
 		t.Fatalf("first page: %+v err=%v", first, err)
 	}
-	second, err := repo.Query(ctx, Filter{Limit: 2}, *first.NextCursor)
+	second, err := router.Query(ctx, Filter{Limit: 2}, *first.NextCursor)
 	if err != nil || len(second.Items) != 1 || second.NextCursor != nil || second.Items[0].HazardID != fire2.HazardID {
 		t.Fatalf("second page: %+v err=%v", second, err)
 	}
-	since, err := repo.Query(ctx, Filter{Source: "SATELIT", IngestedSince: base.Add(time.Second)}, "")
+	since, err := router.Query(ctx, Filter{Source: "SATELIT", IngestedSince: base.Add(time.Second)}, "")
 	if err != nil || len(since.Items) != 1 || since.Items[0].HazardID != fire2.HazardID {
 		t.Fatalf("source+since filter: %+v err=%v", since, err)
 	}
-	if _, err := repo.Query(ctx, Filter{}, "not-a-cursor"); err == nil {
+	if _, err := router.Query(ctx, Filter{}, "not-a-cursor"); err == nil {
 		t.Fatal("invalid cursor must be rejected")
 	}
 
-	sum, err := repo.Checksum(ctx, "SATELIT")
+	sum, err := router.Checksum(ctx, "SATELIT")
 	if err != nil || sum.Count != 2 || sum.Checksum != checksumOf("", []string{"fire-0", "fire-1"}, time.Time{}).Checksum {
 		t.Fatalf("checksum: %+v err=%v", sum, err)
 	}
-	if all, err := repo.Checksum(ctx, ""); err != nil || all.Count != 3 {
+	if all, err := router.Checksum(ctx, ""); err != nil || all.Count != 3 {
 		t.Fatalf("checksum over all sources: %+v err=%v", all, err)
 	}
 
-	locations, _, err := repo.Locate(ctx, fire.HazardID)
+	locations, _, err := router.Locate(ctx, fire.HazardID)
 	if err != nil || len(locations) != 1 || locations[0] != (Location{Node: "node-b", Unit: "store-1", Role: "primary"}) {
 		t.Fatalf("locate: %+v err=%v", locations, err)
 	}
-	if missing, _, err := repo.Locate(ctx, "haz_missing"); err != nil || len(missing) != 0 {
+	if missing, _, err := router.Locate(ctx, "haz_missing"); err != nil || len(missing) != 0 {
 		t.Fatalf("unknown hazard: %+v err=%v", missing, err)
 	}
 
-	if cursor, err := repo.LoadCursor(ctx, "BMKG"); err != nil || cursor != "" {
+	if cursor, err := router.LoadCursor(ctx, "BMKG"); err != nil || cursor != "" {
 		t.Fatalf("empty cursor: %q err=%v", cursor, err)
 	}
-	if err := repo.SaveCursor(ctx, 0, "BMKG", "2026-11-12T02:00:00Z"); err != nil {
+	if err := router.SaveCursor(ctx, 0, "BMKG", "2026-11-12T02:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.Fence(ctx, 5); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.SaveCursor(ctx, 4, "BMKG", "zombie"); !errors.Is(err, ErrFenced) {
+	if err := router.SaveCursor(ctx, 4, "BMKG", "zombie"); !errors.Is(err, ErrFenced) {
 		t.Fatalf("stale SaveCursor: %v", err)
 	}
 	zombie := m2Event("SATELIT", "WILDFIRE", "fire-zombie", base)
@@ -171,7 +175,7 @@ func TestStoreM2(t *testing.T) {
 	if err := repo.Fence(ctx, 5); err != nil {
 		t.Fatalf("repeating the current fence must succeed: %v", err)
 	}
-	if cursor, err := repo.LoadCursor(ctx, "BMKG"); err != nil || cursor != "2026-11-12T02:00:00Z" {
+	if cursor, err := router.LoadCursor(ctx, "BMKG"); err != nil || cursor != "2026-11-12T02:00:00Z" {
 		t.Fatalf("fenced write must not move the cursor: %q err=%v", cursor, err)
 	}
 	if _, err := repo.Upsert(ctx, 6, []domain.HazardEvent{zombie}, "m2-leader"); err != nil {
@@ -212,7 +216,7 @@ func TestMigrationBackfillsM1Rows(t *testing.T) {
 		t.Fatalf("backfill: partition=%d err=%v", partition, err)
 	}
 	var version int64
-	if err := repo.pool.QueryRow(ctx, "SELECT max(version) FROM schema_migrations").Scan(&version); err != nil || version != 2 {
+	if err := repo.pool.QueryRow(ctx, "SELECT max(version) FROM schema_migrations").Scan(&version); err != nil || version != 3 {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 }

@@ -6,7 +6,7 @@ Layanan Go mandiri menerima JSON `HazardEvent` dari exchange fanout durable `haz
 
 Setiap ID pesan baru menghasilkan record audit. State terbaru per hazard disimpan di memori dan dipulihkan dari jurnal. Revisi lebih besar memperbarui state; revisi lebih kecil atau sama menghasilkan stale_ignored tanpa menimpa state terbaru. Tidak menyediakan UI/dashboard HTTP pada M1.
 
-Hasil disimpan sebagai `dashboard_updated atau stale_ignored` di `/data/events.jsonl` pada volume khusus layanan. Record mencakup ID pesan, ID hazard, revisi, correlation ID, waktu penerimaan, dan payload penuh termasuk atribut tambahan. ID outbox menjadi kunci deduplikasi; update hazard dengan ID pesan baru diproses tersendiri.
+Hasil disimpan sebagai `dashboard_updated atau stale_ignored` di `/data/events.jsonl` pada volume khusus layanan. Record mencakup ID pesan, ID hazard, revisi, correlation ID, waktu penerimaan, dan payload penuh termasuk atribut tambahan. ID pesan `hazard_id:<hash payload>` menjadi kunci deduplikasi; ID ini sama di setiap replika store untuk snapshot yang sama (M2 menulis outbox di tiap replika), sedangkan konten baru mendapat ID baru.
 
 ## Ack, restart, dan IO
 
@@ -14,7 +14,7 @@ Prefetch satu, manual ack, serta exclusive consumer (satu consumer aktif untuk q
 
 Restart membaca jurnal untuk membangun ulang ID dan state terbaru. Baris terakhir tanpa newline dipotong sebelum append; record rusak yang sudah diterminasi newline menyebabkan kegagalan eksplisit. Kegagalan write/sync tidak di-ack: sesi broker ditutup, file ditutup, dan jurnal dibuka/dipulihkan kembali sebelum retry setelah tiga detik. Ini mencegah append setelah hasil IO yang belum pasti.
 
-Jaminan idempotensi berlaku untuk hasil simulasi di jurnal selama volumenya dipertahankan, dengan ID producer yang tetap unik. Menghapus journal menghapus deduplikasi; menginisialisasi ulang database producer dengan sequence ID awal sambil mempertahankan jurnal lama dapat menyebabkan benturan ID. Tidak ada jaminan exactly-once untuk efek eksternal. Jurnal/indeks belum dikompaksi dan bertambah mengikuti jumlah pesan; gunakan storage consumer lebih kuat saat workload melampaui M1.
+Jaminan idempotensi berlaku untuk hasil simulasi di jurnal selama volumenya dipertahankan, dengan revisi per hazard yang tidak diulang. Menghapus journal menghapus deduplikasi; store yang dikosongkan seluruhnya lalu menulis ulang hazard dari revisi 1 akan dianggap duplikat oleh jurnal lama. Tidak ada jaminan exactly-once untuk efek eksternal. Jurnal/indeks belum dikompaksi dan bertambah mengikuti jumlah pesan; gunakan storage consumer lebih kuat saat workload melampaui M1.
 
 ## Validasi dan kesehatan
 

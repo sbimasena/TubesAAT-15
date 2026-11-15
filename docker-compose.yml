@@ -18,6 +18,7 @@ services:
       - "${PVMBG_PORT:-8082}:8082"
     environment:
       PVMBG_TOKEN: ${PVMBG_TOKEN:-dev-pvmbg-token}
+      AUDIT_TOKEN: ${AUDIT_TOKEN:-dev-audit-token}
       PVMBG_DELAY_MS: ${PVMBG_DELAY_MS:-750}
       PVMBG_GENERATE_INTERVAL_SECONDS: ${PVMBG_GENERATE_INTERVAL_SECONDS:-10}
     healthcheck:

@@ -12,6 +12,9 @@ import (
 // storage unit has already accepted (D-FENCE).
 var ErrFenced = errors.New("store: stale epoch")
 
+// ErrInvalidCursor is returned by Query for a cursor it did not issue.
+var ErrInvalidCursor = errors.New("store: invalid cursor")
+
 type Filter struct {
 	Source     string
 	HazardType string
@@ -35,6 +38,19 @@ type ChecksumResult struct {
 	AsOf             time.Time
 	Partial          bool
 	UnavailableUnits []string
+}
+
+// Analytics feeds the P1.7 dashboard; Total over all time equals the Audit API checksum count.
+type Analytics struct {
+	From             time.Time        `json:"from"`
+	To               time.Time        `json:"to"`
+	Buckets          []time.Time      `json:"buckets"` // start of each equal-width bucket
+	Series           map[string][]int `json:"series"`  // hazard_type -> count per bucket
+	BySeverity       map[string]int   `json:"by_severity"`
+	ByArea           map[string]int   `json:"by_area"`
+	Total            int              `json:"total"`
+	Partial          bool             `json:"partial"`
+	UnavailableUnits []string         `json:"unavailable_units"`
 }
 
 type Location struct {

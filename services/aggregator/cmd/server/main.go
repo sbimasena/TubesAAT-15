@@ -54,20 +54,39 @@ func main() {
 	bmkgBaseURL := requiredEnv(logger, "BMKG_BASE_URL")
 	pvmbgBaseURL := requiredEnv(logger, "PVMBG_BASE_URL")
 	brokerURL := requiredEnv(logger, "BROKER_URL")
+	auditToken := requiredEnv(logger, "AUDIT_TOKEN")
 	if bmkgKey == pvmbgToken {
 		logger.Error("upstream credentials must be different", "variables", "BMKG_API_KEY,PVMBG_TOKEN")
 		os.Exit(1)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	startupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	repository, err := store.OpenPostgres(startupCtx, requiredEnv(logger, "DATABASE_URL"), logger)
-	cancel()
+	repository, err := store.OpenRouter(requiredEnv(logger, "DATABASE_URL"), logger)
 	if err != nil {
 		logger.Error("canonical store initialization failed", "error", err)
 		os.Exit(1)
 	}
 	defer repository.Close()
+	// Best effort: a dead unit must not keep the Aggregator down; Run keeps retrying it.
+	startupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	repository.CheckUnits(startupCtx)
+	// Without the durable map the placement is unknown; restart rather than guess.
+	if err := repository.LoadMap(startupCtx); err != nil {
+		logger.Error("partition map unavailable", "error", err)
+		os.Exit(1)
+	}
+	cancel()
+	routerDone := make(chan struct{})
+	go func() {
+		defer close(routerDone)
+		repository.Run(ctx)
+	}()
+	reconcilerDone := make(chan struct{})
+	go func() {
+		defer close(reconcilerDone)
+		// Epoch 0 like ingest until leader election (P2) provides the lease epoch.
+		repository.Reconcile(ctx, 0, 10*time.Second, positiveSecondsFromEnv("REREPLICATE_AFTER_SECONDS", 60))
+	}()
 	bmkg := source.NewBMKGClient(bmkgBaseURL, bmkgKey, logger)
 	pvmbg := source.NewPVMBGClient(pvmbgBaseURL, pvmbgToken, logger)
 	manager := ingest.NewManager(bmkg, pvmbg, repository, interval, logger)
@@ -83,6 +102,8 @@ func main() {
 	}()
 
 	api := httpapi.NewServer(repository, manager, logger)
+	api.EnableAudit(repository, auditToken)
+	api.EnableAnalytics(repository)
 	server := &http.Server{
 		Addr:              ":" + port,
 		Handler:           api.Handler(),
@@ -108,6 +129,8 @@ func main() {
 	stop()
 	<-pollersDone
 	<-publisherDone
+	<-routerDone
+	<-reconcilerDone
 }
 
 // inspect lets local Docker operators read the running API without publishing a host port.

@@ -14,6 +14,9 @@ spec:
       labels: {app: rabbitmq, role: broker}
     spec:
       terminationGracePeriodSeconds: 60
+      # shortcut: one local-path broker pinned to node-a (never a failure target, D-TOPO) like the
+      # consumers; otherwise losing its node leaves it Terminating/Pending. Drop when D-BROKER lands.
+      nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
       containers:
         - name: rabbitmq
           image: rabbitmq:4.2-management-alpine

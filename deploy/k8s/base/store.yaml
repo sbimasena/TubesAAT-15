@@ -1,5 +1,5 @@
-# Canonical Store unit (role=store). One unit for now; P1 scales this to store-0..2,
-# one per node, with the partition router in the Aggregator (D-P1).
+# Canonical Store units (role=store): store-0..2, one per node (anti-affinity). The
+# Aggregator's partition router spreads 24 partitions over them with RF=2 (D-P1).
 # Data stays on the node's own disk through k3s local-path (kontrak-m2.md §1.1).
 apiVersion: apps/v1
 kind: StatefulSet
@@ -7,7 +7,9 @@ metadata:
   name: store
 spec:
   serviceName: store
-  replicas: 1
+  replicas: 3
+  # Units are independent; OrderedReady would stop recreating store-2 while store-0's node is dead.
+  podManagementPolicy: Parallel
   selector:
     matchLabels: {app: store}
   template:
@@ -24,8 +26,9 @@ spec:
       containers:
         - name: postgres
           image: postgres:17-alpine
-          # Sized for the 1Gi limit (Lampiran B).
-          args: ["-c", "shared_buffers=128MB", "-c", "max_connections=60"]
+          # Sized for the 1Gi limit (Lampiran B). bnpb.node_name lets the Audit API
+          # location endpoint report the node holding each copy.
+          args: ["-c", "shared_buffers=128MB", "-c", "max_connections=60", "-c", "bnpb.node_name=$(NODE_NAME)"]
           ports: [{name: postgres, containerPort: 5432}]
           env:
             - name: POSTGRES_DB
@@ -45,8 +48,10 @@ spec:
             exec:
               command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
             periodSeconds: 5
+          # exec, not tcpSocket: the store-ingress NetworkPolicy admits only the Aggregator.
           livenessProbe:
-            tcpSocket: {port: postgres}
+            exec:
+              command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
             initialDelaySeconds: 30
             periodSeconds: 10
           volumeMounts:
@@ -69,3 +74,22 @@ spec:
   clusterIP: None
   selector: {app: store}
   ports: [{name: postgres, port: 5432, targetPort: postgres}]
+---
+# Storage ownership enforced by the platform (context-m2.md §6.4): only the Aggregator
+# reaches PostgreSQL. Selects store pods only, so no other service (or the Tester Agent,
+# which never connects to the store) is affected. Copies between units go through the
+# Aggregator, so no store-to-store rule is needed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: store-ingress
+spec:
+  podSelector:
+    matchLabels: {role: store}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {role: aggregator}
+      ports:
+        - {protocol: TCP, port: 5432}

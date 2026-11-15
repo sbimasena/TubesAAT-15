@@ -14,6 +14,7 @@ spec:
     metadata:
       labels: {app: aggregator, role: aggregator}
     spec:
+      serviceAccountName: aggregator
       terminationGracePeriodSeconds: 30
       containers:
         - name: aggregator
@@ -23,10 +24,16 @@ spec:
           env:
             - name: AGGREGATOR_PORT
               value: "8083"
+            # Unit unseen this long: the reconciler moves its partitions (P1.6). Longer than a
+            # store pod restart, so kill-store does not trigger a full copy.
+            - name: REREPLICATE_AFTER_SECONDS
+              value: "60"
             - name: BMKG_API_KEY
               valueFrom: {secretKeyRef: {name: source-credentials, key: BMKG_API_KEY}}
             - name: PVMBG_TOKEN
               valueFrom: {secretKeyRef: {name: source-credentials, key: PVMBG_TOKEN}}
+            - name: AUDIT_TOKEN
+              valueFrom: {secretKeyRef: {name: audit-token, key: token}}
             - name: POSTGRES_DB
               valueFrom: {secretKeyRef: {name: store-credentials, key: POSTGRES_DB}}
             - name: POSTGRES_USER
@@ -38,8 +45,10 @@ spec:
             - name: RABBITMQ_DEFAULT_PASS
               valueFrom: {secretKeyRef: {name: broker-credentials, key: RABBITMQ_DEFAULT_PASS}}
             # Credentials must be URL-safe (no @ : / ? #); deploy.sh rejects unsafe values.
+            # One URL per store unit; the unit name is the first label of the host (D-P1).
             - name: DATABASE_URL
-              value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@store-0.store:5432/$(POSTGRES_DB)?sslmode=disable
+              value: >-
+                postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@store-0.store:5432/$(POSTGRES_DB)?sslmode=disable,postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@store-1.store:5432/$(POSTGRES_DB)?sslmode=disable,postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@store-2.store:5432/$(POSTGRES_DB)?sslmode=disable
             - name: BROKER_URL
               value: amqp://$(RABBITMQ_DEFAULT_USER):$(RABBITMQ_DEFAULT_PASS)@rabbitmq:5672/
             - name: POD_NAME
@@ -68,3 +77,38 @@ metadata:
 spec:
   selector: {app: aggregator}
   ports: [{name: http, port: 8083, targetPort: http}]
+---
+# The partition map lives in ConfigMap store-partition-map (D-COORD). The Aggregator
+# creates it itself; it is deliberately not in Kustomize so `kubectl apply -k` never
+# overwrites the reconciler's placement.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aggregator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aggregator-partition-map
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [store-partition-map]
+    verbs: [get, update]
+  # create cannot be limited by resourceNames.
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aggregator-partition-map
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aggregator-partition-map
+subjects:
+  - kind: ServiceAccount
+    name: aggregator
+    namespace: sistem-informasi-kebencanaan-bnpb

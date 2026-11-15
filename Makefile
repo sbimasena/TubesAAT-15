@@ -12,7 +12,7 @@ endif
 SH = "$(BASH)"
 
 .DEFAULT_GOAL := help
-.PHONY: help dev-up dev-down deploy status logs tester-list tester open reset
+.PHONY: help dev-up dev-down deploy status logs tester-list tester open reset p1-checksum p1-distribution p1-load p1-surge p1-wipe-node p1-dashboard p1-amnesia p1-audit p1-netpol
 
 help: ## Daftar target
 	@$(SH) scripts/k8s/help.sh Makefile
@@ -40,6 +40,33 @@ tester: ## Jalankan skenario latihan Tester Agent + log: make tester S=kill-stor
 
 open: ## Port-forward RabbitMQ UI dan tampilkan URL layanan
 	@$(SH) scripts/k8s/ops.sh open
+
+p1-checksum: ## Checksum Audit API per sumber dan semua sumber
+	@$(SH) scripts/k8s/ops.sh p1-checksum
+
+p1-distribution: ## Sebaran data (rows, partisi) per unit store/node
+	@$(SH) scripts/k8s/ops.sh p1-distribution
+
+p1-dashboard: ## Port-forward dan buka dashboard analitik P1
+	@$(SH) scripts/k8s/ops.sh p1-dashboard
+
+p1-wipe-node: ## Checksum awal lalu Tester Agent wipe-node (P1.4)
+	@$(SH) scripts/k8s/ops.sh p1-wipe-node
+
+p1-amnesia: ## Simulasi disk kosong pada satu unit (P1.5): make p1-amnesia S=store-1
+	@$(SH) scripts/k8s/ops.sh p1-amnesia $(S)
+
+p1-netpol: ## Bukti hanya Aggregator yang bisa konek ke store (NetworkPolicy)
+	@$(SH) scripts/k8s/ops.sh p1-netpol
+
+p1-audit: ## Audit API events (cursor) dan location satu event
+	@$(SH) scripts/k8s/ops.sh p1-audit
+
+p1-load: ## Muat katalog gempa + ukur tulis per unit: make p1-load FILE=katalog.ndjson
+	@$(SH) scripts/k8s/ops.sh p1-load "$(FILE)"
+
+p1-surge: ## Lonjakan gempa satu wilayah + ukur tulis per unit: make p1-surge N=3000 REGION="Sulawesi Tengah"
+	@$(SH) scripts/k8s/ops.sh p1-surge "$(or $(N),3000)" "$(or $(REGION),Sulawesi Tengah)"
 
 reset: ## Kembalikan manifest (replika, image) dan mode mock PVMBG ke normal
 	@$(SH) scripts/k8s/ops.sh reset

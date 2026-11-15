@@ -31,6 +31,7 @@ type migration struct {
 var migrations = []migration{
 	{version: 1, file: "migrations/001_canonical.sql"},
 	{version: 2, file: "migrations/002_m2.sql", after: backfillPartitions},
+	{version: 3, file: "migrations/003_cursor_seq.sql"},
 }
 
 // migrationLockID serialises migrations when several Aggregator replicas start together.
@@ -38,46 +39,43 @@ const migrationLockID = 4031_0002
 
 const operationTimeout = 3 * time.Second
 
-var (
-	_ Store      = (*PostgresRepository)(nil)
-	_ Repository = (*PostgresRepository)(nil)
-)
-
-// PostgresRepository is a single storage unit. Until the partition router lands it
-// serves as the whole Store: every partition lives here with this unit as primary.
+// PostgresRepository is one storage unit (one store-N pod). The Router spreads
+// partitions over units; reads here are scoped to the partitions the caller names.
 type PostgresRepository struct {
-	pool     *pgxpool.Pool
-	logger   *slog.Logger
-	identity Location
+	pool   *pgxpool.Pool
+	logger *slog.Logger
 }
 
-func OpenPostgres(ctx context.Context, databaseURL string, logger *slog.Logger) (*PostgresRepository, error) {
+// newUnit creates the pool without connecting, so a dead unit never blocks startup.
+func newUnit(databaseURL string, logger *slog.Logger) (*PostgresRepository, error) {
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, errors.New("invalid DATABASE_URL configuration")
 	}
 	config.MaxConns = 8
 	config.ConnConfig.ConnectTimeout = operationTimeout
-	pool, err := pgxpool.NewWithConfig(ctx, config)
+	pool, err := pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
 		return nil, fmt.Errorf("create canonical connection pool: %w", err)
 	}
-	repo := &PostgresRepository{pool: pool, logger: logger,
-		identity: Location{Unit: "store-0", Role: "primary"}}
+	return &PostgresRepository{pool: pool, logger: logger}, nil
+}
+
+// OpenPostgres opens one unit and migrates it before returning.
+func OpenPostgres(ctx context.Context, databaseURL string, logger *slog.Logger) (*PostgresRepository, error) {
+	repo, err := newUnit(databaseURL, logger)
+	if err != nil {
+		return nil, err
+	}
 	if err := repo.Ping(ctx); err != nil {
-		pool.Close()
+		repo.Close()
 		return nil, fmt.Errorf("connect canonical store: %w", err)
 	}
 	if err := repo.migrate(ctx); err != nil {
-		pool.Close()
+		repo.Close()
 		return nil, fmt.Errorf("migrate canonical store: %w", err)
 	}
 	return repo, nil
-}
-
-// SetIdentity names this unit and the Kubernetes node it runs on, as reported by Locate.
-func (r *PostgresRepository) SetIdentity(unit, node string) {
-	r.identity.Unit, r.identity.Node = unit, node
 }
 
 func (r *PostgresRepository) Close() { r.pool.Close() }
@@ -277,19 +275,16 @@ func clampLimit(limit int) int {
 	return limit
 }
 
-func (r *PostgresRepository) List(ctx context.Context, filter Filter, correlationID string) (events []domain.HazardEvent, err error) {
-	started := time.Now()
-	defer func() { r.logCall("canonical-list", correlationID, started, err) }()
-	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
-	defer cancel()
+// listParts serves the M1 read API: newest occurred_at first.
+func (r *PostgresRepository) listParts(ctx context.Context, filter Filter, parts []int32) ([]domain.HazardEvent, error) {
 	var since *time.Time
 	if !filter.Since.IsZero() {
 		since = &filter.Since
 	}
 	rows, err := r.pool.Query(ctx, `SELECT `+eventColumns+` FROM hazard_events
-		WHERE ($1 = '' OR source = $1) AND ($2 = '' OR hazard_type = $2)
+		WHERE partition_id = ANY($5::int[]) AND ($1 = '' OR source = $1) AND ($2 = '' OR hazard_type = $2)
 		AND ($3::timestamptz IS NULL OR occurred_at >= $3)
-		ORDER BY occurred_at DESC, hazard_id LIMIT $4`, filter.Source, filter.HazardType, since, clampLimit(filter.Limit))
+		ORDER BY occurred_at DESC, hazard_id LIMIT $4`, filter.Source, filter.HazardType, since, clampLimit(filter.Limit), parts)
 	if err != nil {
 		return nil, err
 	}
@@ -314,19 +309,13 @@ func decodeCursor(value string) (*pageCursor, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(value)
 	var c pageCursor
 	if err != nil || json.Unmarshal(raw, &c) != nil || c.HazardID == "" {
-		return nil, errors.New("invalid cursor")
+		return nil, ErrInvalidCursor
 	}
 	return &c, nil
 }
 
-// Query pages through events in Audit API order: ingested_at ascending, then hazard_id.
-func (r *PostgresRepository) Query(ctx context.Context, filter Filter, cursor string) (Page, error) {
-	after, err := decodeCursor(cursor)
-	if err != nil {
-		return Page{}, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
-	defer cancel()
+// queryParts returns up to limit events in Audit API order (ingested_at, hazard_id) after the cursor.
+func (r *PostgresRepository) queryParts(ctx context.Context, filter Filter, after *pageCursor, parts []int32, limit int) ([]domain.HazardEvent, error) {
 	var since, afterTime *time.Time
 	var afterID string
 	if !filter.IngestedSince.IsZero() {
@@ -335,44 +324,53 @@ func (r *PostgresRepository) Query(ctx context.Context, filter Filter, cursor st
 	if after != nil {
 		afterTime, afterID = &after.IngestedAt, after.HazardID
 	}
-	limit := clampLimit(filter.Limit)
 	rows, err := r.pool.Query(ctx, `SELECT `+eventColumns+` FROM hazard_events
-		WHERE ($1 = '' OR source = $1) AND ($2 = '' OR hazard_type = $2)
+		WHERE partition_id = ANY($7::int[]) AND ($1 = '' OR source = $1) AND ($2 = '' OR hazard_type = $2)
 		AND ($3::timestamptz IS NULL OR ingested_at >= $3)
 		AND ($4::timestamptz IS NULL OR (ingested_at, hazard_id) > ($4, $5))
 		ORDER BY ingested_at, hazard_id LIMIT $6`,
-		filter.Source, filter.HazardType, since, afterTime, afterID, limit+1)
+		filter.Source, filter.HazardType, since, afterTime, afterID, limit, parts)
 	if err != nil {
-		return Page{}, err
+		return nil, err
 	}
-	events, err := scanEvents(rows)
-	if err != nil {
-		return Page{}, err
-	}
-	page := Page{Items: events, UnavailableUnits: []string{}}
-	if len(events) > limit {
-		page.Items = events[:limit]
-		last := page.Items[limit-1]
-		next := encodeCursor(pageCursor{IngestedAt: last.IngestedAt, HazardID: last.HazardID})
-		page.NextCursor = &next
-	}
-	return page, nil
+	return scanEvents(rows)
 }
 
-// Checksum follows kontrak-m2.md §7.3; an empty source covers every source.
-func (r *PostgresRepository) Checksum(ctx context.Context, source string) (ChecksumResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
-	defer cancel()
-	asOf := time.Now().UTC()
-	rows, err := r.pool.Query(ctx, "SELECT source_ref_id FROM hazard_events WHERE ($1 = '' OR source = $1)", source)
+type partRef struct {
+	hazardID string
+	ref      string
+}
+
+// refIDs feeds the checksum (kontrak-m2.md §7.3); an empty source covers every source.
+func (r *PostgresRepository) refIDs(ctx context.Context, source string, parts []int32) ([]partRef, error) {
+	rows, err := r.pool.Query(ctx, `SELECT hazard_id, source_ref_id FROM hazard_events
+		WHERE partition_id = ANY($2::int[]) AND ($1 = '' OR source = $1)`, source, parts)
 	if err != nil {
-		return ChecksumResult{}, err
+		return nil, err
 	}
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (partRef, error) {
+		var p partRef
+		err := row.Scan(&p.hazardID, &p.ref)
+		return p, err
+	})
+}
+
+type analyticRow struct {
+	hazardID, hazardType, severity, area string
+	occurred                             time.Time
+}
+
+func (r *PostgresRepository) analyticRows(ctx context.Context, from, to time.Time, parts []int32) ([]analyticRow, error) {
+	rows, err := r.pool.Query(ctx, `SELECT hazard_id, hazard_type, severity, area_name, occurred_at FROM hazard_events
+		WHERE partition_id = ANY($3::int[]) AND occurred_at >= $1 AND occurred_at < $2`, from, to, parts)
 	if err != nil {
-		return ChecksumResult{}, err
+		return nil, err
 	}
-	return checksumOf(source, ids, asOf), nil
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (analyticRow, error) {
+		var a analyticRow
+		err := row.Scan(&a.hazardID, &a.hazardType, &a.severity, &a.area, &a.occurred)
+		return a, err
+	})
 }
 
 func checksumOf(source string, ids []string, asOf time.Time) ChecksumResult {
@@ -382,23 +380,15 @@ func checksumOf(source string, ids []string, asOf time.Time) ChecksumResult {
 		AsOf: asOf, UnavailableUnits: []string{}}
 }
 
-func (r *PostgresRepository) Locate(ctx context.Context, hazardID string) ([]Location, bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
-	defer cancel()
-	var exists bool
-	if err := r.pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM hazard_events WHERE hazard_id = $1)",
-		hazardID).Scan(&exists); err != nil {
-		return nil, false, err
-	}
-	if !exists {
-		return nil, false, nil
-	}
-	return []Location{r.identity}, false, nil
+// locate reports whether this unit holds hazardID and the node it runs on
+// (bnpb.node_name is set from the Downward API in deploy/k8s/base/store.yaml).
+func (r *PostgresRepository) locate(ctx context.Context, hazardID string) (exists bool, node string, err error) {
+	err = r.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM hazard_events WHERE hazard_id = $1),
+		coalesce(current_setting('bnpb.node_name', true), '')`, hazardID).Scan(&exists, &node)
+	return exists, node, err
 }
 
-func (r *PostgresRepository) SaveCursor(ctx context.Context, epoch int64, source, cursor string) error {
-	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
-	defer cancel()
+func (r *PostgresRepository) saveCursor(ctx context.Context, epoch, seq int64, source, cursor string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -407,23 +397,27 @@ func (r *PostgresRepository) SaveCursor(ctx context.Context, epoch int64, source
 	if err := checkFence(ctx, tx, epoch); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO ingest_cursor (source, cursor_value, epoch) VALUES ($1, $2, $3)
+	if _, err := tx.Exec(ctx, `INSERT INTO ingest_cursor (source, cursor_value, epoch, seq) VALUES ($1, $2, $3, $4)
 		ON CONFLICT (source) DO UPDATE SET cursor_value = EXCLUDED.cursor_value,
-		epoch = EXCLUDED.epoch, updated_at = CURRENT_TIMESTAMP`, source, cursor, epoch); err != nil {
+		epoch = EXCLUDED.epoch, seq = EXCLUDED.seq, updated_at = CURRENT_TIMESTAMP`, source, cursor, epoch, seq); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-func (r *PostgresRepository) LoadCursor(ctx context.Context, source string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
-	defer cancel()
-	var cursor string
-	err := r.pool.QueryRow(ctx, "SELECT cursor_value FROM ingest_cursor WHERE source = $1", source).Scan(&cursor)
+type savedCursor struct {
+	value      string
+	epoch, seq int64
+}
+
+// loadCursor returns found=false when no cursor has been saved for source on this unit.
+func (r *PostgresRepository) loadCursor(ctx context.Context, source string) (c savedCursor, found bool, err error) {
+	err = r.pool.QueryRow(ctx, "SELECT cursor_value, epoch, seq FROM ingest_cursor WHERE source = $1", source).
+		Scan(&c.value, &c.epoch, &c.seq)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
+		return c, false, nil
 	}
-	return cursor, err
+	return c, err == nil, err
 }
 
 func (r *PostgresRepository) logCall(operation, correlationID string, started time.Time, err error) {
@@ -437,4 +431,110 @@ func (r *PostgresRepository) logCall(operation, correlationID string, started ti
 		return
 	}
 	r.logger.Info("canonical operation complete", attrs...)
+}
+
+// partitionDigest is the cheap anti-entropy fingerprint of one partition on one unit.
+type partitionDigest struct {
+	count       int64
+	maxIngested int64 // unix micros; time.Time values from two units do not compare with ==
+}
+
+func (r *PostgresRepository) digest(ctx context.Context, p int) (partitionDigest, error) {
+	var d partitionDigest
+	var maxIngested *time.Time
+	err := r.pool.QueryRow(ctx, "SELECT count(*), max(ingested_at) FROM hazard_events WHERE partition_id = $1", p).
+		Scan(&d.count, &maxIngested)
+	if maxIngested != nil {
+		d.maxIngested = maxIngested.UnixMicro()
+	}
+	return d, err
+}
+
+// exportPartition reads every row of partition p for a copy to another unit.
+// shortcut: loads the partition in memory (dataset / 24 rows); stream it if partitions grow past ~50k rows.
+func (r *PostgresRepository) exportPartition(ctx context.Context, p int) ([]domain.HazardEvent, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+eventColumns+` FROM hazard_events WHERE partition_id = $1`, p)
+	if err != nil {
+		return nil, err
+	}
+	return scanEvents(rows)
+}
+
+// importSQL keeps the newer copy and, unlike upsertSQL, queues no outbox message: the
+// event was already published when it was first ingested.
+const importSQL = `INSERT INTO hazard_events (
+        hazard_id, source, source_ref_id, hazard_type, severity, area_name,
+        latitude, longitude, occurred_at, ingested_at, attributes, partition_id
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)
+    ON CONFLICT (hazard_id) DO UPDATE SET
+        source = EXCLUDED.source, source_ref_id = EXCLUDED.source_ref_id,
+        hazard_type = EXCLUDED.hazard_type, severity = EXCLUDED.severity,
+        area_name = EXCLUDED.area_name, latitude = EXCLUDED.latitude,
+        longitude = EXCLUDED.longitude, occurred_at = EXCLUDED.occurred_at,
+        ingested_at = EXCLUDED.ingested_at, attributes = EXCLUDED.attributes,
+        revision = hazard_events.revision + 1
+    WHERE EXCLUDED.ingested_at > hazard_events.ingested_at`
+
+// importPartition writes copied rows under the fence; it returns how many rows changed.
+func (r *PostgresRepository) importPartition(ctx context.Context, epoch int64, events []domain.HazardEvent) (int64, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	if err := checkFence(ctx, tx, epoch); err != nil {
+		return 0, err
+	}
+	batch := &pgx.Batch{}
+	for _, e := range events {
+		attributes, err := json.Marshal(e.Attributes)
+		if err != nil {
+			return 0, fmt.Errorf("encode hazard attributes: %w", err)
+		}
+		batch.Queue(importSQL, e.HazardID, e.Source, e.SourceRefID, e.HazardType, e.Severity, e.AreaName,
+			e.Latitude, e.Longitude, e.OccurredAt, e.IngestedAt, attributes, PartitionOf(e.HazardID))
+	}
+	results := tx.SendBatch(ctx, batch)
+	var copied int64
+	for range events {
+		tag, err := results.Exec()
+		if err != nil {
+			results.Close()
+			return 0, err
+		}
+		copied += tag.RowsAffected()
+	}
+	if err := results.Close(); err != nil {
+		return 0, err
+	}
+	return copied, tx.Commit(ctx)
+}
+
+// dropPartitionsExcept deletes the rows of partitions this unit no longer replicates,
+// left behind by moves. Events with an unpublished outbox message stay until the relay
+// sends it; published messages of dropped events go with them (the FK needs that).
+const dropSQL = `
+    WITH gone AS (
+        SELECT hazard_id FROM hazard_events e
+        WHERE NOT (partition_id = ANY($1::int[]))
+          AND NOT EXISTS (SELECT 1 FROM hazard_outbox o WHERE o.hazard_id = e.hazard_id AND o.published_at IS NULL)
+    ), sent AS (
+        DELETE FROM hazard_outbox WHERE hazard_id IN (SELECT hazard_id FROM gone)
+    )
+    DELETE FROM hazard_events WHERE hazard_id IN (SELECT hazard_id FROM gone)`
+
+func (r *PostgresRepository) dropPartitionsExcept(ctx context.Context, epoch int64, keep []int32) (int64, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	if err := checkFence(ctx, tx, epoch); err != nil {
+		return 0, err
+	}
+	tag, err := tx.Exec(ctx, dropSQL, keep)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), tx.Commit(ctx)
 }

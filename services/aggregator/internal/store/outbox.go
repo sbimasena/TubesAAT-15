@@ -7,6 +7,7 @@ import (
 )
 
 type OutboxMessage struct {
+	Unit          string // store unit holding this row; MessageID is unique only within it.
 	MessageID     int64
 	HazardID      string
 	Revision      int64
@@ -36,10 +37,10 @@ func (r *PostgresRepository) PendingOutbox(ctx context.Context) ([]OutboxMessage
 	return messages, rows.Err()
 }
 
-func (r *PostgresRepository) MarkPublished(ctx context.Context, messageID int64) error {
+func (r *PostgresRepository) MarkPublished(ctx context.Context, message OutboxMessage) error {
 	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
 	defer cancel()
 	_, err := r.pool.Exec(ctx, `UPDATE hazard_outbox SET published_at=CURRENT_TIMESTAMP
-		WHERE message_id=$1 AND published_at IS NULL`, messageID)
+		WHERE message_id=$1 AND published_at IS NULL`, message.MessageID)
 	return err
 }

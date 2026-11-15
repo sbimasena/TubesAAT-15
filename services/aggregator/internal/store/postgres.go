@@ -414,3 +414,80 @@ func (r *PostgresRepository) logCall(operation, correlationID string, started ti
 	}
 	r.logger.Info("canonical operation complete", attrs...)
 }
+
+// partitionDigest is the cheap anti-entropy fingerprint of one partition on one unit.
+type partitionDigest struct {
+	count       int64
+	maxIngested int64 // unix micros; time.Time values from two units do not compare with ==
+}
+
+func (r *PostgresRepository) digest(ctx context.Context, p int) (partitionDigest, error) {
+	var d partitionDigest
+	var maxIngested *time.Time
+	err := r.pool.QueryRow(ctx, "SELECT count(*), max(ingested_at) FROM hazard_events WHERE partition_id = $1", p).
+		Scan(&d.count, &maxIngested)
+	if maxIngested != nil {
+		d.maxIngested = maxIngested.UnixMicro()
+	}
+	return d, err
+}
+
+// exportPartition reads every row of partition p for a copy to another unit.
+// shortcut: loads the partition in memory (dataset / 24 rows); stream it if partitions grow past ~50k rows.
+func (r *PostgresRepository) exportPartition(ctx context.Context, p int) ([]domain.HazardEvent, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+eventColumns+` FROM hazard_events WHERE partition_id = $1`, p)
+	if err != nil {
+		return nil, err
+	}
+	return scanEvents(rows)
+}
+
+// importSQL keeps the newer copy and, unlike upsertSQL, queues no outbox message: the
+// event was already published when it was first ingested.
+const importSQL = `INSERT INTO hazard_events (
+        hazard_id, source, source_ref_id, hazard_type, severity, area_name,
+        latitude, longitude, occurred_at, ingested_at, attributes, partition_id
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)
+    ON CONFLICT (hazard_id) DO UPDATE SET
+        source = EXCLUDED.source, source_ref_id = EXCLUDED.source_ref_id,
+        hazard_type = EXCLUDED.hazard_type, severity = EXCLUDED.severity,
+        area_name = EXCLUDED.area_name, latitude = EXCLUDED.latitude,
+        longitude = EXCLUDED.longitude, occurred_at = EXCLUDED.occurred_at,
+        ingested_at = EXCLUDED.ingested_at, attributes = EXCLUDED.attributes,
+        revision = hazard_events.revision + 1
+    WHERE EXCLUDED.ingested_at > hazard_events.ingested_at`
+
+// importPartition writes copied rows under the fence; it returns how many rows changed.
+func (r *PostgresRepository) importPartition(ctx context.Context, epoch int64, events []domain.HazardEvent) (int64, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	if err := checkFence(ctx, tx, epoch); err != nil {
+		return 0, err
+	}
+	batch := &pgx.Batch{}
+	for _, e := range events {
+		attributes, err := json.Marshal(e.Attributes)
+		if err != nil {
+			return 0, fmt.Errorf("encode hazard attributes: %w", err)
+		}
+		batch.Queue(importSQL, e.HazardID, e.Source, e.SourceRefID, e.HazardType, e.Severity, e.AreaName,
+			e.Latitude, e.Longitude, e.OccurredAt, e.IngestedAt, attributes, PartitionOf(e.HazardID))
+	}
+	results := tx.SendBatch(ctx, batch)
+	var copied int64
+	for range events {
+		tag, err := results.Exec()
+		if err != nil {
+			results.Close()
+			return 0, err
+		}
+		copied += tag.RowsAffected()
+	}
+	if err := results.Close(); err != nil {
+		return 0, err
+	}
+	return copied, tx.Commit(ctx)
+}

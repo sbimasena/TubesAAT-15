@@ -84,6 +84,9 @@ SELECT current_setting('bnpb.node_name', true), count(*), count(DISTINCT partiti
 SQL
     done
     echo "kolom: node | rows | partitions (bandingkan rows dengan count di make p1-checksum)"
+    # The reconciler's placement; "adding"/"removing" mark a move in progress.
+    run kubectl -n "$NS" get configmap store-partition-map -o 'jsonpath={.data.map\.json}'
+    echo
     ;;
   *)
     die "unknown command '${1:-}'; see make help"

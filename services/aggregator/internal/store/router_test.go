@@ -28,22 +28,22 @@ func TestStaticMapSpreadsEvenly(t *testing.T) {
 	r := fakeRouter(t, 3)
 	for _, u := range r.units {
 		primary := 0
-		for _, replicas := range r.replicas {
+		for _, replicas := range r.current().replicas {
 			if replicas[0] == u {
 				primary++
 			}
 		}
 		// P1.1: no unit holds everything; with RF=2 over 3 units each holds 2/3.
-		if held := len(r.held(u)); held != 16 || primary != 8 {
+		if held := len(r.current().held(u)); held != 16 || primary != 8 {
 			t.Fatalf("%s holds %d partitions (primary %d), want 16 (8)", u.name, held, primary)
 		}
 	}
-	for p, replicas := range r.replicas {
+	for p, replicas := range r.current().replicas {
 		if len(replicas) != 2 || replicas[0] == replicas[1] {
 			t.Fatalf("partition %d replicas %v", p, replicas)
 		}
 	}
-	if single := fakeRouter(t, 1); len(single.replicas[0]) != 1 {
+	if single := fakeRouter(t, 1); len(single.current().replicas[0]) != 1 {
 		t.Fatal("one unit must hold every partition once (Compose / M1)")
 	}
 }
@@ -61,14 +61,14 @@ func TestPlanPartialOnlyWhenPartitionHasNoReplica(t *testing.T) {
 		}
 		return results
 	}
-	if pl := plan(r, answer()); pl.partial || len(pl.unavailable) != 0 {
+	if pl := plan(r, r.current(), answer()); pl.partial || len(pl.unavailable) != 0 {
 		t.Fatalf("all up: %+v", pl)
 	}
 	// One unit down: every partition still has a replica (kontrak §7, context-m2.md §10 no. 1).
-	if pl := plan(r, answer("store-0")); pl.partial || !slices.Equal(pl.unavailable, []string{"store-0"}) {
+	if pl := plan(r, r.current(), answer("store-0")); pl.partial || !slices.Equal(pl.unavailable, []string{"store-0"}) {
 		t.Fatalf("one down: partial=%v unavailable=%v", pl.partial, pl.unavailable)
 	}
-	if pl := plan(r, answer("store-0", "store-1")); !pl.partial {
+	if pl := plan(r, r.current(), answer("store-0", "store-1")); !pl.partial {
 		t.Fatal("two of three down must leave some partition without a replica")
 	}
 }
@@ -109,6 +109,10 @@ func TestRouterReplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	r.CheckUnits(ctx)
+	if err := r.LoadMap(ctx); err != nil {
+		t.Fatal(err)
+	}
 
 	base := time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC)
 	var events []domain.HazardEvent
@@ -134,7 +138,7 @@ func TestRouterReplication(t *testing.T) {
 		}
 		want := 0
 		for _, e := range events {
-			if slices.Contains(r.replicas[PartitionOf(e.HazardID)], u) {
+			if slices.Contains(r.current().replicas[PartitionOf(e.HazardID)], u) {
 				want++
 			}
 		}
@@ -180,7 +184,7 @@ func TestRouterReplication(t *testing.T) {
 
 	target := events[0].HazardID
 	locations, partial, err := r.Locate(ctx, target)
-	replicas := r.replicas[PartitionOf(target)]
+	replicas := r.current().replicas[PartitionOf(target)]
 	if err != nil || partial || len(locations) != 2 || locations[0].Unit != replicas[0].name ||
 		locations[0].Role != "primary" || locations[1].Unit != replicas[1].name || locations[1].Role != "replica" {
 		t.Fatalf("locate: %+v partial=%v err=%v", locations, partial, err)
@@ -188,14 +192,14 @@ func TestRouterReplication(t *testing.T) {
 
 	// A primary that missed writes while down must not hide rows (review finding 1),
 	// and a stale copy of a hazard loses to the newer one.
-	lagging := r.replicas[PartitionOf(target)][0]
+	lagging := r.current().replicas[PartitionOf(target)][0]
 	for _, table := range []string{"hazard_outbox", "hazard_events"} {
 		if _, err := lagging.repo.pool.Exec(ctx, "DELETE FROM "+table+" WHERE hazard_id = $1", target); err != nil {
 			t.Fatal(err)
 		}
 	}
 	stale := events[1]
-	staleUnit := r.replicas[PartitionOf(stale.HazardID)][0]
+	staleUnit := r.current().replicas[PartitionOf(stale.HazardID)][0]
 	if _, err := staleUnit.repo.pool.Exec(ctx, `UPDATE hazard_events SET severity = 'NORMAL',
 		ingested_at = ingested_at - interval '1 hour' WHERE hazard_id = $1`, stale.HazardID); err != nil {
 		t.Fatal(err)
@@ -236,16 +240,43 @@ func TestRouterReplication(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.CheckUnits(ctx)
-	if !r.units[2].amnesiac.Load() {
-		t.Fatal("new incarnation must mark the unit amnesiac")
+	if r.current().serves(r.units[2]) {
+		t.Fatal("new incarnation must stop the unit serving reads")
 	}
 	if sum, err := r.Checksum(ctx, "BMKG"); err != nil || sum.Count != 30 || sum.Checksum != wantSum || sum.Partial {
 		t.Fatalf("checksum after amnesia: %+v err=%v", sum, err)
 	}
 
-	// store-0 dies: every partition still has a live replica (store-1 or the amnesiac store-2 for writes).
+	// One reconcile pass refills store-2 from its peers and repairs the lagging primary.
+	if err := r.reconcileOnce(ctx, 3, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if !r.current().serves(r.units[2]) {
+		t.Fatal("reconciler must record store-2's new incarnation once refilled")
+	}
+	for _, u := range r.units {
+		var count int
+		if err := u.repo.pool.QueryRow(ctx, "SELECT count(*) FROM hazard_events WHERE partition_id = ANY($1::int[])",
+			r.current().held(u)).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		want := 0
+		for _, e := range events {
+			if slices.Contains(r.current().replicas[PartitionOf(e.HazardID)], u) {
+				want++
+			}
+		}
+		if count != want {
+			t.Fatalf("after reconcile %s holds %d events, want %d", u.name, count, want)
+		}
+	}
+	var outbox int
+	if err := repos[2].pool.QueryRow(ctx, "SELECT count(*) FROM hazard_outbox").Scan(&outbox); err != nil || outbox != 0 {
+		t.Fatalf("a copy must not queue outbox messages: %d err=%v", outbox, err)
+	}
+
+	// store-0 dies: every partition still has a live replica.
 	repos[0].Close()
-	r.units[2].amnesiac.Store(false) // pretend the reconciler refilled it
 	if _, err := r.Upsert(ctx, 3, events, "router-refill"); err != nil {
 		t.Fatalf("refill with one unit down: %v", err)
 	}
@@ -265,7 +296,7 @@ func TestRouterReplication(t *testing.T) {
 	}
 	var lost domain.HazardEvent
 	for _, e := range events {
-		if !slices.Contains(r.replicas[PartitionOf(e.HazardID)], r.units[2]) {
+		if !slices.Contains(r.current().replicas[PartitionOf(e.HazardID)], r.units[2]) {
 			lost = e
 			break
 		}

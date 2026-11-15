@@ -14,6 +14,7 @@ spec:
     metadata:
       labels: {app: aggregator, role: aggregator}
     spec:
+      serviceAccountName: aggregator
       terminationGracePeriodSeconds: 30
       containers:
         - name: aggregator
@@ -23,6 +24,10 @@ spec:
           env:
             - name: AGGREGATOR_PORT
               value: "8083"
+            # Unit unseen this long: the reconciler moves its partitions (P1.6). Longer than a
+            # store pod restart, so kill-store does not trigger a full copy.
+            - name: REREPLICATE_AFTER_SECONDS
+              value: "60"
             - name: BMKG_API_KEY
               valueFrom: {secretKeyRef: {name: source-credentials, key: BMKG_API_KEY}}
             - name: PVMBG_TOKEN
@@ -72,3 +77,38 @@ metadata:
 spec:
   selector: {app: aggregator}
   ports: [{name: http, port: 8083, targetPort: http}]
+---
+# The partition map lives in ConfigMap store-partition-map (D-COORD). The Aggregator
+# creates it itself; it is deliberately not in Kustomize so `kubectl apply -k` never
+# overwrites the reconciler's placement.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aggregator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aggregator-partition-map
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [store-partition-map]
+    verbs: [get, update]
+  # create cannot be limited by resourceNames.
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aggregator-partition-map
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aggregator-partition-map
+subjects:
+  - kind: ServiceAccount
+    name: aggregator
+    namespace: sistem-informasi-kebencanaan-bnpb

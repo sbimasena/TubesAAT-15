@@ -32,19 +32,20 @@ type unit struct {
 	name        string
 	repo        *PostgresRepository
 	incarnation atomic.Pointer[string]
-	// amnesiac is set when the unit comes back empty (new incarnation): it keeps
-	// receiving writes but serves no reads, so its replica answers instead.
-	amnesiac atomic.Bool
+	lastSeen    atomic.Int64 // unix nanos of the last successful check
 }
 
 // Router is the Store: it spreads Partitions over units with ReplicationFactor copies.
 type Router struct {
-	units  []*unit
-	byName map[string]*unit
-	// replicas[p] lists the units holding partition p; index 0 is the primary.
-	replicas  [Partitions][]*unit
+	units     []*unit
+	byName    map[string]*unit
+	layout    atomic.Pointer[layout]
 	cursorSeq atomic.Int64
 	logger    *slog.Logger
+
+	maps       mapStore
+	mapMu      sync.Mutex // serialises map writers; version is the CAS token of layout
+	mapVersion string
 }
 
 // OpenRouter takes DATABASE_URL as a comma-separated list, one URL per unit; the unit
@@ -68,6 +69,9 @@ func OpenRouter(databaseURLs string, logger *slog.Logger) (*Router, error) {
 		repos = append(repos, repo)
 	}
 	router, err := newRouter(names, repos, logger)
+	if err == nil {
+		router.maps, err = newMapStore()
+	}
 	if err != nil {
 		closeAll(repos)
 	}
@@ -80,9 +84,7 @@ func closeAll(repos []*PostgresRepository) {
 	}
 }
 
-// newRouter builds the static map p -> [units[p%n], units[(p+1)%n]].
-// shortcut: the map lives in config, not in ConfigMap store-partition-map; move it there
-// together with the reconciler (re-replication, new node, amnesia across restarts).
+// newRouter starts from defaultMap; LoadMap replaces it with the durable map.
 func newRouter(names []string, repos []*PostgresRepository, logger *slog.Logger) (*Router, error) {
 	r := &Router{byName: map[string]*unit{}, logger: logger}
 	for i, name := range names {
@@ -90,16 +92,14 @@ func newRouter(names []string, repos []*PostgresRepository, logger *slog.Logger)
 			return nil, fmt.Errorf("duplicate store unit name %q", name)
 		}
 		u := &unit{name: name, repo: repos[i]}
+		u.lastSeen.Store(time.Now().UnixNano()) // grace period before a never-seen unit counts as dead
 		r.units = append(r.units, u)
 		r.byName[name] = u
 	}
 	// Seed from the clock so a restarted leader with the same epoch still writes a higher seq.
 	r.cursorSeq.Store(time.Now().UnixNano())
-	for p := range Partitions {
-		for i := range min(ReplicationFactor, len(r.units)) {
-			r.replicas[p] = append(r.replicas[p], r.units[(p+i)%len(r.units)])
-		}
-	}
+	r.maps = &memoryMaps{}
+	r.layout.Store(r.resolve(defaultMap(names)))
 	return r, nil
 }
 
@@ -153,10 +153,12 @@ func (r *Router) check(ctx context.Context, u *unit) {
 		r.log(slog.LevelWarn, "store unit unreachable", "unit", u.name, "error", err)
 		return
 	}
+	u.lastSeen.Store(time.Now().UnixNano())
 	previous := u.incarnation.Swap(&incarnation)
-	if previous != nil && *previous != incarnation && !u.amnesiac.Swap(true) {
+	if recorded := r.current().m.Incarnations[u.name]; recorded != "" && recorded != incarnation &&
+		(previous == nil || *previous != incarnation) {
 		r.log(slog.LevelWarn, "store unit lost its data; reads moved to replicas", "unit", u.name,
-			"old_incarnation", *previous, "incarnation", incarnation)
+			"recorded_incarnation", recorded, "incarnation", incarnation)
 	}
 }
 
@@ -188,15 +190,22 @@ func gather[T any](ctx context.Context, units []*unit, timeout time.Duration, fn
 	return results
 }
 
-// readable lists units allowed to serve reads.
-func (r *Router) readable() []*unit {
-	return slices.DeleteFunc(slices.Clone(r.units), func(u *unit) bool { return u.amnesiac.Load() })
+// serves reports whether u may answer reads: its live incarnation is the one recorded
+// in the map. A unit never reached yet is tried, and simply times out if down.
+func (l *layout) serves(u *unit) bool {
+	live := u.incarnation.Load()
+	return live == nil || l.m.Incarnations[u.name] == *live
 }
 
-// held lists the partitions a unit stores, as the int[] the unit queries expect.
-func (r *Router) held(u *unit) []int32 {
+// readable lists units allowed to serve reads.
+func (l *layout) readable(units []*unit) []*unit {
+	return slices.DeleteFunc(slices.Clone(units), func(u *unit) bool { return !l.serves(u) })
+}
+
+// held lists the partitions a unit serves, as the int[] the unit queries expect.
+func (l *layout) held(u *unit) []int32 {
 	var parts []int32
-	for p, replicas := range r.replicas {
+	for p, replicas := range l.replicas {
 		if slices.Contains(replicas, u) {
 			parts = append(parts, int32(p))
 		}
@@ -211,7 +220,7 @@ type readPlan struct {
 }
 
 // plan reports partial only when a partition has no answering replica.
-func plan[T any](r *Router, results []result[T]) readPlan {
+func plan[T any](r *Router, l *layout, results []result[T]) readPlan {
 	answered := map[*unit]bool{}
 	pl := readPlan{unavailable: []string{}}
 	for _, res := range results {
@@ -224,7 +233,7 @@ func plan[T any](r *Router, results []result[T]) readPlan {
 			pl.unavailable = append(pl.unavailable, u.name)
 		}
 	}
-	for _, replicas := range r.replicas {
+	for _, replicas := range l.replicas {
 		pl.partial = pl.partial || !slices.ContainsFunc(replicas, func(u *unit) bool { return answered[u] })
 	}
 	return pl
@@ -261,9 +270,10 @@ func (r *Router) Fence(ctx context.Context, epoch int64) error {
 // Upsert writes each event to every replica of its partition; an event counts as
 // stored once one replica committed. Lagging replicas are caught up by anti-entropy.
 func (r *Router) Upsert(ctx context.Context, epoch int64, events []domain.HazardEvent, correlationID string) ([]domain.HazardEvent, error) {
+	l := r.current()
 	batches := map[*unit][]domain.HazardEvent{}
 	for _, event := range events {
-		for _, u := range r.replicas[PartitionOf(event.HazardID)] {
+		for _, u := range l.writes[PartitionOf(event.HazardID)] {
 			batches[u] = append(batches[u], event)
 		}
 	}
@@ -319,13 +329,14 @@ func (r *Router) List(ctx context.Context, filter Filter, correlationID string) 
 			"correlation_id", correlationID, "latency_ms", float64(time.Since(started).Microseconds())/1000,
 			"unavailable_units", pl.unavailable, "partial", pl.partial, "error", err)
 	}()
-	results := gather(ctx, r.readable(), unitReadTimeout, func(ctx context.Context, u *unit) ([]domain.HazardEvent, error) {
-		return u.repo.listParts(ctx, filter, r.held(u))
+	l := r.current()
+	results := gather(ctx, l.readable(r.units), unitReadTimeout, func(ctx context.Context, u *unit) ([]domain.HazardEvent, error) {
+		return u.repo.listParts(ctx, filter, l.held(u))
 	})
 	if err := noUnitAnswered(results); err != nil {
 		return nil, err
 	}
-	pl = plan(r, results)
+	pl = plan(r, l, results)
 	events = merge(results, func(a, b domain.HazardEvent) int {
 		return cmp.Or(b.OccurredAt.Compare(a.OccurredAt), strings.Compare(a.HazardID, b.HazardID))
 	})
@@ -339,13 +350,14 @@ func (r *Router) Query(ctx context.Context, filter Filter, cursor string) (Page,
 		return Page{}, err
 	}
 	limit := clampLimit(filter.Limit)
-	results := gather(ctx, r.readable(), unitReadTimeout, func(ctx context.Context, u *unit) ([]domain.HazardEvent, error) {
-		return u.repo.queryParts(ctx, filter, after, r.held(u), limit+1)
+	l := r.current()
+	results := gather(ctx, l.readable(r.units), unitReadTimeout, func(ctx context.Context, u *unit) ([]domain.HazardEvent, error) {
+		return u.repo.queryParts(ctx, filter, after, l.held(u), limit+1)
 	})
 	if err := noUnitAnswered(results); err != nil {
 		return Page{}, err
 	}
-	pl := plan(r, results)
+	pl := plan(r, l, results)
 	events := merge(results, func(a, b domain.HazardEvent) int {
 		return cmp.Or(a.IngestedAt.Compare(b.IngestedAt), strings.Compare(a.HazardID, b.HazardID))
 	})
@@ -382,13 +394,14 @@ func merge(results []result[[]domain.HazardEvent], compare func(a, b domain.Haza
 // Checksum follows kontrak-m2.md §7.3; an empty source covers every source.
 func (r *Router) Checksum(ctx context.Context, source string) (ChecksumResult, error) {
 	asOf := time.Now().UTC()
-	results := gather(ctx, r.readable(), unitReadTimeout, func(ctx context.Context, u *unit) ([]partRef, error) {
-		return u.repo.refIDs(ctx, source, r.held(u))
+	l := r.current()
+	results := gather(ctx, l.readable(r.units), unitReadTimeout, func(ctx context.Context, u *unit) ([]partRef, error) {
+		return u.repo.refIDs(ctx, source, l.held(u))
 	})
 	if err := noUnitAnswered(results); err != nil {
 		return ChecksumResult{}, err
 	}
-	pl := plan(r, results)
+	pl := plan(r, l, results)
 	refs := map[string]string{} // hazard_id -> source_ref_id, union of both copies.
 	for _, res := range results {
 		for _, ref := range res.value {
@@ -411,7 +424,7 @@ func (r *Router) Locate(ctx context.Context, hazardID string) ([]Location, bool,
 		exists bool
 		node   string
 	}
-	replicas := r.replicas[PartitionOf(hazardID)]
+	replicas := r.current().replicas[PartitionOf(hazardID)]
 	results := gather(ctx, replicas, unitReadTimeout, func(ctx context.Context, u *unit) (found, error) {
 		exists, node, err := u.repo.locate(ctx, hazardID)
 		return found{exists, node}, err
@@ -455,7 +468,8 @@ func (r *Router) LoadCursor(ctx context.Context, source string) (string, error) 
 		cursor savedCursor
 		found  bool
 	}
-	results := gather(ctx, r.readable(), unitReadTimeout, func(ctx context.Context, u *unit) (loaded, error) {
+	l := r.current()
+	results := gather(ctx, l.readable(r.units), unitReadTimeout, func(ctx context.Context, u *unit) (loaded, error) {
 		c, found, err := u.repo.loadCursor(ctx, source)
 		return loaded{c, found}, err
 	})

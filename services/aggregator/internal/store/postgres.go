@@ -491,3 +491,32 @@ func (r *PostgresRepository) importPartition(ctx context.Context, epoch int64, e
 	}
 	return copied, tx.Commit(ctx)
 }
+
+// dropPartitionsExcept deletes the rows of partitions this unit no longer replicates,
+// left behind by moves. Events with an unpublished outbox message stay until the relay
+// sends it; published messages of dropped events go with them (the FK needs that).
+const dropSQL = `
+    WITH gone AS (
+        SELECT hazard_id FROM hazard_events e
+        WHERE NOT (partition_id = ANY($1::int[]))
+          AND NOT EXISTS (SELECT 1 FROM hazard_outbox o WHERE o.hazard_id = e.hazard_id AND o.published_at IS NULL)
+    ), sent AS (
+        DELETE FROM hazard_outbox WHERE hazard_id IN (SELECT hazard_id FROM gone)
+    )
+    DELETE FROM hazard_events WHERE hazard_id IN (SELECT hazard_id FROM gone)`
+
+func (r *PostgresRepository) dropPartitionsExcept(ctx context.Context, epoch int64, keep []int32) (int64, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	if err := checkFence(ctx, tx, epoch); err != nil {
+		return 0, err
+	}
+	tag, err := tx.Exec(ctx, dropSQL, keep)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), tx.Commit(ctx)
+}

@@ -108,7 +108,35 @@ func (r *Router) reconcileOnce(ctx context.Context, epoch int64, deadAfter time.
 	l = r.current()
 	m = l.m.clone()
 	r.finishMoves(ctx, epoch, l, m, dead)
-	return r.commitLocked(ctx, m)
+	if err := r.commitLocked(ctx, m); err != nil {
+		return err
+	}
+	// Only after the map without the old replica is durable, so copies never drop below RF.
+	r.sweep(ctx, epoch, r.current(), dead)
+	return nil
+}
+
+// sweep deletes, on every live unit, the partitions it no longer replicates (reads or writes).
+func (r *Router) sweep(ctx context.Context, epoch int64, l *layout, dead func(*unit) bool) {
+	for _, u := range r.units {
+		var keep []int32
+		for p, writes := range l.writes {
+			if slices.Contains(writes, u) {
+				keep = append(keep, int32(p))
+			}
+		}
+		if dead(u) || len(keep) == 0 {
+			continue // a unit outside the map (just added) keeps its rows until it is given slots
+		}
+		ctx, cancel := context.WithTimeout(ctx, syncTimeout)
+		dropped, err := u.repo.dropPartitionsExcept(ctx, epoch, keep)
+		cancel()
+		if err != nil {
+			r.log(slog.LevelWarn, "sweep failed", "unit", u.name, "error", err)
+		} else if dropped > 0 {
+			r.log(slog.LevelInfo, "moved-away partitions swept", "unit", u.name, "rows", dropped)
+		}
+	}
 }
 
 // recoverAmnesia refills a unit whose live incarnation is not the recorded one (wiped
@@ -249,9 +277,8 @@ func planMoves(m partitionMap, units []*unit, dead func(*unit) bool, serves func
 }
 
 // finishMoves fills each Adding replica, then swaps it in for Removing. A move whose
-// target died is dropped; planMoves picks another target next pass.
-// shortcut: the old copy is left on Removing (reads ignore it via held); delete it if
-// disk space on a unit becomes tight.
+// target died is dropped; planMoves picks another target next pass. sweep deletes the
+// old copy on Removing once the flipped map is saved.
 func (r *Router) finishMoves(ctx context.Context, epoch int64, l *layout, m partitionMap, dead func(*unit) bool) {
 	for p, s := range m.Partitions {
 		if s.Adding == "" {

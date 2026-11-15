@@ -149,6 +149,16 @@ func TestReconcileReReplicatesAndRebalances(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantSum := checksumOf("", refs, time.Time{}).Checksum
+	// The relay has sent everything; sweep keeps events whose message is still pending.
+	markSent := func() {
+		t.Helper()
+		for _, repo := range repos {
+			if _, err := repo.pool.Exec(ctx, "UPDATE hazard_outbox SET published_at = now()"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	markSent()
 
 	// Map created while only store-0 answered: store-1 and store-2 share partitions with no
 	// recorded replica, and must not wait on each other forever.
@@ -165,14 +175,16 @@ func TestReconcileReReplicatesAndRebalances(t *testing.T) {
 		t.Fatalf("unrecorded units must be refilled and recorded, got %v", got)
 	}
 
-	// Every unit holds exactly the events of the partitions it serves.
+	// Every unit holds exactly the events of the partitions it serves: moved-away copies are swept.
 	checkPlacement := func(stage string) {
 		t.Helper()
 		l := r.current()
 		for _, u := range r.units {
+			if u.lastSeen.Load() == 0 {
+				continue // dead: unreachable in reality, so nothing to sweep or to count
+			}
 			var count int
-			if err := u.repo.pool.QueryRow(ctx, "SELECT count(*) FROM hazard_events WHERE partition_id = ANY($1::int[])",
-				l.held(u)).Scan(&count); err != nil {
+			if err := u.repo.pool.QueryRow(ctx, "SELECT count(*) FROM hazard_events").Scan(&count); err != nil {
 				t.Fatal(err)
 			}
 			want := 0
@@ -217,6 +229,31 @@ func TestReconcileReReplicatesAndRebalances(t *testing.T) {
 		}
 	}
 	checkPlacement("rebalanced")
+
+	// An event with an unsent outbox message survives the sweep until the relay sends it.
+	u := r.units[0]
+	stray := m2Event("BMKG", "SEISMIC", "stray", base)
+	for i := 0; slices.Contains(r.current().held(u), int32(PartitionOf(stray.HazardID))); i++ {
+		stray = m2Event("BMKG", "SEISMIC", fmt.Sprintf("stray-%d", i), base)
+	}
+	if _, err := u.repo.Upsert(ctx, 0, []domain.HazardEvent{stray}, "stray"); err != nil {
+		t.Fatal(err)
+	}
+	strayLeft := func() (n int) {
+		t.Helper()
+		r.sweep(ctx, 0, r.current(), func(*unit) bool { return false })
+		if err := u.repo.pool.QueryRow(ctx, "SELECT count(*) FROM hazard_events WHERE hazard_id = $1", stray.HazardID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if strayLeft() != 1 {
+		t.Fatal("sweep must keep an event whose outbox message is unsent")
+	}
+	markSent()
+	if strayLeft() != 0 {
+		t.Fatal("sweep must drop a moved-away event once its message is sent")
+	}
 
 	// The map is durable: a restarted Aggregator loads the moved placement, not the default.
 	restarted, err := newRouter(names, repos, nil)

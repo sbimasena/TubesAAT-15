@@ -89,7 +89,7 @@ TEST_DATABASE_URL='postgres://postgres@127.0.0.1:55432/postgres?sslmode=disable'
 - [ ] Jalankan `p1-load`/`p1-surge` dengan dataset asisten (dibagikan setelah 20 Nov), simpan tabel beban per unit sebagai bukti.
 - [ ] Reconciler hanya di leader setelah `internal/leader` dari A masuk (sekarang epoch 0 di `cmd/server/main.go`).
 - [ ] Akses Audit API dari luar cluster (menunggu jawaban asisten).
-- [ ] Runbook P1 di `runbook.md` dan laporan P1.
+- [ ] Laporan P1.
 
 ## Risiko yang diketahui
 

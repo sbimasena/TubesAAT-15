@@ -34,7 +34,12 @@ Cluster: `node-a` (control plane + worker, 192.168.18.201), `node-c` (worker, 19
 - Langkah: `t+5s call_mock_admin`. Gagal di 15:45:21 UTC: `tidak ada Service role=mock pada namespace sistem-informasi-kebencanaan-bnpb`, meskipun log tetap melaporkan "keadaan bersih".
 - Penyebab: agent mencari **Service** berlabel `role=mock`, sedangkan kontrak §1.1 hanya mewajibkan label `role` pada pod. Label di pod saja tidak cukup.
 - Percobaan pertama: memberi `role: mock` pada Service `bmkg` dan `pvmbg`. Hasilnya (15:52, 15:53) `mock POST /admin/schema-version -> HTTP 404`, karena agent memakai Service `role=mock` yang pertama, yaitu `bmkg`, dan hanya PVMBG yang punya route itu.
-- Perbaikan: `role: mock` **hanya** pada Service `pvmbg`. Pod `bmkg` tetap berlabel `role=mock` sesuai kontrak. Service `sensor-pantai` diberi `role: sensor` untuk berjaga-jaga. Sesudah uji selalu jalankan `make reset` (schema PVMBG kembali ke versi 1).
+- Setelah label hanya di `pvmbg` (15:58:49): `mock POST /admin/schema-version -> HTTP 401`. Agent sekarang mencapai PVMBG, tetapi mock mewajibkan `Authorization: Bearer <PVMBG_TOKEN>` di endpoint admin (`services/pvmbg/cmd/server/main.go`, `requirePVMBGToken`), dan agent tidak punya token kita. Ini wilayah **P3 (B)**:
+  - Endpoint admin perlu menerima panggilan tanpa token (hanya kait uji, tidak terekspos ke luar cluster).
+  - `version: 2` saat ini hanya menambah `confidence_level` (kompatibel), padahal spesifikasi §256 meminta mode **tidak kompatibel**.
+  - Payload yang dikirim agent belum diketahui (pertanyaan terbuka #4 di `context-m2.md`).
+- NetworkPolicy `store-ingress` tidak terlibat: request agent sampai ke pod PVMBG.
+- Perbaikan label: `role: mock` **hanya** pada Service `pvmbg`. Pod `bmkg` tetap berlabel `role=mock` sesuai kontrak. Service `sensor-pantai` diberi `role: sensor` untuk berjaga-jaga. Sesudah uji selalu jalankan `make reset` (schema PVMBG kembali ke versi 1).
 
 ## kill-store (practice, 15 Nov 2026, cluster 3 node berisi data)
 

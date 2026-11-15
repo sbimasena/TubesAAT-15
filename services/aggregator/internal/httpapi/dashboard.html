@@ -54,7 +54,7 @@
 <script>
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 // Color follows the hazard type, never its rank (fixed slots; unknown types take the next free slot).
-const slots = ["SEISMIC", "VOLCANIC", "COASTAL", "FIRE"];
+const slots = ["SEISMIC", "VOLCANIC", "COASTAL", "WILDFIRE"];
 const colorOf = type => { if (!slots.includes(type)) slots.push(type); return css("--s" + Math.min(slots.indexOf(type) + 1, 8)); };
 const charts = {};
 function draw(id, config) {

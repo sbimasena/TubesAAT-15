@@ -115,9 +115,11 @@ SQL
     # Storage ownership (context-m2.md §6.4): a pod labelled like client-api must not reach
     # the store; the same pod labelled role=aggregator must. Only labels differ, so the
     # NetworkPolicy, not DNS or credentials, is what blocks the first.
+    # pg_isready exits 0 only on a real PostgreSQL answer (image already on every node).
+    # The sleep lets kube-router add the new pod's IP to the policy before the probe.
     check() {
-      run kubectl -n "$NS" run "p1-netpol-$RANDOM" --rm -i --restart=Never --quiet --image=busybox:1.36 \
-        --labels="$1" -- nc -z -w 3 store-0.store 5432
+      run kubectl -n "$NS" run "p1-netpol-$RANDOM" --rm -i --restart=Never --quiet --image=postgres:17-alpine \
+        --labels="$1" --command -- sh -c 'sleep 5; pg_isready -h store-0.store -p 5432 -t 3'
     }
     if check app=netpol-check,role=api; then die "role=api reached store-0:5432; NetworkPolicy store-ingress is not enforced"; fi
     echo "role=api -> store-0:5432 ditolak (benar)"

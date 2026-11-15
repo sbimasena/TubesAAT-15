@@ -53,7 +53,7 @@ case "${1:-}" in
     # Back to the deployed manifests (replica counts, images) and normal mock modes.
     [[ -f "$GENERATED/kustomization.yaml" ]] || die "nothing deployed from this checkout yet; run make deploy"
     # Another member may have deployed since; re-applying our older images would silently roll back.
-    ours="$(sed -n 's#.*name: bnpb/aggregator, newName: \(.*\), newTag: \(.*\)}#\1:\2#p' "$GENERATED/kustomization.yaml")"
+    ours="$(sed -n 's#.*name: bnpb/aggregator, newName: \(.*\), newTag: "\(.*\)"}#\1:\2#p' "$GENERATED/kustomization.yaml")"
     running="$(kubectl -n "$NS" get deployment aggregator -o jsonpath='{.spec.template.spec.containers[0].image}')"
     [[ "$ours" == "$running" ]] || die "cluster runs $running but this checkout last deployed $ours; run make deploy instead"
     run kubectl apply -k "$GENERATED"

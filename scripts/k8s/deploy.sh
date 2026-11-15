@@ -112,7 +112,7 @@ mkdir -p "$GENERATED"
   echo "images:"
   for service in "${SERVICES[@]}"; do
     ref="$(image_ref "$service")"
-    echo "  - {name: bnpb/$service, newName: ${ref%:*}, newTag: $TAG}"
+    echo "  - {name: bnpb/$service, newName: ${ref%:*}, newTag: \"$TAG\"}"
   done
 } >"$GENERATED/kustomization.yaml"
 

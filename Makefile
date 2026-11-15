@@ -12,7 +12,7 @@ endif
 SH = "$(BASH)"
 
 .DEFAULT_GOAL := help
-.PHONY: help dev-up dev-down deploy status logs tester-list tester open reset p1-checksum p1-distribution p1-load p1-surge p1-wipe-node p1-dashboard p1-amnesia p1-audit
+.PHONY: help dev-up dev-down deploy status logs tester-list tester open reset p1-checksum p1-distribution p1-load p1-surge p1-wipe-node p1-dashboard p1-amnesia p1-audit p1-netpol
 
 help: ## Daftar target
 	@$(SH) scripts/k8s/help.sh Makefile
@@ -55,6 +55,9 @@ p1-wipe-node: ## Checksum awal lalu Tester Agent wipe-node (P1.4)
 
 p1-amnesia: ## Simulasi disk kosong pada satu unit (P1.5): make p1-amnesia S=store-1
 	@$(SH) scripts/k8s/ops.sh p1-amnesia $(S)
+
+p1-netpol: ## Bukti hanya Aggregator yang bisa konek ke store (NetworkPolicy)
+	@$(SH) scripts/k8s/ops.sh p1-netpol
 
 p1-audit: ## Audit API events (cursor) dan location satu event
 	@$(SH) scripts/k8s/ops.sh p1-audit

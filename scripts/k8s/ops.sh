@@ -111,6 +111,19 @@ UPDATE unit_meta SET incarnation = gen_random_uuid() RETURNING 'incarnation baru
 SQL
     echo "Lihat log: make logs S=aggregator ('lost its data' lalu 'refilled'), lalu make p1-checksum dan make p1-distribution."
     ;;
+  p1-netpol)
+    # Storage ownership (context-m2.md §6.4): a pod labelled like client-api must not reach
+    # the store; the same pod labelled role=aggregator must. Only labels differ, so the
+    # NetworkPolicy, not DNS or credentials, is what blocks the first.
+    check() {
+      run kubectl -n "$NS" run "p1-netpol-$RANDOM" --rm -i --restart=Never --quiet --image=busybox:1.36 \
+        --labels="$1" -- nc -z -w 3 store-0.store 5432
+    }
+    if check app=netpol-check,role=api; then die "role=api reached store-0:5432; NetworkPolicy store-ingress is not enforced"; fi
+    echo "role=api -> store-0:5432 ditolak (benar)"
+    check app=netpol-check,role=aggregator || die "role=aggregator could not reach store-0:5432"
+    echo "role=aggregator -> store-0:5432 terhubung (benar)"
+    ;;
   p1-audit)
     # The other two Audit API endpoints (kontrak-m2.md §7): a cursor page, then where one event lives.
     token="$(secret_value audit-token token)"

@@ -48,8 +48,10 @@ spec:
             exec:
               command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
             periodSeconds: 5
+          # exec, not tcpSocket: the store-ingress NetworkPolicy admits only the Aggregator.
           livenessProbe:
-            tcpSocket: {port: postgres}
+            exec:
+              command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
             initialDelaySeconds: 30
             periodSeconds: 10
           volumeMounts:
@@ -72,3 +74,22 @@ spec:
   clusterIP: None
   selector: {app: store}
   ports: [{name: postgres, port: 5432, targetPort: postgres}]
+---
+# Storage ownership enforced by the platform (context-m2.md §6.4): only the Aggregator
+# reaches PostgreSQL. Selects store pods only, so no other service (or the Tester Agent,
+# which never connects to the store) is affected. Copies between units go through the
+# Aggregator, so no store-to-store rule is needed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: store-ingress
+spec:
+  podSelector:
+    matchLabels: {role: store}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {role: aggregator}
+      ports:
+        - {protocol: TCP, port: 5432}

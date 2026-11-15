@@ -14,6 +14,7 @@
     {"id": "p1-dashboard", "group": "P1", "label": "Buka dashboard analitik", "make": "p1-dashboard", "destructive": false},
     {"id": "p1-wipe-node", "group": "P1", "label": "Checksum awal + Tester Agent wipe-node", "make": "p1-wipe-node", "destructive": true},
     {"id": "p1-amnesia", "group": "P1", "label": "Simulasi disk kosong satu unit store", "make": "p1-amnesia", "params": ["S"], "destructive": true},
+    {"id": "p1-netpol", "group": "P1", "label": "Bukti kepemilikan storage (NetworkPolicy)", "make": "p1-netpol", "destructive": false},
     {"id": "p1-audit", "group": "P1", "label": "Audit API events + location", "make": "p1-audit", "destructive": false},
     {"id": "p1-load", "group": "P1", "label": "Muat katalog gempa + ukur beban per unit", "make": "p1-load", "params": ["FILE"], "destructive": false},
     {"id": "p1-surge", "group": "P1", "label": "Lonjakan gempa satu wilayah + ukur beban per unit", "make": "p1-surge", "params": ["N", "REGION"], "destructive": false},

@@ -278,3 +278,14 @@ func sortedLoad(load map[string]int) []string {
 	slices.Sort(out)
 	return out
 }
+
+func TestStorageStatusCountsUnderReplicatedPartitions(t *testing.T) {
+	r := fakeRouter(t, 3)
+	if s := r.StorageStatus(); s.UnderReplicated != 0 || len(s.Units) != 3 || s.Units[0].Partitions != 16 {
+		t.Fatalf("healthy cluster: %+v", s)
+	}
+	r.units[2].lastSeen.Store(0) // store-2 silent: every partition it holds is down to one copy
+	if s := r.StorageStatus(); s.UnderReplicated != 16 || s.Units[2].Up {
+		t.Fatalf("store-2 unreachable: %+v", s)
+	}
+}

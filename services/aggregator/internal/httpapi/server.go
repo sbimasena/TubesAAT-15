@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/ingest"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/store"
+	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/telemetry"
 )
 
 type Server struct {
@@ -22,6 +24,7 @@ type Server struct {
 	audit      store.Store
 	auditToken string
 	analytics  analyzer
+	status     map[string]func(context.Context) any
 }
 
 func NewServer(repository store.Repository, manager *ingest.Manager, logger *slog.Logger) *Server {
@@ -31,8 +34,10 @@ func NewServer(repository store.Repository, manager *ingest.Manager, logger *slo
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
+	mux.Handle("GET /metrics", telemetry.MetricsHandler())
 	mux.HandleFunc("GET /hazards", s.listHazards)
 	mux.HandleFunc("GET /internal/v1/hazards", s.listHazards)
+	mux.HandleFunc("GET /internal/v1/status", s.internalStatus)
 	if s.audit != nil {
 		mux.HandleFunc("GET /internal/audit/events", s.requireAuditToken(s.auditEvents))
 		mux.HandleFunc("GET /internal/audit/checksum", s.requireAuditToken(s.auditChecksum))
@@ -43,7 +48,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /dashboard", s.dashboard)
 		mux.HandleFunc("GET /internal/analytics", s.analyticsData)
 	}
-	return s.withRequestLogging(mux)
+	return telemetry.Middleware("aggregator", s.withRequestLogging(mux))
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +123,7 @@ func (s *Server) withRequestLogging(next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK
 		}
-		s.logger.Info("request complete", "service", "aggregator", "correlation_id", correlationID, "operation", r.URL.Path, "latency_ms", float64(time.Since(started).Microseconds())/1000, "status", status)
+		s.logger.Info("request complete", "service", "aggregator", "correlation_id", correlationID, "operation", r.URL.Path, "latency_ms", float64(time.Since(started).Microseconds())/1000, "status", status, "trace_id", telemetry.TraceID(r.Context()))
 	})
 }
 

@@ -15,7 +15,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/domain"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var tracer = otel.Tracer("aggregator/store")
 
 // ReplicationFactor is fixed by D-P1: with 3 units each holds 2/3 of the data.
 const ReplicationFactor = 2
@@ -32,7 +37,8 @@ type unit struct {
 	name        string
 	repo        *PostgresRepository
 	incarnation atomic.Pointer[string]
-	lastSeen    atomic.Int64 // unix nanos of the last successful check
+	node        atomic.Pointer[string] // bnpb.node_name of the store pod, for the status endpoint
+	lastSeen    atomic.Int64           // unix nanos of the last successful check
 }
 
 // Router is the Store: it spreads Partitions over units with ReplicationFactor copies.
@@ -141,12 +147,13 @@ func (r *Router) CheckUnits(ctx context.Context) {
 func (r *Router) check(ctx context.Context, u *unit) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	var incarnation string
-	err := u.repo.pool.QueryRow(ctx, "SELECT incarnation::text FROM unit_meta").Scan(&incarnation)
+	const query = "SELECT incarnation::text, coalesce(current_setting('bnpb.node_name', true), '') FROM unit_meta"
+	var incarnation, node string
+	err := u.repo.pool.QueryRow(ctx, query).Scan(&incarnation, &node)
 	if pgErr := (*pgconn.PgError)(nil); errors.As(err, &pgErr) && pgErr.Code == "42P01" {
 		// Fresh or wiped disk: no schema yet.
 		if err = u.repo.migrate(ctx); err == nil {
-			err = u.repo.pool.QueryRow(ctx, "SELECT incarnation::text FROM unit_meta").Scan(&incarnation)
+			err = u.repo.pool.QueryRow(ctx, query).Scan(&incarnation, &node)
 		}
 	}
 	if err != nil {
@@ -154,12 +161,68 @@ func (r *Router) check(ctx context.Context, u *unit) {
 		return
 	}
 	u.lastSeen.Store(time.Now().UnixNano())
+	u.node.Store(&node)
 	previous := u.incarnation.Swap(&incarnation)
 	if recorded := r.current().m.Incarnations[u.name]; recorded != "" && recorded != incarnation &&
 		(previous == nil || *previous != incarnation) {
 		r.log(slog.LevelWarn, "store unit lost its data; reads moved to replicas", "unit", u.name,
 			"recorded_incarnation", recorded, "incarnation", incarnation)
 	}
+}
+
+// UnitStat is one store unit's state for the metrics and status endpoints.
+type UnitStat struct {
+	Name       string `json:"unit"`
+	Node       string `json:"node"`       // "" until the unit first answered
+	Up         bool   `json:"reachable"`  // answered a health check within the last 15 s (checks run every 5 s)
+	Serving    bool   `json:"serving"`    // false while refilled after data loss (amnesia)
+	Partitions int    `json:"partitions"` // replica slots the partition map gives it (16 of 48 when balanced)
+}
+
+func (r *Router) UnitStats() []UnitStat {
+	l := r.current()
+	load := l.m.load()
+	stats := make([]UnitStat, len(r.units))
+	for i, u := range r.units {
+		stats[i] = UnitStat{Name: u.name, Partitions: load[u.name], Serving: l.serves(u),
+			Up: time.Since(time.Unix(0, u.lastSeen.Load())) < 15*time.Second}
+		if node := u.node.Load(); node != nil {
+			stats[i].Node = *node
+		}
+	}
+	return stats
+}
+
+// StorageStatus is the storage section of GET /internal/v1/status.
+type StorageStatus struct {
+	Units []UnitStat `json:"units"`
+	// Partitions with fewer than ReplicationFactor reachable, serving replicas right now.
+	UnderReplicated int `json:"under_replicated_partitions"`
+	MovesInProgress int `json:"moves_in_progress"`
+}
+
+func (r *Router) StorageStatus() StorageStatus {
+	l := r.current()
+	status := StorageStatus{Units: r.UnitStats()}
+	healthy := map[string]bool{}
+	for _, u := range status.Units {
+		healthy[u.Name] = u.Up && u.Serving
+	}
+	for p, replicas := range l.replicas {
+		live := 0
+		for _, u := range replicas {
+			if healthy[u.name] {
+				live++
+			}
+		}
+		if live < ReplicationFactor {
+			status.UnderReplicated++
+		}
+		if l.m.Partitions[p].Adding != "" {
+			status.MovesInProgress++
+		}
+	}
+	return status
 }
 
 func (r *Router) log(level slog.Level, msg string, attrs ...any) {
@@ -178,11 +241,24 @@ type result[T any] struct {
 func gather[T any](ctx context.Context, units []*unit, timeout time.Duration, fn func(context.Context, *unit) (T, error)) []result[T] {
 	results := make([]result[T], len(units))
 	var wg sync.WaitGroup
+	// A span per unit only inside a traced request: the reconciler's background passes
+	// would otherwise flood Jaeger with root traces every 10 s.
+	traced := trace.SpanFromContext(ctx).SpanContext().IsValid()
 	for i, u := range units {
 		wg.Go(func() {
 			ctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
+			var span trace.Span
+			if traced {
+				ctx, span = tracer.Start(ctx, "store "+u.name)
+			}
 			value, err := fn(ctx, u)
+			if span != nil {
+				if err != nil {
+					span.SetStatus(codes.Error, err.Error())
+				}
+				span.End()
+			}
 			results[i] = result[T]{unit: u, value: value, err: err}
 		})
 	}

@@ -12,7 +12,8 @@ spec:
     matchLabels: {app: aggregator}
   template:
     metadata:
-      labels: {app: aggregator, role: aggregator}
+      # bnpb/scrape: Prometheus scrapes /metrics on the port named http (deploy/k8s/observability).
+      labels: {app: aggregator, role: aggregator, bnpb/scrape: "true"}
     spec:
       serviceAccountName: aggregator
       terminationGracePeriodSeconds: 30
@@ -24,6 +25,8 @@ spec:
           env:
             - name: AGGREGATOR_PORT
               value: "8083"
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
             # Unit unseen this long: the reconciler moves its partitions (P1.6). Longer than a
             # store pod restart, so kill-store does not trigger a full copy.
             - name: REREPLICATE_AFTER_SECONDS

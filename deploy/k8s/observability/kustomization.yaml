@@ -1,0 +1,16 @@
+# Observability stack (context-m2.md §8.1): Prometheus, Jaeger, Grafana. Own namespace so
+# the app namespace's role-label rule and NetworkPolicy stay untouched; pinned to node-a
+# (never a failure target, D-TOPO) so dashboards stay up while a worker is down.
+# Applied by scripts/k8s/deploy.sh after the app. Open with: make obs-open
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: observability
+
+resources:
+  - stack.yaml
+
+configMapGenerator:
+  - name: prometheus-config
+    files: [prometheus.yml]
+  - name: grafana-dashboards
+    files: [dashboards/overview.json]

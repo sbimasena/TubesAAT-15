@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -23,6 +24,7 @@ type Server struct {
 	audit      store.Store
 	auditToken string
 	analytics  analyzer
+	status     map[string]func(context.Context) any
 }
 
 func NewServer(repository store.Repository, manager *ingest.Manager, logger *slog.Logger) *Server {
@@ -35,6 +37,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /metrics", telemetry.MetricsHandler())
 	mux.HandleFunc("GET /hazards", s.listHazards)
 	mux.HandleFunc("GET /internal/v1/hazards", s.listHazards)
+	mux.HandleFunc("GET /internal/v1/status", s.internalStatus)
 	if s.audit != nil {
 		mux.HandleFunc("GET /internal/audit/events", s.requireAuditToken(s.auditEvents))
 		mux.HandleFunc("GET /internal/audit/checksum", s.requireAuditToken(s.auditChecksum))

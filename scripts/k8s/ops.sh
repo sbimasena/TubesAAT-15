@@ -66,6 +66,13 @@ case "${1:-}" in
       echo
     done
     ;;
+  system-status)
+    # Aggregator's GET /internal/v1/status: storage, sources, and each owner's section.
+    forward svc/aggregator 18083:8083
+    echo "+ curl http://127.0.0.1:18083/internal/v1/status" >&2
+    curl -fsS http://127.0.0.1:18083/internal/v1/status
+    echo
+    ;;
   obs-open)
     # Metrics dashboard and traces (context-m2.md §8.1); the analytics dashboard is p1-dashboard.
     NS=observability forward svc/grafana 3000:3000

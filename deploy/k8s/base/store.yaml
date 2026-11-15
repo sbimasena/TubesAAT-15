@@ -1,0 +1,71 @@
+# Canonical Store unit (role=store). One unit for now; P1 scales this to store-0..2,
+# one per node, with the partition router in the Aggregator (D-P1).
+# Data stays on the node's own disk through k3s local-path (kontrak-m2.md §1.1).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: store
+spec:
+  serviceName: store
+  replicas: 1
+  selector:
+    matchLabels: {app: store}
+  template:
+    metadata:
+      labels: {app: store, role: store}
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: {app: store}
+              topologyKey: kubernetes.io/hostname
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          # Sized for the 1Gi limit (Lampiran B).
+          args: ["-c", "shared_buffers=128MB", "-c", "max_connections=60"]
+          ports: [{name: postgres, containerPort: 5432}]
+          env:
+            - name: POSTGRES_DB
+              valueFrom: {secretKeyRef: {name: store-credentials, key: POSTGRES_DB}}
+            - name: POSTGRES_USER
+              valueFrom: {secretKeyRef: {name: store-credentials, key: POSTGRES_USER}}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: store-credentials, key: POSTGRES_PASSWORD}}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+          resources:
+            requests: {memory: 512Mi}
+            limits: {memory: 1Gi}
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: postgres}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources:
+          requests: {storage: 2Gi}
+---
+# Headless: each unit is addressed directly as store-N.store.
+apiVersion: v1
+kind: Service
+metadata:
+  name: store
+spec:
+  clusterIP: None
+  selector: {app: store}
+  ports: [{name: postgres, port: 5432, targetPort: postgres}]

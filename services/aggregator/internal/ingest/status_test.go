@@ -171,7 +171,7 @@ func TestSlowPVMBGDoesNotBlockBMKGPoller(t *testing.T) {
 
 type concurrentRepository struct{}
 
-func (concurrentRepository) Upsert(context.Context, []domain.HazardEvent, string) ([]domain.HazardEvent, error) {
+func (concurrentRepository) Upsert(context.Context, int64, []domain.HazardEvent, string) ([]domain.HazardEvent, error) {
 	return nil, nil
 }
 func (concurrentRepository) List(context.Context, store.Filter, string) ([]domain.HazardEvent, error) {

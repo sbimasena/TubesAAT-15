@@ -1,0 +1,6 @@
+# 3-node k3s demo cluster (D-TOPO). Images come from the registry: scripts/k8s/deploy.sh
+# pushes ${REGISTRY}/bnpb-<service>:<git SHA> and sets newName/newTag on top of this overlay.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base

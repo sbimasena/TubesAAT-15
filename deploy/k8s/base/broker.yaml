@@ -1,0 +1,66 @@
+# RabbitMQ (role=broker). Single node with the M1 topology for now; D-BROKER moves
+# this to 3 nodes with peer discovery and quorum queues.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+spec:
+  serviceName: rabbitmq
+  replicas: 1
+  selector:
+    matchLabels: {app: rabbitmq}
+  template:
+    metadata:
+      labels: {app: rabbitmq, role: broker}
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:4.2-management-alpine
+          command: ["/bin/sh", "/etc/rabbitmq/start-with-topology.sh"]
+          ports:
+            - {name: amqp, containerPort: 5672}
+            - {name: management, containerPort: 15672}
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom: {secretKeyRef: {name: broker-credentials, key: RABBITMQ_DEFAULT_USER}}
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom: {secretKeyRef: {name: broker-credentials, key: RABBITMQ_DEFAULT_PASS}}
+          resources:
+            requests: {memory: 512Mi}
+            limits: {memory: 1Gi}
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "test -f /tmp/topology-ready && rabbitmq-diagnostics -q ping"]
+            periodSeconds: 10
+            timeoutSeconds: 8
+          livenessProbe:
+            tcpSocket: {port: amqp}
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/rabbitmq}
+            - {name: topology, mountPath: /etc/rabbitmq/definitions.json, subPath: definitions.json}
+            - {name: topology, mountPath: /etc/rabbitmq/start-with-topology.sh, subPath: start-with-topology.sh}
+            - {name: topology, mountPath: /etc/rabbitmq/conf.d/10-limits.conf, subPath: 10-limits.conf}
+      volumes:
+        - name: topology
+          configMap: {name: broker-topology}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources:
+          requests: {storage: 1Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+spec:
+  selector: {app: rabbitmq}
+  ports:
+    - {name: amqp, port: 5672, targetPort: amqp}
+    - {name: management, port: 15672, targetPort: management}

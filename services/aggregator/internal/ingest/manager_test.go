@@ -20,7 +20,7 @@ type retryRepository struct {
 	events []domain.HazardEvent
 }
 
-func (r *retryRepository) Upsert(_ context.Context, events []domain.HazardEvent, correlationID string) ([]domain.HazardEvent, error) {
+func (r *retryRepository) Upsert(_ context.Context, _ int64, events []domain.HazardEvent, correlationID string) ([]domain.HazardEvent, error) {
 	if r.fail {
 		return nil, errors.New("simulated write failure")
 	}

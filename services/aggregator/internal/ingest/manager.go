@@ -209,7 +209,10 @@ func (m *Manager) pollPVMBG(ctx context.Context, correlationID string) {
 }
 
 func (m *Manager) persist(ctx context.Context, sourceName, correlationID string, events []domain.HazardEvent) error {
-	changedEvents, err := m.repo.Upsert(ctx, events, correlationID)
+	// Epoch 0 is accepted only until a leader fences the store; leader election
+	// (internal/leader) replaces it with the lease epoch.
+	const epoch = 0
+	changedEvents, err := m.repo.Upsert(ctx, epoch, events, correlationID)
 	if err != nil {
 		m.setIngestionFailure(sourceName, correlationID, err)
 		return err

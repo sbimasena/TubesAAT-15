@@ -2,6 +2,19 @@
 
 Purwarupa koordinasi bencana BNPB yang menggabungkan gempa/peringatan tsunami BMKG dan laporan gunung api PVMBG menjadi `HazardEvent` kanonis.
 
+## Milestone 2: Kubernetes (dalam pengerjaan)
+
+Prasyarat: Docker, `kubectl`, [`k3d`](https://k3d.io) (cluster dev), `make`, dan bash (di Windows: Git for Windows; `make` dapat dijalankan dari PowerShell). Buat `.env` dari `.env.example` seperti di bagian 1.
+
+```sh
+make dev-up    # cluster k3d lokal: 1 server + 2 agent (3 node, k3s v1.33.5)
+make deploy    # perintah tunggal: Secret dari .env, build + import image (tag git SHA), apply, Tester Agent, tunggu rollout
+make status    # node, pod per node beserta label role
+make help      # semua target
+```
+
+Client API tersedia di `http://127.0.0.1:8080` (k3d). Untuk cluster demo 3 node: `make deploy OVERLAY=cluster REGISTRY=docker.io/<user>` dengan kubeconfig cluster tersebut sebagai context aktif; image di-push sebagai `linux/amd64`. Manifest ada di `deploy/k8s` (Kustomize `base` + overlay `dev`/`cluster`), skrip di `scripts/k8s`, dan daftar aksi bersama di `scripts/m2/actions.json`.
+
 ## 1. Jalankan sistem
 
 Prasyarat: Docker Engine dengan Compose v2 aktif dan Python 3. Pada macOS, jalankan Docker Desktop. Semua perintah berikut dijalankan dari root repository; Go di host tidak diperlukan untuk menjalankan stack.

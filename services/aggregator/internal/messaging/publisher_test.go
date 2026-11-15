@@ -69,7 +69,7 @@ func TestOutboxPublisher(t *testing.T) {
 	now := time.Now().UTC()
 	event := domain.MapSeismic(domain.SeismicEvent{EventID: schema, RegionName: "Publisher integration check",
 		Magnitude: 5, EpicenterLat: -7, EpicenterLon: 110, OccurredAt: now}, nil, now)
-	if _, err := repo.Upsert(ctx, []domain.HazardEvent{event}, schema); err != nil {
+	if _, err := repo.Upsert(ctx, 0, []domain.HazardEvent{event}, schema); err != nil {
 		t.Fatal(err)
 	}
 	readPending := func(want int) []store.OutboxMessage {

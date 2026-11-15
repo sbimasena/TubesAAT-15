@@ -120,11 +120,12 @@ run kubectl apply -k "$GENERATED"
 run kubectl apply -f "$TESTER_MANIFEST"
 run kubectl apply -k "$ROOT/deploy/k8s/observability"
 
+# 600 s: pulling a new image from Docker Hub on the cluster VMs has taken 5 min.
 for workload in $(kubectl -n "$NS" get deployment,statefulset -o name); do
-  run kubectl -n "$NS" rollout status "$workload" --timeout=240s
+  run kubectl -n "$NS" rollout status "$workload" --timeout=600s
 done
-run kubectl -n "$TESTER_NS" rollout status ds/tester-agent --timeout=240s
+run kubectl -n "$TESTER_NS" rollout status ds/tester-agent --timeout=600s
 for workload in $(kubectl -n observability get deployment -o name); do
-  run kubectl -n observability rollout status "$workload" --timeout=240s
+  run kubectl -n observability rollout status "$workload" --timeout=600s
 done
 echo "deployed $TAG" >&2

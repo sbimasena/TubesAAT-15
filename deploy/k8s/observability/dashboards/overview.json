@@ -52,7 +52,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "Error rate (5xx) per service",
-      "description": "Porsi respons 5xx dari semua request.",
+      "description": "Porsi respons 5xx dari semua request; 0 bila belum ada error.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -70,7 +70,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (service) (rate(http_requests_total{code=~\"5..\"}[1m])) / sum by (service) (rate(http_requests_total[1m]))",
+          "expr": "(sum by (service) (rate(http_requests_total{code=~\"5..\"}[1m])) or sum by (service) (rate(http_requests_total[1m])) * 0) / sum by (service) (rate(http_requests_total[1m]))",
           "legendFormat": "{{service}}"
         }
       ],

@@ -99,6 +99,29 @@ SQL
     bash "$0" tester wipe-node
     echo "Setelah node kembali Ready: make p1-distribution lalu make p1-checksum; count dan checksum harus sama dengan di atas."
     ;;
+  p1-amnesia)
+    # P1.5 without a VM: empty one unit's disk and give it a new incarnation, as a wiped node
+    # rejoining would. The reconciler must stop reading it, refill it, then serve again.
+    [[ "${2:-}" =~ ^store-[0-9]+$ ]] || die "usage: make p1-amnesia S=store-N"
+    confirm "Kosongkan data $2 (simulasi disk kosong) di $(kubectl config current-context)?"
+    run kubectl -n "$NS" exec -i "pod/$2" -c postgres -- \
+      sh -c 'psql -v ON_ERROR_STOP=1 -qAt -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+TRUNCATE hazard_events, hazard_outbox;
+UPDATE unit_meta SET incarnation = gen_random_uuid() RETURNING 'incarnation baru: ' || incarnation;
+SQL
+    echo "Lihat log: make logs S=aggregator ('lost its data' lalu 'refilled'), lalu make p1-checksum dan make p1-distribution."
+    ;;
+  p1-audit)
+    # The other two Audit API endpoints (kontrak-m2.md §7): a cursor page, then where one event lives.
+    token="$(secret_value audit-token token)"
+    forward svc/aggregator 18083:8083
+    page="$(curl -fsS "http://127.0.0.1:18083/internal/audit/events?source=BMKG&limit=2" -H "Authorization: Bearer $token")"
+    echo "events: $page"
+    id="$(grep -o '"hazard_id":"[^"]*"' <<<"$page" | head -1 | cut -d'"' -f4)"
+    [[ -n "$id" ]] || die "tidak ada event BMKG untuk dicari lokasinya"
+    echo "location $id: $(curl -fsS "http://127.0.0.1:18083/internal/audit/location?hazard_id=$id" -H "Authorization: Bearer $token")"
+    echo "harapan: 2 lokasi (primary + replica) di node berbeda"
+    ;;
   p1-load|p1-surge)
     # Load a catalog (P1.1) or a one-region surge (P1.2) and measure the writes each store
     # unit absorbed; with hash(hazard_id) placement the deltas stay even despite skewed data.

@@ -12,7 +12,7 @@ endif
 SH = "$(BASH)"
 
 .DEFAULT_GOAL := help
-.PHONY: help dev-up dev-down deploy status logs tester-list tester open reset
+.PHONY: help dev-up dev-down deploy status logs tester-list tester open reset p1-checksum p1-distribution
 
 help: ## Daftar target
 	@$(SH) scripts/k8s/help.sh Makefile
@@ -40,6 +40,12 @@ tester: ## Jalankan skenario latihan Tester Agent + log: make tester S=kill-stor
 
 open: ## Port-forward RabbitMQ UI dan tampilkan URL layanan
 	@$(SH) scripts/k8s/ops.sh open
+
+p1-checksum: ## Checksum Audit API per sumber dan semua sumber
+	@$(SH) scripts/k8s/ops.sh p1-checksum
+
+p1-distribution: ## Sebaran data (rows, partisi) per unit store/node
+	@$(SH) scripts/k8s/ops.sh p1-distribution
 
 reset: ## Kembalikan manifest (replika, image) dan mode mock PVMBG ke normal
 	@$(SH) scripts/k8s/ops.sh reset

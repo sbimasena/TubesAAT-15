@@ -66,6 +66,25 @@ case "${1:-}" in
       echo
     done
     ;;
+  p1-checksum)
+    # Audit API checksum per source and over all sources (kontrak-m2.md §7.3).
+    token="$(secret_value audit-token token)"
+    forward svc/aggregator 18083:8083
+    for source in BMKG PVMBG SATELIT SENSOR_PANTAI ""; do
+      echo "+ curl http://127.0.0.1:18083/internal/audit/checksum?source=$source" >&2
+      curl -sS "http://127.0.0.1:18083/internal/audit/checksum?source=$source" -H "Authorization: Bearer $token"
+    done
+    ;;
+  p1-distribution)
+    # Rows per store unit: with RF=2 over 3 units each should hold ~2/3, never all (P1.1).
+    for pod in $(kubectl -n "$NS" get pods -l app=store -o name); do
+      run kubectl -n "$NS" exec -i "$pod" -c postgres -- \
+        sh -c 'psql -qAtF " | " -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL' || echo "tidak terjangkau"
+SELECT current_setting('bnpb.node_name', true), count(*), count(DISTINCT partition_id) FROM hazard_events;
+SQL
+    done
+    echo "kolom: node | rows | partitions (bandingkan rows dengan count di make p1-checksum)"
+    ;;
   *)
     die "unknown command '${1:-}'; see make help"
     ;;

@@ -104,6 +104,8 @@ func loadForTest(getenv func(string) string) (Config, error) {
 			return "5000"
 		case "AUTH_INTERNAL_SECRET":
 			return strings.Repeat("internal-test", 3)
+		case "BROKER_URL":
+			return "amqp://hazard:password@message-broker:5672/"
 		}
 		return getenv(key)
 	})

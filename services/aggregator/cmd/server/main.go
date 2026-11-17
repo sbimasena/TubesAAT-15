@@ -20,6 +20,7 @@ import (
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/httpapi"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/ingest"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/messaging"
+	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/reporting"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/source"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/store"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/telemetry"
@@ -110,6 +111,14 @@ func main() {
 		defer close(publisherDone)
 		messaging.Run(ctx, repository, brokerURL, "hazard.events", logger)
 	}()
+	// D-FR: the Field Team report processor, one competing consumer per
+	// replica. Redelivery plus the idempotent report_id insert keeps every
+	// accepted 202 effectively-once.
+	reportsDone := make(chan struct{})
+	go func() {
+		defer close(reportsDone)
+		reporting.Run(ctx, brokerURL, reporting.NewRouterStore(repository), logger)
+	}()
 
 	api := httpapi.NewServer(repository, manager, logger)
 	api.EnableAudit(repository, auditToken)
@@ -142,6 +151,7 @@ func main() {
 	stop()
 	<-pollersDone
 	<-publisherDone
+	<-reportsDone
 	<-routerDone
 	<-reconcilerDone
 }

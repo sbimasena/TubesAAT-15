@@ -15,6 +15,7 @@ import (
 	"github.com/sbimasena/TubesAAT-15/services/client-api/internal/authclient"
 	"github.com/sbimasena/TubesAAT-15/services/client-api/internal/config"
 	"github.com/sbimasena/TubesAAT-15/services/client-api/internal/httpapi"
+	"github.com/sbimasena/TubesAAT-15/services/client-api/internal/reportqueue"
 )
 
 func main() {
@@ -45,14 +46,20 @@ func main() {
 		logger.Error("invalid Auth configuration", "service", "client-api", "error", err)
 		os.Exit(1)
 	}
+	reports, err := reportqueue.New(cfg.BrokerURL, cfg.FieldReportPublishTimeout, logger)
+	if err != nil {
+		logger.Error("invalid broker configuration", "service", "client-api", "error", err)
+		os.Exit(1)
+	}
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           httpapi.NewHandler(aggregatorClient, authClient, cfg.EnableProvisionalHazards, cfg.MaxConcurrentRequests, httpapi.PoolConfig{Media: cfg.MediaPool, FieldTeam: cfg.FieldTeamPool, InternalOps: cfg.InternalOpsPool}, logger),
+		Handler:           httpapi.NewHandler(aggregatorClient, authClient, cfg.EnableProvisionalHazards, cfg.MaxConcurrentRequests, httpapi.PoolConfig{Media: cfg.MediaPool, FieldTeam: cfg.FieldTeamPool, InternalOps: cfg.InternalOpsPool}, reports, logger),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      cfg.WriteTimeout,
 		IdleTimeout:       60 * time.Second,
 	}
+	defer reports.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	shutdownDone := make(chan struct{})
@@ -69,7 +76,8 @@ func main() {
 	logger.Info("service starting", "service", "client-api", "addr", server.Addr,
 		"provisional_hazards_enabled", cfg.EnableProvisionalHazards, "max_concurrent_requests", cfg.MaxConcurrentRequests,
 		"role_pools", map[string]int{"media": cfg.MediaPool, "field_team": cfg.FieldTeamPool, "internal_ops": cfg.InternalOpsPool},
-		"introspection_cache_ttl_ms", cfg.AuthIntrospectionCacheTTL.Milliseconds())
+		"introspection_cache_ttl_ms", cfg.AuthIntrospectionCacheTTL.Milliseconds(),
+		"field_report_publish_timeout_ms", cfg.FieldReportPublishTimeout.Milliseconds())
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("server stopped", "service", "client-api", "error", err)
 		os.Exit(1)

@@ -17,7 +17,7 @@ import (
 )
 
 func TestHealthGeneratesOrPreservesCorrelationID(t *testing.T) {
-	handler := NewHandler(nil, nil, false, 64, DefaultPools(), nil)
+	handler := NewHandler(nil, nil, false, 64, DefaultPools(), nil, nil)
 	for _, incoming := range []string{"", "request-456"} {
 		request := httptest.NewRequest(http.MethodGet, "/health", nil)
 		if incoming != "" {
@@ -71,7 +71,7 @@ func TestProtectedHazardsEnforceScopesBeforeFetchingData(t *testing.T) {
 	} {
 		validator, lister := &testValidator{scope: test.scope}, &testLister{}
 		var logs bytes.Buffer
-		handler := NewHandler(lister, validator, false, 64, DefaultPools(), slog.New(slog.NewJSONHandler(&logs, nil)))
+		handler := NewHandler(lister, validator, false, 64, DefaultPools(), nil, slog.New(slog.NewJSONHandler(&logs, nil)))
 		r := httptest.NewRequest("GET", "/hazards"+test.query, nil)
 		r.Header.Set("Authorization", "Bearer test-access")
 		r.Header.Set("X-Correlation-ID", "protected-flow")
@@ -118,7 +118,7 @@ func TestProtectedHazardsRejectTokensAndFailClosedOnAuthOutage(t *testing.T) {
 		}
 		r.Header.Set("X-Correlation-ID", "protected-flow")
 		w := httptest.NewRecorder()
-		NewHandler(lister, validator, false, 64, DefaultPools(), nil).ServeHTTP(w, r)
+		NewHandler(lister, validator, false, 64, DefaultPools(), nil, nil).ServeHTTP(w, r)
 		if w.Code != test.want || lister.calls != 0 {
 			t.Fatal("invalid/unverified token reached Aggregator")
 		}
@@ -130,7 +130,7 @@ func TestProtectedHazardsRejectTokensAndFailClosedOnAuthOutage(t *testing.T) {
 
 func TestProvisionalHazardEndpointIsDisabledByDefault(t *testing.T) {
 	response := httptest.NewRecorder()
-	NewHandler(nil, nil, false, 64, DefaultPools(), nil).ServeHTTP(response,
+	NewHandler(nil, nil, false, 64, DefaultPools(), nil, nil).ServeHTTP(response,
 		httptest.NewRequest(http.MethodGet, "/internal/provisional/hazards", nil))
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", response.Code)
@@ -153,7 +153,7 @@ func TestProvisionalHazardEndpointCallsAggregator(t *testing.T) {
 	request.Header.Set("X-Correlation-ID", "flow-123")
 	request.Header.Set("Authorization", "Bearer test-access")
 	response := httptest.NewRecorder()
-	NewHandler(client, &testValidator{scope: "internal-ops"}, true, 64, DefaultPools(), nil).ServeHTTP(response, request)
+	NewHandler(client, &testValidator{scope: "internal-ops"}, true, 64, DefaultPools(), nil, nil).ServeHTTP(response, request)
 	if response.Code != http.StatusOK || response.Header().Get("X-Provisional-Endpoint") != "true" || response.Header().Get("X-Correlation-ID") != "flow-123" {
 		t.Fatalf("unexpected proxy result: status=%d headers=%v", response.Code, response.Header())
 	}
@@ -214,7 +214,7 @@ func TestProvisionalHazardEndpointHandlesDependencyFailures(t *testing.T) {
 			request.Header.Set("X-Correlation-ID", "failure-test")
 			request.Header.Set("Authorization", "Bearer test-access")
 			response := httptest.NewRecorder()
-			NewHandler(client, &testValidator{scope: "internal-ops"}, true, 64, DefaultPools(), nil).ServeHTTP(response, request)
+			NewHandler(client, &testValidator{scope: "internal-ops"}, true, 64, DefaultPools(), nil, nil).ServeHTTP(response, request)
 			assertAPIError(t, response, scenario.wantStatus, scenario.wantCode, "failure-test")
 			if strings.Contains(response.Body.String(), "internal") || strings.Contains(response.Body.String(), upstream.URL) {
 				t.Fatal("dependency details leaked")
@@ -228,7 +228,7 @@ func TestProvisionalHazardEndpointHandlesDependencyFailures(t *testing.T) {
 
 func TestLegacyAliasCannotBypassAuthenticationOrMediaProjection(t *testing.T) {
 	lister := &testLister{}
-	handler := NewHandler(lister, &testValidator{scope: "media"}, true, 64, DefaultPools(), nil)
+	handler := NewHandler(lister, &testValidator{scope: "media"}, true, 64, DefaultPools(), nil, nil)
 	for _, test := range []struct {
 		authorization, query string
 		want                 int

@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 const responseWriteMargin = 5 * time.Second
@@ -29,6 +31,10 @@ type Config struct {
 	MediaPool       int
 	FieldTeamPool   int
 	InternalOpsPool int
+	// BrokerURL and FieldReportPublishTimeout serve POST /field-reports
+	// (D-FR): 202 is sent only after the broker durably confirms the report.
+	BrokerURL                 string
+	FieldReportPublishTimeout time.Duration
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -103,6 +109,18 @@ func Load(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("CLIENT_API_INTERNAL_OPS_POOL must be a positive integer")
 		}
 	}
+	// Field-reports publishing (D-FR); timeout default 5s, positive values only.
+	fieldReportMS := int64(5000)
+	if value := strings.TrimSpace(getenv("FIELD_REPORT_PUBLISH_TIMEOUT_MS")); value != "" {
+		fieldReportMS, err = strconv.ParseInt(value, 10, 64)
+		if err != nil || fieldReportMS <= 0 || fieldReportMS > math.MaxInt64/int64(time.Millisecond) {
+			return Config{}, fmt.Errorf("FIELD_REPORT_PUBLISH_TIMEOUT_MS must be a positive number of milliseconds")
+		}
+	}
+	brokerURL := strings.TrimSpace(getenv("BROKER_URL"))
+	if _, parseErr := amqp.ParseURI(brokerURL); parseErr != nil {
+		return Config{}, fmt.Errorf("BROKER_URL must be a valid AMQP URL")
+	}
 	return Config{
 		Port: port, AggregatorBaseURL: baseURL,
 		AggregatorRequestTimeout: time.Duration(milliseconds) * time.Millisecond,
@@ -114,5 +132,7 @@ func Load(getenv func(string) string) (Config, error) {
 		MediaPool:                 mediaPool,
 		FieldTeamPool:             fieldTeamPool,
 		InternalOpsPool:           internalOpsPool,
+		BrokerURL:                 brokerURL,
+		FieldReportPublishTimeout: time.Duration(fieldReportMS) * time.Millisecond,
 	}, nil
 }

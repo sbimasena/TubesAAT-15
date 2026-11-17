@@ -88,7 +88,7 @@ func TestRolePoolsIsolateMediaFromFieldTeam(t *testing.T) {
 		}
 		return authclient.Identity{ClientID: scope, Scope: scope, SessionID: "sid"}, nil
 	})
-	handler := NewHandler(lister, validator, false, 64, PoolConfig{Media: 1, FieldTeam: 1, InternalOps: 1}, nil)
+	handler := NewHandler(lister, validator, false, 64, PoolConfig{Media: 1, FieldTeam: 1, InternalOps: 1}, nil, nil)
 	request := func(token, correlation string) *http.Request {
 		r := hazardRequest("/hazards")
 		r.Header.Set("Authorization", "Bearer "+token)
@@ -176,7 +176,7 @@ func TestConcurrencyBoundsAuthAndAggregatorAndReleasesCanceledRequests(t *testin
 				return []byte(emptyResponse), nil
 			})
 			var logs bytes.Buffer
-			handler := NewHandler(lister, validator, true, capacity, PoolConfig{Media: capacity, FieldTeam: capacity, InternalOps: capacity}, slog.New(slog.NewJSONHandler(&logs, nil)))
+			handler := NewHandler(lister, validator, true, capacity, PoolConfig{Media: capacity, FieldTeam: capacity, InternalOps: capacity}, nil, slog.New(slog.NewJSONHandler(&logs, nil)))
 			var workers sync.WaitGroup
 			responses := make([]*httptest.ResponseRecorder, capacity+1)
 			firstDone := make(chan struct{})
@@ -265,7 +265,7 @@ func TestErrorResponsesReleaseCapacityAndNeverExposeInternalDetails(t *testing.T
 				return authclient.Identity{ClientID: "media", Scope: "media"}, test.authErr
 			})
 			lister := listerFunc(func(context.Context, url.Values, string) ([]byte, error) { return nil, test.upstreamErr })
-			handler := NewHandler(lister, validator, false, 1, DefaultPools(), nil)
+			handler := NewHandler(lister, validator, false, 1, PoolConfig{Media: 1, FieldTeam: 1, InternalOps: 1}, nil, nil)
 			for i := 0; i < 2; i++ {
 				w := httptest.NewRecorder()
 				handler.ServeHTTP(w, hazardRequest("/hazards"+test.query))

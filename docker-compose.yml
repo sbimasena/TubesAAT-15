@@ -110,11 +110,16 @@ services:
       AUTH_BASE_URL: ${AUTH_BASE_URL:-http://auth:8084}
       AUTH_REQUEST_TIMEOUT_MS: ${AUTH_REQUEST_TIMEOUT_MS:-5000}
       AUTH_INTERNAL_SECRET: ${AUTH_INTERNAL_SECRET:?Set AUTH_INTERNAL_SECRET in .env}
+      BROKER_URL: ${BROKER_URL:?Set BROKER_URL in .env; see .env.example}
+      FIELD_REPORT_PUBLISH_TIMEOUT_MS: ${FIELD_REPORT_PUBLISH_TIMEOUT_MS:-5000}
     depends_on:
       aggregator:
         condition: service_healthy
       auth:
         condition: service_healthy
+    networks:
+      - default
+      - events
     healthcheck:
       test: ["CMD", "/service", "--healthcheck"]
       interval: 5s

@@ -16,7 +16,7 @@ var (
 	eventLag         = promauto.NewGauge(prometheus.GaugeOpts{Name: "bnpb_satellite_event_time_lag_seconds", Help: "Session virtual time minus maximum processed event time."})
 	lateDetections   = promauto.NewGauge(prometheus.GaugeOpts{Name: "bnpb_satellite_late_detections", Help: "Retained late detection identities in the durable checkpoint."})
 	singleDetections = promauto.NewGauge(prometheus.GaugeOpts{Name: "bnpb_satellite_single_detections", Help: "Isolated eligible detections, not fires."})
-	commitLatency    = promauto.NewHistogram(prometheus.HistogramOpts{Name: "bnpb_satellite_ingest_duration_seconds", Help: "Time from batch handler entry through replicated canonical commit and checkpoint completion.", Buckets: []float64{.01, .05, .1, .25, .5, 1, 2, 5, 10, 30, 60}})
+	commitLatency    = promauto.NewHistogram(prometheus.HistogramOpts{Name: "bnpb_satellite_ingest_duration_seconds", Help: "Time for effectful batches from handler entry through replicated canonical commit and checkpoint completion.", Buckets: []float64{.01, .05, .1, .25, .5, 1, 2, 5, 10, 30, 60}})
 )
 
 // ObserveSession must be called by the owning worker, like Process. Lags use the

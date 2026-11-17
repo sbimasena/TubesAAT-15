@@ -157,3 +157,11 @@ func BenchmarkStateThousandDetections(b *testing.B) {
 		}
 	}
 }
+
+func TestHeartbeatOffsetsDoNotCreateDetections(t *testing.T) {
+	now := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	state, projection, err := NewState().Next([]Mutation{{Offset: 1, Kind: "heartbeat"}, mutate(2, detection("N20", "243", "113.80000"))}, now)
+	if err != nil || state.Offset != 2 || len(state.Detections) != 1 || len(state.Events) != 0 || len(projection.Upserts) != 0 {
+		t.Fatalf("state=%+v projection=%+v err=%v", state, projection, err)
+	}
+}

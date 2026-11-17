@@ -109,6 +109,9 @@ func (s *State) applyMutation(mutation Mutation, ingested time.Time) (*State, er
 		}
 		next.Detections[key] = *mutation.Detection
 		next.Seen[key] = true
+	case "heartbeat":
+	// Some feeds assign offsets to heartbeats. Advance that position without
+	// fabricating a detection, while preserving the no-gap recovery contract.
 	case "retract":
 		if mutation.Key == "" {
 			return nil, errors.New("satellite: retraction key required")

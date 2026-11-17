@@ -134,12 +134,15 @@ func (p *Processor) Offset() (int64, error) {
 func (p *Processor) Process(ctx context.Context, batch []Mutation, ingested time.Time) (err error) {
 	ctx, span := otel.Tracer("aggregator/satellite").Start(ctx, "satellite.process")
 	started := time.Now()
+	effectful := false
 	defer func() {
 		if err != nil {
 			processorReady.Set(0)
 			span.RecordError(err)
 		} else {
-			commitLatency.Observe(time.Since(started).Seconds())
+			if effectful {
+				commitLatency.Observe(time.Since(started).Seconds())
+			}
 			p.reportMetrics()
 		}
 		span.End()
@@ -157,6 +160,7 @@ func (p *Processor) Process(ctx context.Context, batch []Mutation, ingested time
 	if next.Offset == p.checkpoint.State.Offset {
 		return nil
 	}
+	effectful = len(projection.Upserts) > 0 || len(projection.Retracted) > 0
 	checkpoint := recoveryCheckpoint{Version: 1, State: next, Pending: projection}
 	// Write-ahead checkpoint: the offset, raw detections, identity ledger and
 	// pending effects survive a crash before any HazardEvent is materialized.

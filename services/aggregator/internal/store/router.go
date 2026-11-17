@@ -155,6 +155,17 @@ func (r *Router) check(ctx context.Context, u *unit) {
 		if err = u.repo.migrate(ctx); err == nil {
 			err = u.repo.pool.QueryRow(ctx, query).Scan(&incarnation, &node)
 		}
+	} else if err == nil {
+		// Existing schema: catch up units left behind by a rolling restart.
+		// migrate() is idempotent and serialized by the advisory lock, and
+		// applies only the versions missing from schema_migrations.
+		var version int64
+		if vErr := u.repo.pool.QueryRow(ctx, "SELECT max(version) FROM schema_migrations").Scan(&version); vErr == nil && version < int64(len(migrations)) {
+			if mErr := u.repo.migrate(ctx); mErr != nil {
+				r.log(slog.LevelWarn, "store unit migration failed", "unit", u.name, "error", mErr)
+				return
+			}
+		}
 	}
 	if err != nil {
 		r.log(slog.LevelWarn, "store unit unreachable", "unit", u.name, "error", err)

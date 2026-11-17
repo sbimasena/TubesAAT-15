@@ -32,6 +32,8 @@ var migrations = []migration{
 	{version: 1, file: "migrations/001_canonical.sql"},
 	{version: 2, file: "migrations/002_m2.sql", after: backfillPartitions},
 	{version: 3, file: "migrations/003_cursor_seq.sql"},
+	{version: 4, file: "migrations/004_unprocessed_messages.sql"}, // D-DLQ
+	{version: 5, file: "migrations/005_field_reports.sql"},        // D-FR
 }
 
 // migrationLockID serialises migrations when several Aggregator replicas start together.

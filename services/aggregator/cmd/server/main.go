@@ -151,6 +151,7 @@ func main() {
 	}()
 
 	api := httpapi.NewServer(repository, manager, logger)
+	api.EnableReadCache()
 	api.EnableAudit(repository, auditToken)
 	api.EnableAnalytics(repository)
 	// GET /internal/v1/status: A adds "leader"/"satellite", B adds "deadletter" here.

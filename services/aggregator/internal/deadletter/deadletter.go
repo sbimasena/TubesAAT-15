@@ -58,7 +58,7 @@ func Retryable(reason string) bool {
 // gagal disimpan utuh + alasan + sumber + waktu").
 type Message struct {
 	MessageID    string
-	Source       string // BMKG | PVMBG | SENSOR_PANTAI | SATELIT
+	Source       string // BMKG | PVMBG | SENSOR_PANTAI | SATELIT | FIELD_REPORT
 	Raw          []byte // untouched wire bytes, never re-serialized
 	Reason       string
 	SourceRefID  string // empty when it cannot be extracted from Raw

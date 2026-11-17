@@ -98,7 +98,13 @@ func consume(ctx context.Context, session *session, store ReportStore, logger *s
 			if !ok {
 				return errors.New("field-reports consume channel closed")
 			}
-			handle(ctx, logger, store, adapter{delivery: message, ctx: ctx})
+			for handle(ctx, logger, store, adapter{delivery: message, ctx: ctx}) == outcomeRetry {
+				// Keep the SAME delivery unacked during a storage outage:
+				// repeated nack/reconnect cycles exhaust quorum delivery limits.
+				if !sleepContext(ctx, 2*time.Second) {
+					return nil
+				}
+			}
 		}
 	}
 }

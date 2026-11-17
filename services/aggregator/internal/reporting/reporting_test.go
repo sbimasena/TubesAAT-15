@@ -14,6 +14,13 @@ type fakeStore struct {
 	calls    int
 	saved    Report
 	corrID   string
+	parkErr  error
+	parked   []byte
+}
+
+func (s *fakeStore) ParkReport(_ context.Context, raw []byte, _ string, _ int) error {
+	s.parked = append([]byte(nil), raw...)
+	return s.parkErr
 }
 
 func (s *fakeStore) SaveReport(_ context.Context, report Report, correlationID string) (bool, error) {
@@ -30,12 +37,20 @@ type fakeDelivery struct {
 	acked   bool
 	nacked  bool
 	requeue bool
+	ackErr  error
+	onAck   func()
 }
 
-func (d *fakeDelivery) Body() []byte              { return d.body }
-func (d *fakeDelivery) CorrelationID() string     { return d.corrID }
-func (d *fakeDelivery) DeliveryCount() int        { return d.count }
-func (d *fakeDelivery) Ack(context.Context) error { d.acked = true; return nil }
+func (d *fakeDelivery) Body() []byte          { return d.body }
+func (d *fakeDelivery) CorrelationID() string { return d.corrID }
+func (d *fakeDelivery) DeliveryCount() int    { return d.count }
+func (d *fakeDelivery) Ack(context.Context) error {
+	if d.onAck != nil {
+		d.onAck()
+	}
+	d.acked = true
+	return d.ackErr
+}
 func (d *fakeDelivery) Nack(_ context.Context, requeue bool) error {
 	d.nacked = true
 	d.requeue = requeue
@@ -84,7 +99,7 @@ func TestHandleCommitsDuplicatesAndRetries(t *testing.T) {
 	}{
 		{"fresh report commits then acks", fakeStore{accepted: true}, 0, true, false, 1},
 		{"duplicate skips effect then acks", fakeStore{accepted: false}, 0, true, false, 1},
-		{"store failure redelivers", fakeStore{err: errors.New("db down")}, 0, false, true, 1},
+		{"store failure retains delivery", fakeStore{err: errors.New("db down")}, 0, false, false, 1},
 		{"excessive redelivery parks", fakeStore{accepted: true}, maxDeliveryAttempts + 1, true, false, 0},
 	}
 	for _, test := range cases {
@@ -93,7 +108,7 @@ func TestHandleCommitsDuplicatesAndRetries(t *testing.T) {
 			store := test.store
 			message := &fakeDelivery{body: []byte(validPayload), corrID: "corr-1", count: test.count}
 			got := handle(context.Background(), slog.New(slog.NewJSONHandler(&logs, nil)), &store, message)
-			if got != outcomeAck && !test.wantNack {
+			if got != outcomeAck && test.wantAck {
 				t.Fatalf("unexpected outcome %d", got)
 			}
 			if message.acked != test.wantAck || message.nacked != test.wantNack {
@@ -120,5 +135,43 @@ func TestHandleMalformedPayloadParksWithoutStore(t *testing.T) {
 	}
 	if !bytes.Contains(logs.Bytes(), []byte("parked")) {
 		t.Fatal("parking is not recorded loudly")
+	}
+}
+
+func TestParkFailureNeverAcknowledges(t *testing.T) {
+	for _, body := range []string{`{broken`, validPayload} {
+		store := &fakeStore{parkErr: errors.New("DLQ down")}
+		message := &fakeDelivery{body: []byte(body), count: maxDeliveryAttempts + 1}
+		if got := handle(context.Background(), nil, store, message); got != outcomeRetry || message.acked {
+			t.Fatal("DLQ failure must retain the original delivery")
+		}
+		if !bytes.Equal(store.parked, message.body) {
+			t.Fatal("DLQ must receive untouched wire bytes")
+		}
+		store.parkErr = nil
+		if got := handle(context.Background(), nil, store, message); got != outcomeAck || !message.acked {
+			t.Fatal("recovered DLQ must commit before ack")
+		}
+	}
+}
+
+func TestAckOnlyAfterDurableEffectAndAckFailureRetries(t *testing.T) {
+	for _, body := range []string{validPayload, `{broken`} {
+		store := &fakeStore{accepted: true}
+		message := &fakeDelivery{body: []byte(body), ackErr: errors.New("channel closed")}
+		message.onAck = func() {
+			if store.calls == 0 && len(store.parked) == 0 {
+				t.Fatal("ack attempted before durable effect")
+			}
+		}
+		if handle(context.Background(), nil, store, message) != outcomeRetry {
+			t.Fatal("failed ack must retry, not report completion")
+		}
+		// Simulate committed effect redelivered after the missing ack.
+		store.accepted = false
+		message.ackErr = nil
+		if handle(context.Background(), nil, store, message) != outcomeAck {
+			t.Fatal("redelivery must safely complete")
+		}
 	}
 }

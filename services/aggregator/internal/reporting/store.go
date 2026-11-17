@@ -17,6 +17,10 @@ type RouterStore struct {
 // NewRouterStore returns the durable effect for the field report processor.
 func NewRouterStore(router *store.Router) RouterStore { return RouterStore{router: router} }
 
+func (s RouterStore) ParkReport(ctx context.Context, raw []byte, reason string, attempts int) error {
+	return s.router.ParkReport(ctx, raw, reason, attempts)
+}
+
 // SaveReport converts the wire report into its stored form.
 func (s RouterStore) SaveReport(ctx context.Context, report Report, correlationID string) (bool, error) {
 	return s.router.SaveReport(ctx, store.FieldReport{

@@ -24,6 +24,7 @@ import (
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/leader"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/messaging"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/reporting"
+	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/satellite"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/source"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/store"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/telemetry"
@@ -174,6 +175,7 @@ func main() {
 		epoch, active := election.Current()
 		return map[string]any{"epoch": epoch, "is_me": active}
 	})
+	api.AddStatus("satellite", func(ctx context.Context) any { return satellite.StoredStatus(ctx, repository) })
 	api.AddStatus("storage", func(context.Context) any { return repository.StorageStatus() })
 	api.AddStatus("sources", func(context.Context) any { return manager.Status() })
 	server := &http.Server{

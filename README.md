@@ -250,6 +250,8 @@ Kubernetes runs three Aggregator replicas; a Lease holder runs ingestion/reconci
 
 Use `make p2-status`, `make p2-failover` and `TARGET_URL=http://<aggregator-load-balancer> make p2-load`. The optional `ROLLOUT_IMAGE=<registry>/aggregator:<sha>` changes version during load. Load scripts run outside the cluster and save evidence under `artifacts/m2/runs/`. See [the P2 runbook and owner-assigned blockers](docs/m2/p2-aggregator.md) before claiming failure recovery or throughput criteria.
 
-### M2 P4: observe the satellite feed (Fithra)
+### M2 P4: satellite processing (Fithra)
 
-Set `SATELLITE_TOKEN` in your local environment, then run `make p4-sample` to capture the real session and 60 seconds of byte-preserved SSE under `artifacts/m2/runs/` (ignored by Git). Only one stream per group is allowed. This is an operator tool outside the cluster; it does not yet deploy a satellite worker or require a Kubernetes Secret. See [P4 progress, tests and owner-assigned blockers](docs/m2/p4-satellite.md).
+SSE transport, deterministic fire lifecycle, WILDFIRE/province mapping and replicated checkpoint recovery are implemented and tested independently. The live wire adapter is still awaiting an authenticated feed sample; no live satellite worker starts in `main` yet. Export `SATELLITE_TOKEN` locally and run `make p4-sample` to capture the session and raw SSE. Only one connection per group is allowed.
+
+Use `make p4-check` for repeatable offline tests; `TEST_DATABASE_URL` enables real PostgreSQL recovery tests on isolated schemas. Evidence is saved under ignored `artifacts/m2/runs/`. See [P4 decisions, limits and remaining owners](docs/m2/p4-satellite.md) and [AI-assistance disclosure](docs/m2/ai-usage.md).

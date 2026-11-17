@@ -91,3 +91,7 @@ p2-failover: ## Tester Agent kill-leader (asks for confirmation)
 .PHONY: p4-sample
 p4-sample: ## Capture 60 seconds of live SSE; set SATELLITE_TOKEN in the local environment
 	python3 scripts/m2/satellite-sample.py
+
+.PHONY: p4-check
+p4-check: ## Offline satellite/recovery tests; TEST_DATABASE_URL enables real PostgreSQL checks
+	@$(SH) scripts/m2/p4-check.sh

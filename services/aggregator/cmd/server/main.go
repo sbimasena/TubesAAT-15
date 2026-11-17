@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/httpapi"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/ingest"
+	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/leader"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/messaging"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/reporting"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/source"
@@ -92,24 +94,52 @@ func main() {
 		defer close(routerDone)
 		repository.Run(ctx)
 	}()
-	reconcilerDone := make(chan struct{})
-	go func() {
-		defer close(reconcilerDone)
-		// Epoch 0 like ingest until leader election (P2) provides the lease epoch.
-		repository.Reconcile(ctx, 0, 10*time.Second, positiveSecondsFromEnv("REREPLICATE_AFTER_SECONDS", 60))
-	}()
+	election, err := leader.New()
+	if err != nil {
+		logger.Error("leader initialization failed", "error", err)
+		return
+	}
 	bmkg := source.NewBMKGClient(bmkgBaseURL, bmkgKey, logger)
 	pvmbg := source.NewPVMBGClient(pvmbgBaseURL, pvmbgToken, logger)
 	manager := ingest.NewManager(bmkg, pvmbg, repository, interval, logger)
-	pollersDone := make(chan struct{})
+	promauto.NewGaugeFunc(prometheus.GaugeOpts{Name: "bnpb_leader_epoch", Help: "Current fencing epoch."}, func() float64 { e, _ := election.Current(); return float64(e) })
+	promauto.NewGaugeFunc(prometheus.GaugeOpts{Name: "bnpb_leader_active", Help: "Whether this instance owns the worker term."}, func() float64 {
+		_, a := election.Current()
+		if a {
+			return 1
+		}
+		return 0
+	})
+	leaderDone := make(chan struct{})
 	go func() {
-		defer close(pollersDone)
-		manager.Run(ctx)
-	}()
-	publisherDone := make(chan struct{})
-	go func() {
-		defer close(publisherDone)
-		messaging.Run(ctx, repository, brokerURL, "hazard.events", logger)
+		defer close(leaderDone)
+		err := election.Run(ctx, func(term context.Context, epoch int64) {
+			if err := repository.Fence(term, epoch); err != nil {
+				logger.Error("leader fence failed", "epoch", epoch, "error", err)
+				stop()
+				return
+			}
+			if err := manager.PrepareTerm(term, epoch, election.Verify, repository); err != nil {
+				logger.Error("leader checkpoint load failed", "error", err)
+				stop()
+				return
+			}
+			logger.Info("leader workers starting", "epoch", epoch, "pod", os.Getenv("POD_NAME"))
+			var workers sync.WaitGroup
+			workers.Add(3)
+			go func() { defer workers.Done(); manager.Run(term) }()
+			go func() {
+				defer workers.Done()
+				repository.Reconcile(term, epoch, 10*time.Second, positiveSecondsFromEnv("REREPLICATE_AFTER_SECONDS", 60))
+			}()
+			go func() { defer workers.Done(); messaging.Run(term, repository, brokerURL, "hazard.events", logger) }()
+			workers.Wait()
+			logger.Info("leader workers stopped", "epoch", epoch)
+		}, stop)
+		if err != nil {
+			logger.Error("leader election failed", "error", err)
+			stop()
+		}
 	}()
 	// D-FR: the Field Team report processor, one competing consumer per
 	// replica. Redelivery plus the idempotent report_id insert keeps every
@@ -124,6 +154,10 @@ func main() {
 	api.EnableAudit(repository, auditToken)
 	api.EnableAnalytics(repository)
 	// GET /internal/v1/status: A adds "leader"/"satellite", B adds "deadletter" here.
+	api.AddStatus("leader", func(context.Context) any {
+		epoch, active := election.Current()
+		return map[string]any{"epoch": epoch, "is_me": active}
+	})
 	api.AddStatus("storage", func(context.Context) any { return repository.StorageStatus() })
 	api.AddStatus("sources", func(context.Context) any { return manager.Status() })
 	server := &http.Server{
@@ -149,11 +183,9 @@ func main() {
 		os.Exit(1)
 	}
 	stop()
-	<-pollersDone
-	<-publisherDone
+	<-leaderDone
 	<-reportsDone
 	<-routerDone
-	<-reconcilerDone
 }
 
 // registerStoreMetrics exposes P1 placement per unit for the Grafana Overview.

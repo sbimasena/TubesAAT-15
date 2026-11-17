@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -103,6 +104,12 @@ func (g jsonGetter) get(ctx context.Context, path string, since time.Time, corre
 	request.Header.Set("X-Correlation-ID", correlationID)
 	request.Header.Set("Accept", "application/json")
 
+	if verify, ok := ctx.Value(leaseVerifierKey{}).(func(context.Context) error); ok {
+		if err := verify(ctx); err != nil {
+			return err
+		}
+	}
+	request.Header.Set("X-Instance-ID", os.Getenv("POD_NAME"))
 	started := time.Now()
 	response, err := g.client.Do(request)
 	if err != nil {
@@ -143,4 +150,11 @@ func (g jsonGetter) logCall(correlationID, operation string, duration time.Durat
 		return
 	}
 	g.logger.Info("upstream request complete", attrs...)
+}
+
+type leaseVerifierKey struct{}
+
+// WithLeaseVerifier checks ownership immediately before each network poll.
+func WithLeaseVerifier(ctx context.Context, verify func(context.Context) error) context.Context {
+	return context.WithValue(ctx, leaseVerifierKey{}, verify)
 }

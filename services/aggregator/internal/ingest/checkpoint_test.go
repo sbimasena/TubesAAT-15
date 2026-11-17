@@ -1,0 +1,59 @@
+package ingest
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/domain"
+)
+
+type checkpoints struct {
+	saved map[string]string
+	fail  bool
+	epoch int64
+}
+
+func (c *checkpoints) LoadCursor(_ context.Context, source string) (string, error) {
+	return c.saved[source], nil
+}
+func (c *checkpoints) SaveCursor(_ context.Context, epoch int64, source, value string) error {
+	if c.fail {
+		return errors.New("cursor unavailable")
+	}
+	c.epoch = epoch
+	c.saved[source] = value
+	return nil
+}
+func TestCheckpointRestoresCorrelationAndEpoch(t *testing.T) {
+	ctx := context.Background()
+	c := &checkpoints{saved: map[string]string{}}
+	m := NewManager(nil, nil, &retryRepository{}, time.Second, nil)
+	if err := m.PrepareTerm(ctx, 9, func(context.Context) error { return nil }, c); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	state := checkpoint{EventCursor: now, Events: map[string]domain.SeismicEvent{"old": {EventID: "old"}}, Warnings: map[string]domain.TsunamiWarning{"old": {EventID: "old", ThreatLevel: "AWAS"}}}
+	if err := m.saveCheckpoint(ctx, "BMKG", state); err != nil {
+		t.Fatal(err)
+	}
+	if c.epoch != 9 {
+		t.Fatalf("epoch=%d", c.epoch)
+	}
+	recovered := NewManager(nil, nil, &retryRepository{}, time.Second, nil)
+	if err := recovered.PrepareTerm(ctx, 10, func(context.Context) error { return nil }, c); err != nil {
+		t.Fatal(err)
+	}
+	if !recovered.eventCursor.Equal(now) || recovered.eventsByID["old"].EventID != "old" || recovered.warningsByEvent["old"].ThreatLevel != "AWAS" {
+		t.Fatal("checkpoint lost correlation state")
+	}
+	c.fail = true
+	if recovered.saveCheckpoint(ctx, "BMKG", checkpoint{}) == nil {
+		t.Fatal("cursor error hidden")
+	}
+	recovered.verify = func(context.Context) error { return errors.New("lease lost") }
+	if recovered.persist(ctx, "BMKG", "test", nil) == nil {
+		t.Fatal("write after lease loss")
+	}
+}

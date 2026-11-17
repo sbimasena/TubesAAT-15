@@ -489,7 +489,7 @@ func withRequestLogging(logger *slog.Logger, service string, next http.Handler) 
 		if status == 0 {
 			status = http.StatusOK
 		}
-		logger.Info("request complete", "service", service, "correlation_id", correlationID, "operation", r.URL.Path, "latency_ms", float64(time.Since(started).Microseconds())/1000, "status", status)
+		logger.Info("request complete", "service", service, "correlation_id", correlationID, "instance_id", r.Header.Get("X-Instance-ID"), "operation", r.URL.Path, "latency_ms", float64(time.Since(started).Microseconds())/1000, "status", status)
 	})
 }
 

@@ -31,7 +31,7 @@ func TestStoredReadsRemainSuccessfulWithExplicitSourceMetadata(t *testing.T) {
 				}
 				payload, _ = json.Marshal(wire)
 				lister := listerFunc(func(context.Context, url.Values, string) ([]byte, error) { return payload, nil })
-				handler := NewHandler(lister, &testValidator{scope: scope}, false, 64, DefaultPools(), nil)
+				handler := NewHandler(lister, &testValidator{scope: scope}, false, 64, DefaultPools(), nil, nil)
 				w := httptest.NewRecorder()
 				handler.ServeHTTP(w, hazardRequest("/hazards?source=BMKG"))
 				var public map[string]json.RawMessage

@@ -21,7 +21,7 @@ type hazardLister interface {
 
 type correlationKey struct{}
 
-func NewHandler(client hazardLister, validator accessValidator, enableProvisionalHazards bool, maxConcurrent int, pools PoolConfig, logger *slog.Logger) http.Handler {
+func NewHandler(client hazardLister, validator accessValidator, enableProvisionalHazards bool, maxConcurrent int, pools PoolConfig, reports reportSink, logger *slog.Logger) http.Handler {
 	if maxConcurrent < 1 {
 		panic("hazard concurrency limit must be positive")
 	}
@@ -74,6 +74,7 @@ func NewHandler(client hazardLister, validator accessValidator, enableProvisiona
 			"sources": projectSources(envelope.Sources)})
 	}))
 	mux.HandleFunc("GET /hazards", serveHazards)
+	mux.Handle("POST /field-reports", serveFieldReports(permits, validator, reports))
 	// NOT FINAL: alias retirement awaits a checkpoint migration decision.
 	// Opt-in requests use the same Auth, projection, and admission limit as /hazards.
 	if enableProvisionalHazards {

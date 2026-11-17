@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -33,6 +34,10 @@ type volcanicReport struct {
 	EruptionCount24H int       `json:"eruption_count_24h"`
 	AshColumnHeightM float64   `json:"ash_column_height_m"`
 	ConfidenceLevel  *float64  `json:"confidence_level,omitempty"`
+	// Variant is the schema version the report was generated with (P3:
+	// incompatible and broken modes). It is never serialized directly; the
+	// wire shape is derived from it in encodeReport.
+	Variant int `json:"-"`
 }
 
 type catalog struct {
@@ -40,6 +45,59 @@ type catalog struct {
 	reports       []volcanicReport
 	schemaVersion int
 	outage        atomic.Bool
+}
+
+// P3 schema modes. Versions 1 and 2 are the compatible M1 contract
+// (confidence_level is additive). Versions 3-9 are incompatible or broken
+// modes used for the P3 demo: they are triggered by POST /admin/schema-version
+// with either {"version": N} or {"mode": "<name>"}.
+const (
+	modeRename      = "rename_field"   // version 3: alert_level -> status
+	modeChangeType  = "change_type"    // version 4: reported_at as unix seconds
+	modeDropRequired = "drop_required" // version 5: alert_level omitted
+	modeBrokenJSON  = "broken_json"    // version 6: response body truncated
+	modeOversize    = "oversize_json"  // version 7: ~2 MiB padding per new report
+	modeDeep        = "deep_json"      // version 8: deeply nested extra field
+	modeInvalidUTF8 = "invalid_utf8"   // version 9: string with invalid UTF-8 bytes
+
+	paddingSize  = 2 << 20 // 2 MiB: exceeds the documented per-message size limit
+	nestingDepth = 20000   // exceeds the encoding/json decoder depth limit (10000)
+)
+
+var modeNames = map[int]string{
+	3: modeRename,
+	4: modeChangeType,
+	5: modeDropRequired,
+	6: modeBrokenJSON,
+	7: modeOversize,
+	8: modeDeep,
+	9: modeInvalidUTF8,
+}
+
+var modeVersions = map[string]int{
+	modeRename:      3,
+	modeChangeType:  4,
+	modeDropRequired: 5,
+	modeBrokenJSON:  6,
+	modeOversize:    7,
+	modeDeep:        8,
+	modeInvalidUTF8: 9,
+}
+
+func modeNameForVersion(version int) string {
+	if name, ok := modeNames[version]; ok {
+		return name
+	}
+	return "compatible"
+}
+
+func supportedModes() []string {
+	names := make([]string, 0, len(modeVersions))
+	for name := range modeVersions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 type statusWriter struct {
@@ -83,13 +141,14 @@ func main() {
 		data.mu.RUnlock()
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "ok", "service": "pvmbg", "simulated_outage": data.outage.Load(),
-			"schema_version": version, "simulated_delay_ms": delay.Milliseconds(),
+			"schema_version": version, "schema_mode": modeNameForVersion(version),
+			"simulated_delay_ms": delay.Milliseconds(),
 		})
 	})
 	mux.Handle("GET /volcanic-reports", requirePVMBGToken(token, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data.volcanicReports(w, r, delay)
 	})))
-	mux.Handle("POST /admin/schema-version", requirePVMBGToken(token, http.HandlerFunc(data.setSchemaVersion)))
+	mux.Handle("POST /admin/schema-version", http.HandlerFunc(data.setSchemaVersion))
 	mux.Handle("POST /admin/outage", requirePVMBGToken(token, http.HandlerFunc(data.setOutage)))
 
 	server := &http.Server{
@@ -127,6 +186,7 @@ func newCatalog(now time.Time) *catalog {
 			ReportedAt:       reportedAt,
 			EruptionCount24H: (i * 7) % 18,
 			AshColumnHeightM: float64((i * 135) % 2400),
+			Variant:          1,
 		})
 	}
 	return result
@@ -143,6 +203,7 @@ func (c *catalog) generatePeriodically(ctx context.Context, logger *slog.Logger)
 		case now := <-ticker.C:
 			c.mu.Lock()
 			report := makeLiveReport(now.UTC(), c.schemaVersion)
+			report.Variant = c.schemaVersion
 			c.reports = append(c.reports, report)
 			if len(c.reports) > maxCatalogRecords {
 				c.reports = append([]volcanicReport(nil), c.reports[len(c.reports)-maxCatalogRecords:]...)
@@ -184,34 +245,170 @@ func (c *catalog) volcanicReports(w http.ResponseWriter, r *http.Request, delay 
 		return
 	}
 	c.mu.RLock()
-	result := make([]volcanicReport, 0, len(c.reports))
+	selected := make([]volcanicReport, 0, len(c.reports))
 	for _, report := range c.reports {
 		if since.IsZero() || !report.ReportedAt.Before(since) {
-			result = append(result, report)
+			selected = append(selected, report)
 		}
 	}
+	currentVersion := c.schemaVersion
 	c.mu.RUnlock()
-	sort.Slice(result, func(i, j int) bool { return result[i].ReportedAt.Before(result[j].ReportedAt) })
-	writeJSON(w, http.StatusOK, result)
+	sort.Slice(selected, func(i, j int) bool { return selected[i].ReportedAt.Before(selected[j].ReportedAt) })
+
+	// P3: reports keep the wire shape of the variant they were generated with,
+	// so records emitted before an incompatible switch remain parseable while
+	// new records deliberately violate the contract.
+	encoded := make([][]byte, 0, len(selected))
+	for _, report := range selected {
+		encoded = append(encoded, encodeReport(report))
+	}
+	payload := joinJSONArray(encoded)
+	if currentVersion == modeVersions[modeBrokenJSON] {
+		// broken_json corrupts the response itself: the body ends mid-document,
+		// which the downstream client must handle as a malformed response
+		// without crashing.
+		payload = payload[:len(payload)/2]
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(payload); err != nil {
+		slog.Error("write response", "error", err)
+	}
+}
+
+// encodeReport serializes a report in the wire shape of its variant.
+func encodeReport(report volcanicReport) []byte {
+	if report.Variant <= 2 {
+		data, err := json.Marshal(report)
+		if err != nil {
+			return []byte("{}")
+		}
+		return data
+	}
+	fields := reportToMap(report)
+	switch report.Variant {
+	case modeVersions[modeRename]:
+		// Rename a required field: consumers looking for alert_level see it
+		// missing even though the data is present under a different name.
+		if level, ok := fields["alert_level"]; ok {
+			fields["status"] = level
+		}
+		delete(fields, "alert_level")
+	case modeVersions[modeChangeType]:
+		// Change a type: reported_at becomes unix seconds instead of RFC3339.
+		fields["reported_at"] = report.ReportedAt.Unix()
+	case modeVersions[modeDropRequired]:
+		// Remove a required field entirely.
+		delete(fields, "alert_level")
+	case modeVersions[modeOversize]:
+		fields["padding"] = strings.Repeat("x", paddingSize)
+	}
+	data, err := json.Marshal(fields)
+	if err != nil {
+		return []byte("{}")
+	}
+	if report.Variant == modeVersions[modeDeep] {
+		// encoding/json enforces a ~10000 nesting limit on marshal AND
+		// unmarshal, so the deeply nested payload is assembled as raw JSON
+		// with a depth the downstream decoder must reject without crashing.
+		return injectDeepNested(data)
+	}
+	if report.Variant == modeVersions[modeInvalidUTF8] {
+		// encoding/json replaces invalid bytes during marshal, so the raw
+		// bytes are injected after serialization via a sentinel value.
+		sentinel := "__INVALID_UTF8__"
+		fields["note"] = sentinel
+		raw, err := json.Marshal(fields)
+		if err != nil {
+			return data
+		}
+		replacement := append([]byte{'"'}, 0xff, 0xfe, '"')
+		return bytes.Replace(raw, []byte(`"`+sentinel+`"`), replacement, 1)
+	}
+	return data
+}
+
+func injectDeepNested(record []byte) []byte {
+	nested := make([]byte, 0, 10*nestingDepth)
+	for i := 0; i < nestingDepth; i++ {
+		nested = append(nested, `{"child":`...)
+	}
+	nested = append(nested, `{"leaf":true}`...)
+	for i := 0; i < nestingDepth; i++ {
+		nested = append(nested, '}')
+	}
+	out := make([]byte, 0, len(record)+len(nested)+16)
+	out = append(out, record[:len(record)-1]...)
+	out = append(out, `,"extra":`...)
+	out = append(out, nested...)
+	return append(out, '}')
+}
+
+func reportToMap(report volcanicReport) map[string]any {
+	fields := map[string]any{
+		"report_id":           report.ReportID,
+		"volcano_id":          report.VolcanoID,
+		"alert_level":         report.AlertLevel,
+		"reported_at":         report.ReportedAt,
+		"eruption_count_24h":  report.EruptionCount24H,
+		"ash_column_height_m": report.AshColumnHeightM,
+	}
+	if report.ConfidenceLevel != nil {
+		fields["confidence_level"] = *report.ConfidenceLevel
+	}
+	return fields
+}
+
+// joinJSONArray concatenates individually encoded records. json.Marshal on the
+// whole slice cannot be used because per-record shapes differ.
+func joinJSONArray(records [][]byte) []byte {
+	total := 2
+	for _, record := range records {
+		total += len(record) + 1
+	}
+	out := make([]byte, 0, total)
+	out = append(out, '[')
+	for i, record := range records {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		out = append(out, record...)
+	}
+	return append(out, ']')
 }
 
 func (c *catalog) setSchemaVersion(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		Version int `json:"version"`
+		Version int    `json:"version"`
+		Mode    string `json:"mode"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
-		http.Error(w, "body must be JSON with version 1 or 2", http.StatusBadRequest)
+		http.Error(w, "body must be JSON with version 1 or 2, or a supported mode", http.StatusBadRequest)
 		return
 	}
-	if request.Version != 1 && request.Version != 2 {
-		http.Error(w, "supported schema versions are 1 and 2", http.StatusBadRequest)
+	version := request.Version
+	if strings.TrimSpace(request.Mode) != "" {
+		if request.Version != 0 {
+			http.Error(w, "set either version or mode, not both", http.StatusBadRequest)
+			return
+		}
+		mode, ok := modeVersions[strings.TrimSpace(request.Mode)]
+		if !ok {
+			http.Error(w, fmt.Sprintf("unsupported mode %q; supported modes: %s", request.Mode, strings.Join(supportedModes(), ", ")), http.StatusBadRequest)
+			return
+		}
+		version = mode
+	}
+	if version != 1 && version != 2 && modeNames[version] == "" {
+		http.Error(w, "supported schema versions are 1 and 2; incompatible modes are versions 3-9", http.StatusBadRequest)
 		return
 	}
 	c.mu.Lock()
-	c.schemaVersion = request.Version
+	c.schemaVersion = version
 	var addedReport *volcanicReport
-	if request.Version == 2 {
-		report := makeLiveReport(time.Now().UTC(), request.Version)
+	if version != 1 {
+		report := makeLiveReport(time.Now().UTC(), version)
+		report.Variant = version
 		c.reports = append(c.reports, report)
 		if len(c.reports) > maxCatalogRecords {
 			c.reports = append([]volcanicReport(nil), c.reports[len(c.reports)-maxCatalogRecords:]...)
@@ -219,7 +416,7 @@ func (c *catalog) setSchemaVersion(w http.ResponseWriter, r *http.Request) {
 		addedReport = &report
 	}
 	c.mu.Unlock()
-	response := map[string]any{"schema_version": request.Version, "confidence_level_enabled": request.Version >= 2}
+	response := map[string]any{"schema_version": version, "schema_mode": modeNameForVersion(version), "confidence_level_enabled": version >= 2}
 	if addedReport != nil {
 		response["report_id"] = addedReport.ReportID
 	}

@@ -40,14 +40,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	authClient, err := authclient.New(cfg.AuthBaseURL, os.Getenv("AUTH_INTERNAL_SECRET"), cfg.AuthRequestTimeout, logger)
+	authClient, err := authclient.New(cfg.AuthBaseURL, os.Getenv("AUTH_INTERNAL_SECRET"), cfg.AuthRequestTimeout, cfg.AuthIntrospectionCacheTTL, logger)
 	if err != nil {
 		logger.Error("invalid Auth configuration", "service", "client-api", "error", err)
 		os.Exit(1)
 	}
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           httpapi.NewHandler(aggregatorClient, authClient, cfg.EnableProvisionalHazards, cfg.MaxConcurrentRequests, logger),
+		Handler:           httpapi.NewHandler(aggregatorClient, authClient, cfg.EnableProvisionalHazards, cfg.MaxConcurrentRequests, httpapi.PoolConfig{Media: cfg.MediaPool, FieldTeam: cfg.FieldTeamPool, InternalOps: cfg.InternalOpsPool}, logger),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      cfg.WriteTimeout,
@@ -67,7 +67,9 @@ func main() {
 	}()
 
 	logger.Info("service starting", "service", "client-api", "addr", server.Addr,
-		"provisional_hazards_enabled", cfg.EnableProvisionalHazards, "max_concurrent_requests", cfg.MaxConcurrentRequests)
+		"provisional_hazards_enabled", cfg.EnableProvisionalHazards, "max_concurrent_requests", cfg.MaxConcurrentRequests,
+		"role_pools", map[string]int{"media": cfg.MediaPool, "field_team": cfg.FieldTeamPool, "internal_ops": cfg.InternalOpsPool},
+		"introspection_cache_ttl_ms", cfg.AuthIntrospectionCacheTTL.Milliseconds())
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("server stopped", "service", "client-api", "error", err)
 		os.Exit(1)

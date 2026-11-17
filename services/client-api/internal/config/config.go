@@ -17,9 +17,18 @@ type Config struct {
 	AggregatorRequestTimeout time.Duration
 	AuthBaseURL              string
 	AuthRequestTimeout       time.Duration
-	WriteTimeout             time.Duration
-	EnableProvisionalHazards bool
-	MaxConcurrentRequests    int
+	// AuthIntrospectionCacheTTL of 0 disables caching (M1 semantics). Enabled
+	// via AUTH_INTROSPECTION_CACHE_TTL_MS for load tests and game day; the
+	// trade-off is documented in services/client-api/README.md.
+	AuthIntrospectionCacheTTL time.Duration
+	WriteTimeout              time.Duration
+	EnableProvisionalHazards  bool
+	MaxConcurrentRequests     int
+	// Role pools are a DRAFT bulkhead (P5.5); defaults 40/20/4, not final
+	// until the P2/P5 load tests review them.
+	MediaPool       int
+	FieldTeamPool   int
+	InternalOpsPool int
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -66,12 +75,44 @@ func Load(getenv func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("ENABLE_PROVISIONAL_HAZARD_ENDPOINT must be true or false")
 		}
 	}
+	cacheTTL := time.Duration(0)
+	if value := strings.TrimSpace(getenv("AUTH_INTROSPECTION_CACHE_TTL_MS")); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 0 || parsed > math.MaxInt64/int64(time.Millisecond) {
+			return Config{}, fmt.Errorf("AUTH_INTROSPECTION_CACHE_TTL_MS must be a non-negative number of milliseconds")
+		}
+		cacheTTL = time.Duration(parsed) * time.Millisecond
+	}
+	// DRAFT bulkhead defaults (P5.5); not final until the P2/P5 load tests.
+	mediaPool, fieldTeamPool, internalOpsPool := 40, 20, 4
+	if value := strings.TrimSpace(getenv("CLIENT_API_MEDIA_POOL")); value != "" {
+		mediaPool, err = strconv.Atoi(value)
+		if err != nil || mediaPool < 1 {
+			return Config{}, fmt.Errorf("CLIENT_API_MEDIA_POOL must be a positive integer")
+		}
+	}
+	if value := strings.TrimSpace(getenv("CLIENT_API_FIELD_TEAM_POOL")); value != "" {
+		fieldTeamPool, err = strconv.Atoi(value)
+		if err != nil || fieldTeamPool < 1 {
+			return Config{}, fmt.Errorf("CLIENT_API_FIELD_TEAM_POOL must be a positive integer")
+		}
+	}
+	if value := strings.TrimSpace(getenv("CLIENT_API_INTERNAL_OPS_POOL")); value != "" {
+		internalOpsPool, err = strconv.Atoi(value)
+		if err != nil || internalOpsPool < 1 {
+			return Config{}, fmt.Errorf("CLIENT_API_INTERNAL_OPS_POOL must be a positive integer")
+		}
+	}
 	return Config{
 		Port: port, AggregatorBaseURL: baseURL,
 		AggregatorRequestTimeout: time.Duration(milliseconds) * time.Millisecond,
 		AuthBaseURL:              authURL, AuthRequestTimeout: time.Duration(authMS) * time.Millisecond,
-		WriteTimeout:             max(15*time.Second, time.Duration(milliseconds+authMS)*time.Millisecond+responseWriteMargin),
-		EnableProvisionalHazards: enabled,
-		MaxConcurrentRequests:    maxConcurrent,
+		AuthIntrospectionCacheTTL: cacheTTL,
+		WriteTimeout:              max(15*time.Second, time.Duration(milliseconds+authMS)*time.Millisecond+responseWriteMargin),
+		EnableProvisionalHazards:  enabled,
+		MaxConcurrentRequests:     maxConcurrent,
+		MediaPool:                 mediaPool,
+		FieldTeamPool:             fieldTeamPool,
+		InternalOpsPool:           internalOpsPool,
 	}, nil
 }

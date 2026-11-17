@@ -60,6 +60,84 @@ func hazardRequest(path string) *http.Request {
 	return r
 }
 
+// TestRolePoolsIsolateMediaFromFieldTeam proves the P5.5 bulkhead guarantee:
+// when Media exhausts its own fetch pool, Media receives a controlled 429 while
+// the Field Team reservation stays fully available.
+func TestRolePoolsIsolateMediaFromFieldTeam(t *testing.T) {
+	entered := make(chan struct{}, 4)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	var aggregatorCalls atomic.Int64
+	lister := listerFunc(func(ctx context.Context, _ url.Values, _ string) ([]byte, error) {
+		aggregatorCalls.Add(1)
+		entered <- struct{}{}
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return []byte(emptyResponse), nil
+	})
+	validator := validatorFunc(func(_ context.Context, access, _ string) (authclient.Identity, error) {
+		identities := map[string]string{"media-token": "media", "field-token": "field-team"}
+		scope, ok := identities[access]
+		if !ok {
+			return authclient.Identity{}, authclient.ErrInvalid
+		}
+		return authclient.Identity{ClientID: scope, Scope: scope, SessionID: "sid"}, nil
+	})
+	handler := NewHandler(lister, validator, false, 64, PoolConfig{Media: 1, FieldTeam: 1, InternalOps: 1}, nil)
+	request := func(token, correlation string) *http.Request {
+		r := hazardRequest("/hazards")
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("X-Correlation-ID", correlation)
+		return r
+	}
+	await := func(signal <-chan struct{}) {
+		t.Helper()
+		select {
+		case <-signal:
+		case <-time.After(5 * time.Second):
+			t.Fatal("request failed to reach the fetch stage")
+		}
+	}
+	mediaFirst := httptest.NewRecorder()
+	mediaFirstDone := make(chan struct{})
+	go func() {
+		defer close(mediaFirstDone)
+		handler.ServeHTTP(mediaFirst, request("media-token", "media-first"))
+	}()
+	await(entered)
+
+	// Media is at capacity: controlled 429 without a second Aggregator call.
+	overflow := httptest.NewRecorder()
+	handler.ServeHTTP(overflow, request("media-token", "media-overflow"))
+	assertAPIError(t, overflow, 429, "concurrency_limit", "media-overflow")
+	if overflow.Header().Get("Retry-After") != "1" || aggregatorCalls.Load() != 1 {
+		t.Fatalf("media overflow misbehaved: calls=%d retry-after=%q", aggregatorCalls.Load(), overflow.Header().Get("Retry-After"))
+	}
+
+	// Field Team still reaches the Aggregator while the Media slot is held.
+	fieldRequest := httptest.NewRecorder()
+	fieldDone := make(chan struct{})
+	go func() {
+		defer close(fieldDone)
+		handler.ServeHTTP(fieldRequest, request("field-token", "field-team"))
+	}()
+	await(entered)
+	unblock()
+	<-mediaFirstDone
+	<-fieldDone
+	if mediaFirst.Code != 200 || fieldRequest.Code != 200 {
+		t.Fatalf("served requests failed: media=%d field=%d", mediaFirst.Code, fieldRequest.Code)
+	}
+	if aggregatorCalls.Load() != 2 {
+		t.Fatalf("aggregator calls %d, want exactly 2", aggregatorCalls.Load())
+	}
+}
+
 func TestConcurrencyBoundsAuthAndAggregatorAndReleasesCanceledRequests(t *testing.T) {
 	for _, stage := range []string{"auth", "aggregator"} {
 		t.Run(stage, func(t *testing.T) {
@@ -98,7 +176,7 @@ func TestConcurrencyBoundsAuthAndAggregatorAndReleasesCanceledRequests(t *testin
 				return []byte(emptyResponse), nil
 			})
 			var logs bytes.Buffer
-			handler := NewHandler(lister, validator, true, capacity, slog.New(slog.NewJSONHandler(&logs, nil)))
+			handler := NewHandler(lister, validator, true, capacity, PoolConfig{Media: capacity, FieldTeam: capacity, InternalOps: capacity}, slog.New(slog.NewJSONHandler(&logs, nil)))
 			var workers sync.WaitGroup
 			responses := make([]*httptest.ResponseRecorder, capacity+1)
 			firstDone := make(chan struct{})
@@ -187,7 +265,7 @@ func TestErrorResponsesReleaseCapacityAndNeverExposeInternalDetails(t *testing.T
 				return authclient.Identity{ClientID: "media", Scope: "media"}, test.authErr
 			})
 			lister := listerFunc(func(context.Context, url.Values, string) ([]byte, error) { return nil, test.upstreamErr })
-			handler := NewHandler(lister, validator, false, 1, nil)
+			handler := NewHandler(lister, validator, false, 1, DefaultPools(), nil)
 			for i := 0; i < 2; i++ {
 				w := httptest.NewRecorder()
 				handler.ServeHTTP(w, hazardRequest("/hazards"+test.query))

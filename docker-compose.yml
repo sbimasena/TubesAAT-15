@@ -35,6 +35,7 @@ services:
       PVMBG_BASE_URL: ${PVMBG_BASE_URL:-http://pvmbg:8082}
       BMKG_API_KEY: ${BMKG_API_KEY:-dev-bmkg-key}
       PVMBG_TOKEN: ${PVMBG_TOKEN:-dev-pvmbg-token}
+      AUDIT_TOKEN: ${AUDIT_TOKEN:-dev-audit-token}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-3}
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env; see .env.example}
       BROKER_URL: ${BROKER_URL:?Set BROKER_URL in .env; see .env.example}

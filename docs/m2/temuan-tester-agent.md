@@ -39,6 +39,7 @@ Cluster: `node-a` (control plane + worker, 192.168.18.201), `node-c` (worker, 19
   - `version: 2` saat ini hanya menambah `confidence_level` (kompatibel), padahal spesifikasi §256 meminta mode **tidak kompatibel**.
   - Payload yang dikirim agent belum diketahui (pertanyaan terbuka #4 di `context-m2.md`).
 - NetworkPolicy `store-ingress` tidak terlibat: request agent sampai ke pod PVMBG.
+- **Status 16 Nov 2026: butir pertama selesai** — keputusan anggota B: `/admin/schema-version` dilepas dari `requirePVMBGToken` (mode incompatible juga sudah ditambah, lihat `services/pvmbg/README.md`). Butir ketiga (payload agent) masih pertanyaan terbuka #4.
 - Perbaikan label: `role: mock` **hanya** pada Service `pvmbg`. Pod `bmkg` tetap berlabel `role=mock` sesuai kontrak. Service `sensor-pantai` diberi `role: sensor` untuk berjaga-jaga. Sesudah uji selalu jalankan `make reset` (schema PVMBG kembali ke versi 1).
 
 ## kill-store (practice, 15 Nov 2026, cluster 3 node berisi data)

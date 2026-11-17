@@ -102,6 +102,12 @@ func main() {
 	bmkg := source.NewBMKGClient(bmkgBaseURL, bmkgKey, logger)
 	pvmbg := source.NewPVMBGClient(pvmbgBaseURL, pvmbgToken, logger)
 	manager := ingest.NewManager(bmkg, pvmbg, repository, interval, logger)
+	statusDone := make(chan struct{})
+	go func() {
+		defer close(statusDone)
+		manager.RunStatusRefresh(ctx, repository, func() bool { _, active := election.Current(); return active })
+	}()
+
 	promauto.NewGaugeFunc(prometheus.GaugeOpts{Name: "bnpb_leader_epoch", Help: "Current fencing epoch."}, func() float64 { e, _ := election.Current(); return float64(e) })
 	promauto.NewGaugeFunc(prometheus.GaugeOpts{Name: "bnpb_leader_active", Help: "Whether this instance owns the worker term."}, func() float64 {
 		_, a := election.Current()
@@ -185,6 +191,7 @@ func main() {
 	}
 	stop()
 	<-leaderDone
+	<-statusDone
 	<-reportsDone
 	<-routerDone
 }

@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -55,5 +56,25 @@ func TestCheckpointRestoresCorrelationAndEpoch(t *testing.T) {
 	recovered.verify = func(context.Context) error { return errors.New("lease lost") }
 	if recovered.persist(ctx, "BMKG", "test", nil) == nil {
 		t.Fatal("write after lease loss")
+	}
+}
+
+func TestFollowersReadDurableFreshnessWithoutPolling(t *testing.T) {
+	now := time.Now().UTC()
+	state := checkpoint{Status: &SourceStatus{Available: true, LastSuccess: &now, LastIngested: &now}}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &checkpoints{saved: map[string]string{"BMKG": string(raw), "PVMBG": string(raw)}}
+	// No upstream clients are configured: any attempted poll would panic.
+	m := NewManager(nil, nil, &retryRepository{}, time.Millisecond, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	m.RunStatusRefresh(ctx, c, func() bool { return false })
+	for name, status := range m.Status() {
+		if !status.Available || status.Stale {
+			t.Fatalf("%s: %+v", name, status)
+		}
 	}
 }

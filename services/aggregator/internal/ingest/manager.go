@@ -157,6 +157,9 @@ func (m *Manager) pollBMKG(ctx context.Context, correlationID string) {
 			m.logger.Info("BMKG poll complete", "correlation_id", correlationID, "events", 0, "latency_ms", elapsedMS(started))
 		}
 	}
+	if eventErr == nil && warningErr == nil && !unresolvedWarning {
+		m.setIngested("BMKG")
+	}
 	if err := m.saveCheckpoint(ctx, "BMKG", checkpoint{EventCursor: eventCursor, WarningCursor: warningCursor, Events: m.eventsByID, Warnings: m.warningsByEvent}); err != nil {
 		m.setIngestionFailure("BMKG", correlationID, err)
 		return
@@ -164,9 +167,6 @@ func (m *Manager) pollBMKG(ctx context.Context, correlationID string) {
 	m.mu.Lock()
 	m.eventCursor, m.warningCursor = eventCursor, warningCursor
 	m.mu.Unlock()
-	if eventErr == nil && warningErr == nil && !unresolvedWarning {
-		m.setIngested("BMKG")
-	}
 }
 
 func (m *Manager) pollPVMBG(ctx context.Context, correlationID string) {
@@ -213,6 +213,7 @@ func (m *Manager) pollPVMBG(ctx context.Context, correlationID string) {
 		}
 	}
 	if mappingErr == nil {
+		m.setIngested("PVMBG")
 		if err := m.saveCheckpoint(ctx, "PVMBG", checkpoint{ReportCursor: reportCursor}); err != nil {
 			m.setIngestionFailure("PVMBG", correlationID, err)
 			return
@@ -220,7 +221,6 @@ func (m *Manager) pollPVMBG(ctx context.Context, correlationID string) {
 		m.mu.Lock()
 		m.reportCursor = reportCursor
 		m.mu.Unlock()
-		m.setIngested("PVMBG")
 	}
 	// Keep the old cursor after a mapping failure so a later valid report
 	// cannot move the invalid record outside the retry window.
@@ -279,6 +279,7 @@ type cursorStore interface {
 // A BMKG checkpoint includes correlation state: late warnings may refer to an
 // event older than the polling overlap after failover.
 type checkpoint struct {
+	Status        *SourceStatus
 	EventCursor   time.Time
 	WarningCursor time.Time
 	ReportCursor  time.Time
@@ -325,9 +326,44 @@ func (m *Manager) saveCheckpoint(ctx context.Context, source string, c checkpoin
 	if err := m.verify(ctx); err != nil {
 		return err
 	}
+	m.mu.RLock()
+	status := m.status[source]
+	m.mu.RUnlock()
+	c.Status = &status
 	raw, err := json.Marshal(c)
 	if err != nil {
 		return err
 	}
 	return m.cursors.SaveCursor(ctx, m.epoch, source, string(raw))
+}
+
+// RunStatusRefresh lets read-only followers report the last durable ingestion
+// status. Freshness still expires locally; followers never poll upstreams.
+func (m *Manager) RunStatusRefresh(ctx context.Context, cursors cursorStore, isLeader func() bool) {
+	ticker := time.NewTicker(m.interval)
+	defer ticker.Stop()
+	for {
+		if !isLeader() {
+			for _, source := range []string{"BMKG", "PVMBG"} {
+				raw, err := cursors.LoadCursor(ctx, source)
+				if err != nil {
+					continue
+				}
+				var c checkpoint
+				if json.Unmarshal([]byte(raw), &c) != nil || c.Status == nil {
+					continue
+				}
+				m.mu.Lock()
+				if !isLeader() {
+					m.status[source] = *c.Status
+				}
+				m.mu.Unlock()
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

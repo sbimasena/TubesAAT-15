@@ -249,3 +249,7 @@ Hasil checker baru disimpan terpisah dari bukti laporan lama. Cara menampilkan h
 Kubernetes runs three Aggregator replicas; a Lease holder runs ingestion/reconciliation/publishing with a fencing epoch. Hazard reads use a one-second per-instance cache; Audit reads remain uncached. Compose remains single-instance. No new runtime configuration is required: Kubernetes supplies `KUBERNETES_SERVICE_HOST`, `KUBERNETES_SERVICE_PORT`, service-account files and `POD_NAME`.
 
 Use `make p2-status`, `make p2-failover` and `TARGET_URL=http://<aggregator-load-balancer> make p2-load`. The optional `ROLLOUT_IMAGE=<registry>/aggregator:<sha>` changes version during load. Load scripts run outside the cluster and save evidence under `artifacts/m2/runs/`. See [the P2 runbook and owner-assigned blockers](docs/m2/p2-aggregator.md) before claiming failure recovery or throughput criteria.
+
+### M2 P4: observe the satellite feed (Fithra)
+
+Set `SATELLITE_TOKEN` in your local environment, then run `make p4-sample` to capture the real session and 60 seconds of byte-preserved SSE under `artifacts/m2/runs/` (ignored by Git). Only one stream per group is allowed. This is an operator tool outside the cluster; it does not yet deploy a satellite worker or require a Kubernetes Secret. See [P4 progress, tests and owner-assigned blockers](docs/m2/p4-satellite.md).

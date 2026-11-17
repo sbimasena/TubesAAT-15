@@ -87,3 +87,7 @@ p2-load: ## 10k VU + scale 3 to 5 to 2; requires TARGET_URL, optional ROLLOUT_IM
 
 p2-failover: ## Tester Agent kill-leader (asks for confirmation)
 	@$(SH) scripts/k8s/ops.sh tester kill-leader
+
+.PHONY: p4-sample
+p4-sample: ## Capture 60 seconds of live SSE; set SATELLITE_TOKEN in the local environment
+	python3 scripts/m2/satellite-sample.py

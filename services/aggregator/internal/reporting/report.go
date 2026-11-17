@@ -22,8 +22,7 @@ const QueueName = "field-reports"
 
 // maxDeliveryAttempts mirrors the DLQ retry policy (DefaultPolicy MaxAttempts)
 // for now: a quorum queue redelivers with x-delivery-count, and beyond this
-// the report is parked (logged loudly, acked) instead of looping forever.
-// Parking will move to the unprocessed_messages table once D-DLQ lands.
+// the report is durably parked in unprocessed_messages before ack.
 const maxDeliveryAttempts = 5
 
 // Report mirrors the payload published by client-api's reportqueue package.

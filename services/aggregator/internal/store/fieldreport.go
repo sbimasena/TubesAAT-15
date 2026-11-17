@@ -61,8 +61,8 @@ func summarizePgError(err error) string {
 
 // SaveReport routes the report by report_id (PartitionOf) and writes it to
 // every replica of the owning partition (RF=2, same as hazard_events). The
-// report counts as stored once one replica committed; the anti-entropy
-// reconciler catches a lagging replica up. Unlike Upsert there is no leader
+// report counts as stored only once every write target committed; retries
+// fill partial writes idempotently. Unlike Upsert there is no leader
 // fence: competing consumers run on every replica, and the idempotent insert
 // on the PRIMARY KEY makes duplicate writes harmless (D-FR contract).
 func (r *Router) SaveReport(ctx context.Context, report FieldReport, correlationID string) (accepted bool, err error) {
@@ -94,7 +94,9 @@ func (r *Router) SaveReport(ctx context.Context, report FieldReport, correlation
 		}
 		inserted = inserted || res.value
 	}
-	if len(failures) == len(results) {
+	// No anti-entropy worker copies field reports yet. Require all write
+	// targets to commit; retry fills partial writes idempotently.
+	if len(failures) > 0 {
 		return false, errors.Join(failures...)
 	}
 	return inserted, nil

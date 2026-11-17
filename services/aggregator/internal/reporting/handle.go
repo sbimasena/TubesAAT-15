@@ -15,6 +15,7 @@ import (
 //     message redelivered (nothing is lost).
 type ReportStore interface {
 	SaveReport(ctx context.Context, report Report, correlationID string) (accepted bool, err error)
+	ParkReport(ctx context.Context, raw []byte, reason string, attempts int) error
 }
 
 // outcome is what the delivery handler decided for one message.
@@ -22,7 +23,7 @@ type outcome int
 
 const (
 	outcomeAck   outcome = iota // committed, duplicate, or parked: safe to ack
-	outcomeRetry                // transient failure: nack with requeue
+	outcomeRetry                // retain delivery and retry without exhausting broker limits
 )
 
 // delivery abstracts amqp.Delivery so the decision logic is unit-testable.
@@ -40,42 +41,20 @@ type delivery interface {
 func handle(ctx context.Context, log *slog.Logger, store ReportStore, message delivery) outcome {
 	report, err := parseReport(message.Body())
 	if err != nil {
-		// A malformed payload can never succeed by redelivery. Until the DLQ
-		// park table exists, the only safe options are looping forever or
-		// dropping with a loud record; this chooses dropping with a log, and
-		// the unprocessed_messages integration will replace the drop.
-		if log != nil {
-			log.Error("field report payload malformed, parked (DLQ integration pending)",
-				"service", "aggregator", "queue", QueueName,
-				"correlation_id", message.CorrelationID(), "error", err.Error())
-		}
-		if ackErr := message.Ack(ctx); ackErr != nil && log != nil {
-			log.Warn("field report ack failed", "service", "aggregator", "queue", QueueName,
-				"correlation_id", message.CorrelationID(), "error", ackErr.Error())
-		}
-		return outcomeAck
+		return park(ctx, log, store, message, "contract_violation")
 	}
 	if count := message.DeliveryCount(); count > maxDeliveryAttempts {
-		if log != nil {
-			log.Error("field report exceeded redelivery attempts, parked (DLQ integration pending)",
-				"service", "aggregator", "queue", QueueName,
-				"correlation_id", message.CorrelationID(), "report_id", report.ReportID,
-				"delivery_count", count)
-		}
-		_ = message.Ack(ctx)
-		return outcomeAck
+		return park(ctx, log, store, message, "store_unavailable")
 	}
 	accepted, err := store.SaveReport(ctx, report, message.CorrelationID())
 	if err != nil {
-		// Transient store failure: redelivery keeps the report; the quorum
-		// queue raises x-delivery-count so the park path above stays bounded.
+		// Keep this delivery unacked and retry in place during store outages.
 		if log != nil {
 			log.Warn("field report store failed, redelivering",
 				"service", "aggregator", "queue", QueueName,
 				"correlation_id", message.CorrelationID(), "report_id", report.ReportID,
 				"error", err.Error())
 		}
-		_ = message.Nack(ctx, true)
 		return outcomeRetry
 	}
 	if !accepted {
@@ -97,6 +76,23 @@ func handle(ctx context.Context, log *slog.Logger, store ReportStore, message de
 				"correlation_id", message.CorrelationID(), "report_id", report.ReportID,
 				"error", ackErr.Error())
 		}
+		return outcomeRetry
+	}
+	return outcomeAck
+}
+
+func park(ctx context.Context, log *slog.Logger, store ReportStore, message delivery, reason string) outcome {
+	if err := store.ParkReport(ctx, message.Body(), reason, message.DeliveryCount()); err != nil {
+		if log != nil {
+			log.Error("field report DLQ unavailable; retaining delivery", "reason", reason,
+				"correlation_id", message.CorrelationID())
+		}
+		return outcomeRetry // leave unacked; consumer closes session and backs off
+	}
+	if log != nil {
+		log.Warn("field report durably parked", "reason", reason, "correlation_id", message.CorrelationID())
+	}
+	if err := message.Ack(ctx); err != nil {
 		return outcomeRetry
 	}
 	return outcomeAck

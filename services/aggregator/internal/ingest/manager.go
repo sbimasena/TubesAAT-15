@@ -304,6 +304,9 @@ func (m *Manager) PrepareTerm(ctx context.Context, epoch int64, verify func(cont
 		if err := json.Unmarshal([]byte(raw), &c); err != nil {
 			return fmt.Errorf("load %s checkpoint: %w", source, err)
 		}
+		if c.Status != nil {
+			m.status[source] = *c.Status
+		}
 		if source == "BMKG" {
 			m.eventCursor, m.warningCursor = c.EventCursor, c.WarningCursor
 			if c.Events != nil {

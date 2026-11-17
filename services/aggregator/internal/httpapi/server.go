@@ -26,6 +26,7 @@ type Server struct {
 	auditToken string
 	analytics  analyzer
 	status     map[string]func(context.Context) any
+	writeTerm  func(context.Context) (int64, error)
 }
 
 func NewServer(repository store.Repository, manager *ingest.Manager, logger *slog.Logger) *Server {

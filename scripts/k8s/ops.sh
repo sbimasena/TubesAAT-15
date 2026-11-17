@@ -187,7 +187,9 @@ SQL
       done | sort
     }
     token="$(secret_value audit-token token)"
-    forward svc/aggregator 18083:8083
+    holder="$(kubectl -n "$NS" get lease aggregator-leader -o jsonpath='{.spec.holderIdentity}')"
+    [[ -n "$holder" ]] || die "Aggregator has no elected leader yet"
+    forward "pod/${holder%%_*}" 18083:8083
     stats >"$work/before"
     (while :; do kubectl -n "$NS" top pod -l app=store --no-headers 2>/dev/null | sed "s/^/$(date -u +%T) top /"; sleep 5; done) &
     FORWARDS+=("$!")

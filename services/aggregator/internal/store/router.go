@@ -338,7 +338,8 @@ func noUnitAnswered[T any](results []result[T]) error {
 }
 
 // Fence raises the epoch on every reachable unit. An unreachable unit is fenced by the
-// leader's first write to it (D-FENCE §9.3 limitation).
+// leader's first write to it (D-FENCE §9.3 limitation). A multi-unit deployment
+// requires at least RF=2 acknowledgements before workers may start.
 func (r *Router) Fence(ctx context.Context, epoch int64) error {
 	results := gather(ctx, r.units, operationTimeout, func(ctx context.Context, u *unit) (struct{}, error) {
 		return struct{}{}, u.repo.Fence(ctx, epoch)
@@ -351,21 +352,52 @@ func (r *Router) Fence(ctx context.Context, epoch int64) error {
 			r.log(slog.LevelWarn, "fence skipped unreachable unit", "unit", res.unit.name, "epoch", epoch, "error", res.err)
 		}
 	}
-	return noUnitAnswered(results)
+	answered := 0
+	for _, res := range results {
+		if res.err == nil {
+			answered++
+		}
+	}
+	if answered < min(ReplicationFactor, len(r.units)) {
+		return fmt.Errorf("store: fence acknowledged by %d units; need %d", answered, min(ReplicationFactor, len(r.units)))
+	}
+	return nil
 }
 
 // Upsert writes each event to every replica of its partition; an event counts as
 // stored once one replica committed. Lagging replicas are caught up by anti-entropy.
 func (r *Router) Upsert(ctx context.Context, epoch int64, events []domain.HazardEvent, correlationID string) ([]domain.HazardEvent, error) {
+	return r.upsert(ctx, epoch, events, correlationID, false)
+}
+
+// UpsertReplicated is the ingestion acknowledgement barrier: advancing an upstream
+// cursor requires all assigned replicas (including an in-progress move) to commit.
+// Holding mapMu prevents a concurrent placement flip from discarding an acked copy.
+func (r *Router) UpsertReplicated(ctx context.Context, epoch int64, events []domain.HazardEvent, correlationID string) ([]domain.HazardEvent, error) {
+	r.mapMu.Lock()
+	defer r.mapMu.Unlock()
+	return r.upsert(ctx, epoch, events, correlationID, true)
+}
+
+func (r *Router) upsert(ctx context.Context, epoch int64, events []domain.HazardEvent, correlationID string, replicated bool) ([]domain.HazardEvent, error) {
+	if err := verifyWrite(ctx); err != nil {
+		return nil, err
+	}
 	l := r.current()
 	batches := map[*unit][]domain.HazardEvent{}
 	for _, event := range events {
+		if replicated && len(l.writes[PartitionOf(event.HazardID)]) < min(ReplicationFactor, len(r.units)) {
+			return nil, fmt.Errorf("store: partition %d is under-replicated", PartitionOf(event.HazardID))
+		}
 		for _, u := range l.writes[PartitionOf(event.HazardID)] {
 			batches[u] = append(batches[u], event)
 		}
 	}
 	targets := slices.DeleteFunc(slices.Clone(r.units), func(u *unit) bool { return len(batches[u]) == 0 })
 	results := gather(ctx, targets, operationTimeout, func(ctx context.Context, u *unit) ([]domain.HazardEvent, error) {
+		if err := verifyWrite(ctx); err != nil {
+			return nil, err
+		}
 		return u.repo.Upsert(ctx, epoch, batches[u], correlationID)
 	})
 	stored := map[string]bool{}
@@ -387,6 +419,9 @@ func (r *Router) Upsert(ctx context.Context, epoch int64, events []domain.Hazard
 		for _, event := range res.value {
 			changed[event.HazardID] = event
 		}
+	}
+	if replicated && len(failures) > 0 {
+		return nil, errors.Join(failures...)
 	}
 	out := make([]domain.HazardEvent, 0, len(changed))
 	for _, event := range events {
@@ -594,6 +629,18 @@ func (r *Router) Locate(ctx context.Context, hazardID string) ([]Location, bool,
 // SaveCursor writes the cursor to every unit; one commit is enough because a stale
 // copy only makes a later poll re-read data, which upserts idempotently.
 func (r *Router) SaveCursor(ctx context.Context, epoch int64, source, cursor string) error {
+	return r.saveCursor(ctx, epoch, source, cursor, 1)
+}
+
+// SaveCursorReplicated persists recovery state on at least RF units. A retry can
+// complete a partial checkpoint, and older checkpoints only cause safe replay.
+func (r *Router) SaveCursorReplicated(ctx context.Context, epoch int64, source, cursor string) error {
+	return r.saveCursor(ctx, epoch, source, cursor, min(ReplicationFactor, len(r.units)))
+}
+func (r *Router) saveCursor(ctx context.Context, epoch int64, source, cursor string, required int) error {
+	if err := verifyWrite(ctx); err != nil {
+		return err
+	}
 	seq := r.cursorSeq.Add(1)
 	results := gather(ctx, r.units, operationTimeout, func(ctx context.Context, u *unit) (struct{}, error) {
 		return struct{}{}, u.repo.saveCursor(ctx, epoch, seq, source, cursor)
@@ -603,7 +650,16 @@ func (r *Router) SaveCursor(ctx context.Context, epoch int64, source, cursor str
 			return ErrFenced
 		}
 	}
-	return noUnitAnswered(results)
+	answered := 0
+	for _, res := range results {
+		if res.err == nil {
+			answered++
+		}
+	}
+	if answered < required {
+		return fmt.Errorf("store: checkpoint acknowledged by %d units; need %d", answered, required)
+	}
+	return nil
 }
 
 // LoadCursor returns the copy with the highest (epoch, seq), or "" when none exists.

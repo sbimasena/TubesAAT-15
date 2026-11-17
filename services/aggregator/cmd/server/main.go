@@ -18,6 +18,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/domain"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/httpapi"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/ingest"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/leader"
@@ -89,19 +90,19 @@ func main() {
 	}
 	cancel()
 	registerStoreMetrics(repository)
-	routerDone := make(chan struct{})
-	go func() {
-		defer close(routerDone)
-		repository.Run(ctx)
-	}()
 	election, err := leader.New()
 	if err != nil {
 		logger.Error("leader initialization failed", "error", err)
 		return
 	}
+	routerDone := make(chan struct{})
+	go func() {
+		defer close(routerDone)
+		repository.Run(ctx)
+	}()
 	bmkg := source.NewBMKGClient(bmkgBaseURL, bmkgKey, logger)
 	pvmbg := source.NewPVMBGClient(pvmbgBaseURL, pvmbgToken, logger)
-	manager := ingest.NewManager(bmkg, pvmbg, repository, interval, logger)
+	manager := ingest.NewManager(bmkg, pvmbg, replicatedIngestStore{repository}, interval, logger)
 	statusDone := make(chan struct{})
 	go func() {
 		defer close(statusDone)
@@ -120,6 +121,7 @@ func main() {
 	go func() {
 		defer close(leaderDone)
 		err := election.Run(ctx, func(term context.Context, epoch int64) {
+			term = store.WithWriteVerifier(term, election.Verify)
 			if err := repository.Fence(term, epoch); err != nil {
 				logger.Error("leader fence failed", "epoch", epoch, "error", err)
 				stop()
@@ -156,7 +158,14 @@ func main() {
 		reporting.Run(ctx, brokerURL, reporting.NewRouterStore(repository), logger)
 	}()
 
-	api := httpapi.NewServer(repository, manager, logger)
+	api := httpapi.NewServer(replicatedIngestStore{repository}, manager, logger)
+	api.EnableWriteTerm(func(ctx context.Context) (int64, error) {
+		if err := election.Verify(ctx); err != nil {
+			return 0, err
+		}
+		epoch, _ := election.Current()
+		return epoch, nil
+	})
 	api.EnableReadCache()
 	api.EnableAudit(repository, auditToken)
 	api.EnableAnalytics(repository)
@@ -275,4 +284,12 @@ func positiveSecondsFromEnv(key string, fallback int) time.Duration {
 		return time.Duration(fallback) * time.Second
 	}
 	return time.Duration(seconds) * time.Second
+}
+
+// Polling must fill every replica before checkpoint advancement; read-only and
+// legacy callers retain the Router's partial-write semantics.
+type replicatedIngestStore struct{ *store.Router }
+
+func (r replicatedIngestStore) Upsert(ctx context.Context, epoch int64, events []domain.HazardEvent, id string) ([]domain.HazardEvent, error) {
+	return r.UpsertReplicated(ctx, epoch, events, id)
 }

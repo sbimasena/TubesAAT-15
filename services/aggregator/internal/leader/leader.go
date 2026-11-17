@@ -147,6 +147,9 @@ func (l *Leader) Verify(ctx context.Context) error {
 	if value.Spec.Holder != l.identity || value.Spec.Epoch != epoch {
 		return errors.New("leader: lease holder or epoch changed")
 	}
+	if time.Since(renewed) >= renewDeadline {
+		return errors.New("leader: renew deadline elapsed during verification")
+	}
 	return ctx.Err()
 }
 

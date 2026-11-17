@@ -253,6 +253,9 @@ func (r *PostgresRepository) Upsert(ctx context.Context, epoch int64, events []d
 	return changed, nil
 }
 
+// Retractions remain in replication/export state but are not active hazards.
+const activeHazardSQL = "NOT (source = 'SATELIT' AND attributes @> '{\"retracted\":true}'::jsonb)"
+
 const eventColumns = `hazard_id, source, source_ref_id, hazard_type,
 	severity, area_name, latitude, longitude, occurred_at, ingested_at, attributes`
 
@@ -285,7 +288,7 @@ func (r *PostgresRepository) listParts(ctx context.Context, filter Filter, parts
 		since = &filter.Since
 	}
 	rows, err := r.pool.Query(ctx, `SELECT `+eventColumns+` FROM hazard_events
-		WHERE partition_id = ANY($5::int[]) AND ($1 = '' OR source = $1) AND ($2 = '' OR hazard_type = $2)
+		WHERE `+activeHazardSQL+` AND partition_id = ANY($5::int[]) AND ($1 = '' OR source = $1) AND ($2 = '' OR hazard_type = $2)
 		AND ($3::timestamptz IS NULL OR occurred_at >= $3)
 		ORDER BY occurred_at DESC, hazard_id LIMIT $4`, filter.Source, filter.HazardType, since, clampLimit(filter.Limit), parts)
 	if err != nil {
@@ -328,7 +331,7 @@ func (r *PostgresRepository) queryParts(ctx context.Context, filter Filter, afte
 		afterTime, afterID = &after.IngestedAt, after.HazardID
 	}
 	rows, err := r.pool.Query(ctx, `SELECT `+eventColumns+` FROM hazard_events
-		WHERE partition_id = ANY($7::int[]) AND ($1 = '' OR source = $1) AND ($2 = '' OR hazard_type = $2)
+		WHERE `+activeHazardSQL+` AND partition_id = ANY($7::int[]) AND ($1 = '' OR source = $1) AND ($2 = '' OR hazard_type = $2)
 		AND ($3::timestamptz IS NULL OR ingested_at >= $3)
 		AND ($4::timestamptz IS NULL OR (ingested_at, hazard_id) > ($4, $5))
 		ORDER BY ingested_at, hazard_id LIMIT $6`,
@@ -347,7 +350,7 @@ type partRef struct {
 // refIDs feeds the checksum (kontrak-m2.md §7.3); an empty source covers every source.
 func (r *PostgresRepository) refIDs(ctx context.Context, source string, parts []int32) ([]partRef, error) {
 	rows, err := r.pool.Query(ctx, `SELECT hazard_id, source_ref_id FROM hazard_events
-		WHERE partition_id = ANY($2::int[]) AND ($1 = '' OR source = $1)`, source, parts)
+		WHERE `+activeHazardSQL+` AND partition_id = ANY($2::int[]) AND ($1 = '' OR source = $1)`, source, parts)
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +368,7 @@ type analyticRow struct {
 
 func (r *PostgresRepository) analyticRows(ctx context.Context, from, to time.Time, parts []int32) ([]analyticRow, error) {
 	rows, err := r.pool.Query(ctx, `SELECT hazard_id, hazard_type, severity, area_name, occurred_at FROM hazard_events
-		WHERE partition_id = ANY($3::int[]) AND occurred_at >= $1 AND occurred_at < $2`, from, to, parts)
+		WHERE `+activeHazardSQL+` AND partition_id = ANY($3::int[]) AND occurred_at >= $1 AND occurred_at < $2`, from, to, parts)
 	if err != nil {
 		return nil, err
 	}
@@ -386,7 +389,7 @@ func checksumOf(source string, ids []string, asOf time.Time) ChecksumResult {
 // locate reports whether this unit holds hazardID and the node it runs on
 // (bnpb.node_name is set from the Downward API in deploy/k8s/base/store.yaml).
 func (r *PostgresRepository) locate(ctx context.Context, hazardID string) (exists bool, node string, err error) {
-	err = r.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM hazard_events WHERE hazard_id = $1),
+	err = r.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM hazard_events WHERE `+activeHazardSQL+` AND hazard_id = $1),
 		coalesce(current_setting('bnpb.node_name', true), '')`, hazardID).Scan(&exists, &node)
 	return exists, node, err
 }

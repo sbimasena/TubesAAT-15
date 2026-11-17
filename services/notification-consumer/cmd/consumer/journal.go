@@ -18,11 +18,15 @@ import (
 const maxBody = 1 << 20
 
 type hazard struct {
-	HazardID   string `json:"hazard_id"`
-	Source     string `json:"source"`
-	HazardType string `json:"hazard_type"`
-	Severity   string `json:"severity"`
-	AreaName   string `json:"area_name"`
+	HazardID   string    `json:"hazard_id"`
+	Source     string    `json:"source"`
+	HazardType string    `json:"hazard_type"`
+	Severity   string    `json:"severity"`
+	AreaName   string    `json:"area_name"`
+	IngestedAt time.Time `json:"ingested_at"`
+	Attributes struct {
+		Retracted bool `json:"retracted"`
+	} `json:"attributes"`
 }
 
 type record struct {
@@ -66,7 +70,7 @@ func decode(delivery amqp.Delivery) (record, error) {
 		return r, errors.New("invalid HazardEvent JSON")
 	}
 	if body.HazardID == "" || len(body.HazardID) > 128 || body.AreaName == "" ||
-		!((body.Source == "BMKG" && body.HazardType == "SEISMIC") || (body.Source == "PVMBG" && body.HazardType == "VOLCANIC")) {
+		!((body.Source == "BMKG" && body.HazardType == "SEISMIC") || (body.Source == "PVMBG" && body.HazardType == "VOLCANIC") || (body.Source == "SATELIT" && body.HazardType == "WILDFIRE") || (body.Source == "SENSOR_PANTAI" && body.HazardType == "COASTAL")) {
 		return r, errors.New("invalid canonical identity/source/type/area")
 	}
 	switch body.Severity {
@@ -75,6 +79,9 @@ func decode(delivery amqp.Delivery) (record, error) {
 		return r, errors.New("invalid severity")
 	}
 	r.HazardID = body.HazardID
+	if body.Source == "SATELIT" && body.Attributes.Retracted {
+		r.Result = "notification_withdrawn"
+	}
 	return r, nil
 }
 
@@ -113,7 +120,7 @@ func openJournal(path string) (*journal, error) {
 			return fail(fmt.Errorf("corrupt journal at offset %d", offset))
 		}
 		if r.MessageID == "" || r.HazardID == "" || r.Revision <= 0 || r.CorrelationID == "" || r.ReceivedAt.IsZero() ||
-			!json.Valid(r.Payload) || r.Result != "notification_simulated" || j.seen[r.MessageID] {
+			!json.Valid(r.Payload) || (r.Result != "notification_simulated" && r.Result != "notification_withdrawn") || j.seen[r.MessageID] {
 			return fail(fmt.Errorf("invalid journal record at offset %d", offset))
 		}
 		j.restore(r)
@@ -143,7 +150,9 @@ func (j *journal) save(r record) (string, error) {
 	if j.seen[r.MessageID] {
 		return "duplicate", nil
 	}
-	r.Result = "notification_simulated"
+	if r.Result != "notification_withdrawn" {
+		r.Result = "notification_simulated"
+	}
 	var encoded bytes.Buffer
 	encoder := json.NewEncoder(&encoded)
 	encoder.SetEscapeHTML(false)

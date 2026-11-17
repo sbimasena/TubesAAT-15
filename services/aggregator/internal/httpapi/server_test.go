@@ -79,3 +79,12 @@ func TestStoredDataIncludesFreshnessDuringUpstreamUnavailability(t *testing.T) {
 		}
 	}
 }
+
+func TestM2SourceFilters(t *testing.T) {
+	for _, query := range []string{"source=SATELIT&hazard_type=WILDFIRE", "source=SENSOR_PANTAI&hazard_type=COASTAL"} {
+		request := httptest.NewRequest(http.MethodGet, "/hazards?"+query, nil)
+		if _, err := parseFilter(request); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

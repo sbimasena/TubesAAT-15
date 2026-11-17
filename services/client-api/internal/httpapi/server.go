@@ -21,11 +21,12 @@ type hazardLister interface {
 
 type correlationKey struct{}
 
-func NewHandler(client hazardLister, validator accessValidator, enableProvisionalHazards bool, maxConcurrent int, logger *slog.Logger) http.Handler {
+func NewHandler(client hazardLister, validator accessValidator, enableProvisionalHazards bool, maxConcurrent int, pools PoolConfig, logger *slog.Logger) http.Handler {
 	if maxConcurrent < 1 {
 		panic("hazard concurrency limit must be positive")
 	}
 	permits := make(chan struct{}, maxConcurrent)
+	rolePools := newRolePools(pools)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -43,6 +44,16 @@ func NewHandler(client hazardLister, validator accessValidator, enableProvisiona
 			projectionError(w, err)
 			return
 		}
+		// DRAFT bulkhead (P5.5): per-role fetch capacity. Media exhaustion
+		// never blocks Field Team because the pools are independent.
+		release, ok := rolePools.acquire(info.Scope)
+		if !ok {
+			w.Header().Set("Retry-After", "1")
+			writeError(w, http.StatusTooManyRequests, "concurrency_limit",
+				info.Scope+" hazard capacity exceeded")
+			return
+		}
+		defer release()
 		id, _ := r.Context().Value(correlationKey{}).(string)
 		envelope, err := client.List(r.Context(), query, id)
 		if r.Context().Err() != nil {

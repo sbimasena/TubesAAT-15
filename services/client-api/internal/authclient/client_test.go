@@ -35,7 +35,7 @@ func TestIntrospectionHasNoCacheAndPropagatesCorrelationWithoutLoggingSecrets(t 
 		}
 	}))
 	defer server.Close()
-	client, _ := New(server.URL, secret, time.Second, slog.New(slog.NewJSONHandler(&logs, nil)))
+	client, _ := New(server.URL, secret, time.Second, 0, slog.New(slog.NewJSONHandler(&logs, nil)))
 	identity, err := client.Validate(context.Background(), "test-only-access", "test-correlation")
 	if err != nil || identity.Scope != "media" {
 		t.Fatalf("valid identity rejected: %v", err)
@@ -66,7 +66,7 @@ func TestDependencyFailuresAndInvalidResponsesFailClosed(t *testing.T) {
 			}))
 			defer server.Close()
 			var logs bytes.Buffer
-			client, _ := New(server.URL, strings.Repeat("test", 8), time.Second, slog.New(slog.NewJSONHandler(&logs, nil)))
+			client, _ := New(server.URL, strings.Repeat("test", 8), time.Second, 0, slog.New(slog.NewJSONHandler(&logs, nil)))
 			if _, err := client.Validate(context.Background(), "access", "corr"); !errors.Is(err, ErrUnavailable) {
 				t.Fatalf("expected unavailable, got %v", err)
 			}
@@ -100,7 +100,7 @@ func TestTimeoutCancellationRefusedConnectionAndRedirect(t *testing.T) {
 				server.Close()
 			}
 			var logs bytes.Buffer
-			client, _ := New(server.URL, strings.Repeat("test", 8), 30*time.Millisecond, slog.New(slog.NewJSONHandler(&logs, nil)))
+			client, _ := New(server.URL, strings.Repeat("test", 8), 30*time.Millisecond, 0, slog.New(slog.NewJSONHandler(&logs, nil)))
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			if mode == "canceled" {

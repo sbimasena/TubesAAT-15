@@ -4,7 +4,7 @@ Layanan ini sekarang menyediakan `GET /health`, log JSON terstruktur, dan propag
 
 ## API hazard terlindungi
 
-`GET /hazards` membutuhkan header `Authorization: Bearer <access_token>`. API Klien memanggil Auth melalui `POST /internal/v1/introspect` pada setiap request, tanpa cache. Token hilang, rusak, kedaluwarsa, direvokasi, atau memiliki versi sesi lama menghasilkan `401`; kegagalan Auth, timeout, respons tidak valid, atau secret internal tidak cocok menghasilkan `503`. Healthcheck tetap tidak bergantung pada Auth.
+`GET /hazards` membutuhkan header `Authorization: Bearer <access_token>`. API Klien memanggil Auth melalui `POST /internal/v1/introspect` pada setiap request; bila cache introspeksi tidak diaktifkan (bawaan), setiap request tetap bertanya ke Auth sehingga token menjadi tidak valid segera setelah refresh. Token hilang, rusak, kedaluwarsa, direvokasi, atau memiliki versi sesi lama menghasilkan `401`; kegagalan Auth, timeout, respons tidak valid, atau secret internal tidak cocok menghasilkan `503`. Healthcheck tetap tidak bergantung pada Auth.
 
 Scope berasal dari hasil validasi Auth, bukan parameter klien. Media hanya menerima tujuh field Ringkasan: `hazard_id`, `source`, `hazard_type`, `severity`, `area_name`, `occurred_at`, `ingested_at`. Tim Lapangan/Operasi Internal menerima seluruh sebelas field kanonis, termasuk `attributes` tambahan. Field top-level yang belum ada dalam allowlist tidak diteruskan otomatis.
 
@@ -39,9 +39,17 @@ Galat yang dihasilkan handler hazard memakai JSON `{"error":{"code":"...","messa
 
 `CLIENT_API_MAX_CONCURRENT_REQUESTS` memiliki nilai awal 64 dan harus berupa bilangan bulat positif. Satu batas berlaku bersama untuk `/hazards` dan alias checkpoint, sejak sebelum introspeksi Auth sampai respons selesai. Request saat penuh langsung ditolak tanpa antrean internal. Permit dilepas setelah selesai, gagal, atau dibatalkan; healthcheck tidak memakai batas ini. Nilai akhir ditinjau lewat pengukuran P2. Ini pembatas konkurensi, bukan pembatas jumlah request per detik. Pembatalan request diteruskan ke dependency; handler tidak mencoba mengirim galat setelah konteks dibatalkan, dan log memakai `error_kind=canceled` dengan status 0 jika respons belum dikirim.
 
+## Bulkhead per peran (DRAFT — belum final)
+
+Kapasitas pengambilan data Aggregator dibagi per peran (pola bulkhead, P5.5): Media, Tim Lapangan, dan Operasi Internal masing-masing memiliki pool terpisah. Pool Media penuh menghasilkan `429` / `concurrency_limit` + `Retry-After: 1` hanya untuk Media, dan **tidak** mengurangi kapasitas Tim Lapangan — reservasi Field Team dijamin tersedia saat Media dibebani. Admission pool terjadi setelah introspeksi (peran baru diketahui di situ); introspeksi sendiri tetap dibatasi batas bersama di atas.
+
+Kapasitas default **40 / 20 / 4** (Media / Field Team / Internal Ops) melalui `CLIENT_API_MEDIA_POOL`, `CLIENT_API_FIELD_TEAM_POOL`, `CLIENT_API_INTERNAL_OPS_POOL`; semua harus bilangan bulat positif. Status: **draft 16 Nov 2026** sesuai keputusan anggota B — nilai akan ditinjau setelah load test P2/P5, dan konfigurasi ini belum final.
+
 Konfigurasi tambahan: `AUTH_BASE_URL`, `AUTH_REQUEST_TIMEOUT_MS`, dan `AUTH_INTERNAL_SECRET` (minimal 32 byte). Signing key JWT tidak diberikan kepada API Klien. Timeout penulisan server memberi jeda setelah jumlah timeout Auth dan Aggregator.
 
-Setiap adapter HTTP memiliki transport sendiri yang mempertahankan maksimal 64 koneksi idle ke dependency, dengan idle timeout bawaan 90 detik. Pool ini menghindari pembukaan ulang koneksi pada beban konkurensi awal 64; jumlah request aktif tetap dibatasi oleh handler. Timeout request dan penolakan redirect tetap berlaku. Introspeksi Auth tetap dilakukan pada setiap request sehingga refresh/revokasi tidak tertunda oleh cache token.
+Setiap adapter HTTP memiliki transport sendiri yang mempertahankan maksimal 64 koneksi idle ke dependency, dengan idle timeout bawaan 90 detik. Pool ini menghindari pembukaan ulang koneksi pada beban konkurensi awal 64; jumlah request aktif tetap dibatasi oleh handler. Timeout request dan penolakan redirect tetap berlaku.
+
+Cache introspeksi bersifat **opt-in** melalui `AUTH_INTROSPECTION_CACHE_TTL_MS` (bawaan `0` = mati). Bila diaktifkan (mis. `3000` untuk load test/game day), identitas hasil introspeksi sukses disimpan maksimal selama TTL, sehingga beban ke Auth turun pada 10k VU. Trade-off terdokumentasi: token bisa tetap diterima hingga TTL setelah refresh, dan token tidak aktif/fail Auth tidak pernah di-cache — jadi demo P3 "token lama ditolak setelah refresh" harus dijalankan dengan cache mati. Log cache hit memakai `cache_hit=true` tanpa membocorkan token.
 
 Untuk kompatibilitas checkpoint fondasi, `ENABLE_PROVISIONAL_HAZARD_ENDPOINT=true` mengaktifkan alias `GET /internal/provisional/hazards`, ditandai `X-Provisional-Endpoint: true`. Alias memakai Auth, proyeksi hazard/sumber, galat JSON, dan batas konkurensi yang sama dengan `/hazards`. Alias tetap nonaktif secara bawaan.
 

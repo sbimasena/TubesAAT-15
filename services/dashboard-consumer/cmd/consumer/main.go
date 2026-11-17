@@ -124,7 +124,7 @@ func session(ctx context.Context, brokerURL, path string, healthy *atomic.Bool, 
 	if err := channel.ExchangeDeclarePassive("hazard.events", "fanout", true, false, false, false, nil); err != nil {
 		return err
 	}
-	if _, err := channel.QueueDeclare(queueName, true, false, false, false, amqp.Table{"x-queue-type": "classic"}); err != nil {
+	if _, err := channel.QueueDeclare(queueName, true, false, false, false, amqp.Table{"x-queue-type": "quorum"}); err != nil {
 		return err
 	}
 	if err := channel.QueueBind(queueName, "", "hazard.events", false, nil); err != nil {

@@ -22,6 +22,15 @@ forward() {
   die "port-forward to $target did not become ready"
 }
 
+# broker_ctl runs rabbitmqctl on the first broker pod that answers; member names are shortened.
+broker_ctl() {
+  local pod
+  for pod in $(kubectl -n "$NS" get pods -l app=rabbitmq -o 'jsonpath={.items[*].metadata.name}'); do
+    kubectl -n "$NS" exec "$pod" -- rabbitmqctl -q "$@" 2>/dev/null | sed "s/\.rabbitmq-headless\.$NS\.svc\.cluster\.local//g" && return 0
+  done
+  die "tidak ada pod broker yang menjawab"
+}
+
 case "${1:-}" in
   status)
     run kubectl get nodes -o wide
@@ -65,6 +74,24 @@ case "${1:-}" in
         -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d "${call#* }"
       echo
     done
+    ;;
+  broker-status)
+    # D-BROKER evidence: running members, then each queue's type, leader and live replicas.
+    echo "+ rabbitmqctl eval 'rabbit_nodes:list_running().'" >&2
+    broker_ctl eval 'rabbit_nodes:list_running().'
+    echo "+ rabbitmqctl list_queues name type leader online messages" >&2
+    broker_ctl list_queues name type leader online messages
+    ;;
+  broker-recover)
+    # A member wiped by wipe-node rejoins by itself (blank disk, same name) and its quorum
+    # replicas catch up. Only a member that crashed while half-joined (CrashLoopBackOff, e.g.
+    # incompatible_feature_flags or failed_to_cluster_khepri_node) needs its disk emptied again.
+    [[ "${2:-}" =~ ^rabbitmq-[0-9]+$ ]] || die "usage: make broker-recover S=rabbitmq-N"
+    confirm "Kosongkan disk $2 agar bergabung ulang dari nol? Queue tetap ada di 2 member lain."
+    run kubectl -n "$NS" delete pvc "data-$2" --wait=false
+    run kubectl -n "$NS" delete pod "$2"
+    run kubectl -n "$NS" rollout status statefulset/rabbitmq --timeout=600s
+    bash "$0" broker-status
     ;;
   system-status)
     # Aggregator's GET /internal/v1/status: storage, sources, and each owner's section.

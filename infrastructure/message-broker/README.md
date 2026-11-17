@@ -10,9 +10,11 @@ Readiness `/tmp/topology-ready` dibuat setelah import sukses; healthcheck memeri
 
 ## Topology
 
-`definitions.json` memuat exchange fanout durable `hazard.events`, queue durable classic `notification` dan `dashboard`, serta binding independen. Queue tidak exclusive/auto-delete dan tidak punya TTL/max-length. Producer hanya memeriksa exchange, tanpa mendeklarasikan atau mengetahui nama queue. Consumer notifikasi dan dashboard membaca queue masing-masing dengan manual ack/prefetch satu; queue menampung backlog jika consumer offline. Jurnal idempotensi berada pada volume khusus consumer, terpisah dari broker.
+`definitions.json` memuat exchange fanout durable `hazard.events`, quorum queue durable `notification` dan `dashboard` (M2, sama dengan cluster Kubernetes; di Compose quorum queue berjalan dengan satu replika), serta binding independen. Queue tidak exclusive/auto-delete dan tidak punya TTL/max-length. Producer hanya memeriksa exchange, tanpa mendeklarasikan atau mengetahui nama queue. Consumer notifikasi dan dashboard membaca queue masing-masing dengan manual ack/prefetch satu; queue menampung backlog jika consumer offline. Jurnal idempotensi berada pada volume khusus consumer, terpisah dari broker.
 
-Pesan persistent dengan positive publisher confirm dan volume yang dipertahankan dapat bertahan restart. Mandatory return menandakan tidak ada route; confirm tidak membuktikan consumer selesai atau kedua queue masih terikat. Satu node/classic queue tidak memberi replikasi atau high availability. Pesan yang sudah di-ack dihapus; subscriber baru tidak menerima sejarah sebelum binding. [Confirms dan acknowledgement](https://www.rabbitmq.com/docs/confirms).
+Pesan persistent dengan positive publisher confirm dan volume yang dipertahankan dapat bertahan restart. Mandatory return menandakan tidak ada route; confirm tidak membuktikan consumer selesai atau kedua queue masih terikat. Satu node di Compose tidak memberi replikasi atau high availability; di Kubernetes broker berjalan 3 node (`deploy/k8s/base/broker.yaml`, `make broker-status`, `make broker-recover`).
+
+Volume `broker-data` dari M1 masih menyimpan queue classic, sehingga import quorum queue gagal dan broker tidak pernah healthy. Hapus sekali: `docker compose down` lalu `docker volume rm <project>_broker-data`. Antrean yang belum terkirim ikut hilang; outbox Aggregator mengirim ulang event yang belum dipublikasikan. Pesan yang sudah di-ack dihapus; subscriber baru tidak menerima sejarah sebelum binding. [Confirms dan acknowledgement](https://www.rabbitmq.com/docs/confirms).
 
 ## Inspeksi queue dan uji recovery broker
 

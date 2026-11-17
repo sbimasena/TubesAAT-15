@@ -1,12 +1,16 @@
-# RabbitMQ (role=broker). Single node with the M1 topology for now; D-BROKER moves
-# this to 3 nodes with peer discovery and quorum queues.
+# RabbitMQ (role=broker), 3 nodes, one per k8s node (D-BROKER). Queues are quorum queues
+# (Raft, majority of 3), so losing one node keeps every queue and its confirmed messages.
+# Cluster membership comes from classic_config (broker/20-cluster.conf). After wipe-node
+# the blank member rejoins by itself; `make broker-recover` only for one stuck crash-looping.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: rabbitmq
 spec:
-  serviceName: rabbitmq
-  replicas: 1
+  serviceName: rabbitmq-headless
+  replicas: 3
+  # Parallel: a member must be able to restart while another member is down.
+  podManagementPolicy: Parallel
   selector:
     matchLabels: {app: rabbitmq}
   template:
@@ -14,9 +18,12 @@ spec:
       labels: {app: rabbitmq, role: broker}
     spec:
       terminationGracePeriodSeconds: 60
-      # shortcut: one local-path broker pinned to node-a (never a failure target, D-TOPO) like the
-      # consumers; otherwise losing its node leaves it Terminating/Pending. Drop when D-BROKER lands.
-      nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: {app: rabbitmq}
+              topologyKey: kubernetes.io/hostname
       containers:
         - name: rabbitmq
           image: rabbitmq:4.2-management-alpine
@@ -24,7 +31,17 @@ spec:
           ports:
             - {name: amqp, containerPort: 5672}
             - {name: management, containerPort: 15672}
+            - {name: prometheus, containerPort: 15692}
           env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            # Must match the member names in broker/20-cluster.conf.
+            - name: RABBITMQ_USE_LONGNAME
+              value: "true"
+            - name: RABBITMQ_NODENAME
+              value: rabbit@$(POD_NAME).rabbitmq-headless.$(POD_NAMESPACE).svc.cluster.local
             - name: RABBITMQ_DEFAULT_USER
               valueFrom: {secretKeyRef: {name: broker-credentials, key: RABBITMQ_DEFAULT_USER}}
             - name: RABBITMQ_DEFAULT_PASS
@@ -37,15 +54,21 @@ spec:
               command: ["sh", "-c", "test -f /tmp/topology-ready && rabbitmq-diagnostics -q ping"]
             periodSeconds: 10
             timeoutSeconds: 8
+          # ping answers while a restarting member waits (up to 5 min) for its peers; a tcp
+          # check on amqp would kill it during that wait.
           livenessProbe:
-            tcpSocket: {port: amqp}
+            exec:
+              command: ["rabbitmq-diagnostics", "-q", "ping"]
             initialDelaySeconds: 60
-            periodSeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 15
           volumeMounts:
             - {name: data, mountPath: /var/lib/rabbitmq}
             - {name: topology, mountPath: /etc/rabbitmq/definitions.json, subPath: definitions.json}
             - {name: topology, mountPath: /etc/rabbitmq/start-with-topology.sh, subPath: start-with-topology.sh}
+            - {name: topology, mountPath: /etc/rabbitmq/enabled_plugins, subPath: enabled_plugins}
             - {name: topology, mountPath: /etc/rabbitmq/conf.d/10-limits.conf, subPath: 10-limits.conf}
+            - {name: topology, mountPath: /etc/rabbitmq/conf.d/20-cluster.conf, subPath: 20-cluster.conf}
       volumes:
         - name: topology
           configMap: {name: broker-topology}
@@ -58,6 +81,21 @@ spec:
         resources:
           requests: {storage: 1Gi}
 ---
+# Per-member DNS names for clustering; published before readiness so members find each
+# other while booting.
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq-headless
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: {app: rabbitmq}
+  ports:
+    - {name: epmd, port: 4369}
+    - {name: dist, port: 25672}
+---
+# Clients (BROKER_URL=...@rabbitmq:5672) reach any ready member.
 apiVersion: v1
 kind: Service
 metadata:

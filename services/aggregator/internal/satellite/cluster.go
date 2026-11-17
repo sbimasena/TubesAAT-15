@@ -171,6 +171,9 @@ func Cluster(input []Detection) ([]Fire, int, error) {
 			fire.Latitude += p.lat
 			fire.Longitude += p.lon
 			fire.TotalFRPMW += p.d.FRP
+			if math.IsInf(fire.TotalFRPMW, 0) {
+				return nil, 0, fmt.Errorf("total FRP overflow")
+			}
 			if p.at.Before(fire.OccurredAt) {
 				fire.OccurredAt = p.at
 			}

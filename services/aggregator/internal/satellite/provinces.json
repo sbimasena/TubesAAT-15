@@ -1,0 +1,200 @@
+{
+  "source": {
+    "url": "https://raw.githubusercontent.com/ardian28/GeoJson-Indonesia-38-Provinsi/486e89ca57c9f9910991dbf00afca26297b3baa3/Provinsi/38%20Provinsi%20Indonesia%20-%20Provinsi.json",
+    "commit": "486e89ca57c9f9910991dbf00afca26297b3baa3",
+    "sha256": "1147408da06361773983128b36e92bb2b942bf53f4fdc97731815f0378797828"
+  },
+  "method": "Area-weighted planar WGS84 polygon centroids, outer rings minus holes; rounded to 6 decimals. Project reference, not survey-grade coordinates.",
+  "provinces": [
+    {
+      "name": "Aceh",
+      "latitude": 4.227443,
+      "longitude": 96.912838
+    },
+    {
+      "name": "Bali",
+      "latitude": -8.368591,
+      "longitude": 115.131328
+    },
+    {
+      "name": "Banten",
+      "latitude": -6.45569,
+      "longitude": 106.111255
+    },
+    {
+      "name": "Bengkulu",
+      "latitude": -3.55537,
+      "longitude": 102.342879
+    },
+    {
+      "name": "DKI Jakarta",
+      "latitude": -6.2067,
+      "longitude": 106.838543
+    },
+    {
+      "name": "Daerah Istimewa Yogyakarta",
+      "latitude": -7.895353,
+      "longitude": 110.446014
+    },
+    {
+      "name": "Gorontalo",
+      "latitude": 0.685988,
+      "longitude": 122.375628
+    },
+    {
+      "name": "Jambi",
+      "latitude": -1.698493,
+      "longitude": 102.71544
+    },
+    {
+      "name": "Jawa Barat",
+      "latitude": -6.920575,
+      "longitude": 107.603163
+    },
+    {
+      "name": "Jawa Tengah",
+      "latitude": -7.259872,
+      "longitude": 110.201598
+    },
+    {
+      "name": "Jawa Timur",
+      "latitude": -7.721265,
+      "longitude": 112.727409
+    },
+    {
+      "name": "Kalimantan Barat",
+      "latitude": -0.085824,
+      "longitude": 111.122477
+    },
+    {
+      "name": "Kalimantan Selatan",
+      "latitude": -3.000213,
+      "longitude": 115.43884
+    },
+    {
+      "name": "Kalimantan Tengah",
+      "latitude": -1.606397,
+      "longitude": 113.416114
+    },
+    {
+      "name": "Kalimantan Timur",
+      "latitude": 0.455218,
+      "longitude": 116.448111
+    },
+    {
+      "name": "Kalimantan Utara",
+      "latitude": 2.914336,
+      "longitude": 116.243859
+    },
+    {
+      "name": "Kepulauan Bangka Belitung",
+      "latitude": -2.446635,
+      "longitude": 106.548227
+    },
+    {
+      "name": "Kepulauan Riau",
+      "latitude": 1.501978,
+      "longitude": 105.444106
+    },
+    {
+      "name": "Lampung",
+      "latitude": -4.915713,
+      "longitude": 105.021404
+    },
+    {
+      "name": "Maluku",
+      "latitude": -4.715026,
+      "longitude": 129.799574
+    },
+    {
+      "name": "Maluku Utara",
+      "latitude": 0.216203,
+      "longitude": 127.540871
+    },
+    {
+      "name": "Nusa Tenggara Barat",
+      "latitude": -8.607671,
+      "longitude": 117.509094
+    },
+    {
+      "name": "Nusa Tenggara Timur",
+      "latitude": -9.261793,
+      "longitude": 122.185495
+    },
+    {
+      "name": "Papua",
+      "latitude": -2.612479,
+      "longitude": 138.536164
+    },
+    {
+      "name": "Papua Barat",
+      "latitude": -2.654854,
+      "longitude": 133.652103
+    },
+    {
+      "name": "Papua Barat Daya",
+      "latitude": -1.124997,
+      "longitude": 131.972906
+    },
+    {
+      "name": "Papua Pegunungan",
+      "latitude": -4.229071,
+      "longitude": 139.454209
+    },
+    {
+      "name": "Papua Selatan",
+      "latitude": -6.679255,
+      "longitude": 139.547379
+    },
+    {
+      "name": "Papua Tengah",
+      "latitude": -3.911139,
+      "longitude": 136.62392
+    },
+    {
+      "name": "Riau",
+      "latitude": 0.508363,
+      "longitude": 101.814434
+    },
+    {
+      "name": "Sulawesi Barat",
+      "latitude": -2.465379,
+      "longitude": 119.34824
+    },
+    {
+      "name": "Sulawesi Selatan",
+      "latitude": -3.725664,
+      "longitude": 120.163777
+    },
+    {
+      "name": "Sulawesi Tengah",
+      "latitude": -1.012659,
+      "longitude": 121.200192
+    },
+    {
+      "name": "Sulawesi Tenggara",
+      "latitude": -4.131445,
+      "longitude": 122.070317
+    },
+    {
+      "name": "Sulawesi Utara",
+      "latitude": 1.245448,
+      "longitude": 124.512822
+    },
+    {
+      "name": "Sumatera Barat",
+      "latitude": -0.845249,
+      "longitude": 100.465727
+    },
+    {
+      "name": "Sumatera Selatan",
+      "latitude": -3.212653,
+      "longitude": 104.169977
+    },
+    {
+      "name": "Sumatera Utara",
+      "latitude": 2.191751,
+      "longitude": 99.060195
+    }
+  ]
+}

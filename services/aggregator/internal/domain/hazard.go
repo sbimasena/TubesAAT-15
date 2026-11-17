@@ -93,7 +93,7 @@ func MapSeismic(event SeismicEvent, warning *TsunamiWarning, ingestedAt time.Tim
 		}
 	}
 	return HazardEvent{
-		HazardID:    hazardID("BMKG", event.EventID),
+		HazardID:    HazardID("BMKG", event.EventID),
 		Source:      "BMKG",
 		SourceRefID: event.EventID,
 		HazardType:  "SEISMIC",
@@ -128,7 +128,7 @@ func MapVolcanic(report VolcanicReport, ingestedAt time.Time) (HazardEvent, erro
 		}
 	}
 	return HazardEvent{
-		HazardID:    hazardID("PVMBG", report.ReportID),
+		HazardID:    HazardID("PVMBG", report.ReportID),
 		Source:      "PVMBG",
 		SourceRefID: report.ReportID,
 		HazardType:  "VOLCANIC",
@@ -142,7 +142,8 @@ func MapVolcanic(report VolcanicReport, ingestedAt time.Time) (HazardEvent, erro
 	}, nil
 }
 
-func hazardID(source, sourceRefID string) string {
+// HazardID uses the same deterministic identity for every ingestion source.
+func HazardID(source, sourceRefID string) string {
 	digest := sha256.Sum256([]byte(source + ":" + sourceRefID))
 	return "haz_" + hex.EncodeToString(digest[:16])
 }

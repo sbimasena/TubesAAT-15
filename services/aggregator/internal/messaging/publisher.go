@@ -137,22 +137,9 @@ func Run(ctx context.Context, repository outbox, brokerURL, exchange string, log
 				logger.Warn("outbox read failed", "error", err)
 			} else {
 				logger.Info("outbox batch", "pending_batch", len(messages))
-				for _, message := range messages {
-					started := time.Now()
-					err := p.publish(ctx, message)
-					if err == nil {
-						err = repository.MarkPublished(ctx, message)
-					}
-					attrs := []any{"service", "aggregator", "target", "message-broker", "message_id", message.MessageID,
-						"hazard_id", message.HazardID, "hazard_revision", message.Revision, "correlation_id", message.CorrelationID,
-						"latency_ms", float64(time.Since(started).Microseconds()) / 1000}
-					if err != nil {
-						logger.Warn("outbox publish pending", append(attrs, "error", err)...)
-						p.close()
-						p = nil
-						break
-					}
-					logger.Info("outbox publish confirmed", attrs...)
+				if !drain(ctx, messages, p.publish, repository, logger) {
+					p.close()
+					p = nil
 				}
 				if len(messages) == 50 && p != nil {
 					continue // Drain a backlog without sleeping between full batches.
@@ -166,4 +153,33 @@ func Run(ctx context.Context, repository outbox, brokerURL, exchange string, log
 		case <-timer.C:
 		}
 	}
+}
+
+// drain publishes a batch in order and stops at the first failure (false). Every store
+// replica queues its own copy of an event, so a content ID already sent in this batch
+// is only marked published, not sent to the broker again.
+func drain(ctx context.Context, messages []store.OutboxMessage, publish func(context.Context, store.OutboxMessage) error,
+	repository outbox, logger *slog.Logger) bool {
+	sent := make(map[string]bool, len(messages))
+	for _, message := range messages {
+		started := time.Now()
+		id := messageID(message)
+		var err error
+		if !sent[id] {
+			err = publish(ctx, message)
+		}
+		if err == nil {
+			sent[id] = true
+			err = repository.MarkPublished(ctx, message)
+		}
+		attrs := []any{"service", "aggregator", "target", "message-broker", "message_id", message.MessageID,
+			"unit", message.Unit, "hazard_id", message.HazardID, "hazard_revision", message.Revision,
+			"correlation_id", message.CorrelationID, "latency_ms", float64(time.Since(started).Microseconds()) / 1000}
+		if err != nil {
+			logger.Warn("outbox publish pending", append(attrs, "error", err)...)
+			return false
+		}
+		logger.Info("outbox publish confirmed", attrs...)
+	}
+	return true
 }

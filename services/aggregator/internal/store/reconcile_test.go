@@ -149,6 +149,16 @@ func TestReconcileReReplicatesAndRebalances(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantSum := checksumOf("", refs, time.Time{}).Checksum
+	// Field reports share the partitioning and must follow every move too (D-FR RF=2).
+	var reportIDs []string
+	for i := range 40 {
+		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
+		report := FieldReport{ReportID: id, Note: "uji", Reporter: "field-team", ReceivedAt: base}
+		if _, err := r.SaveReport(ctx, report, "reconcile-seed"); err != nil {
+			t.Fatal(err)
+		}
+		reportIDs = append(reportIDs, id)
+	}
 	// The relay has sent everything; sweep keeps events whose message is still pending.
 	markSent := func() {
 		t.Helper()
@@ -195,6 +205,18 @@ func TestReconcileReReplicatesAndRebalances(t *testing.T) {
 			}
 			if count != want {
 				t.Fatalf("%s: %s holds %d events, want %d", stage, u.name, count, want)
+			}
+			if err := u.repo.pool.QueryRow(ctx, "SELECT count(*) FROM field_reports").Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			want = 0
+			for _, id := range reportIDs {
+				if slices.Contains(l.replicas[PartitionOf(id)], u) {
+					want++
+				}
+			}
+			if count != want {
+				t.Fatalf("%s: %s holds %d field reports, want %d", stage, u.name, count, want)
 			}
 		}
 		if sum, err := r.Checksum(ctx, "BMKG"); err != nil || sum.Checksum != wantSum || sum.Partial {

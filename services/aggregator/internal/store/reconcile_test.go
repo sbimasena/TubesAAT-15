@@ -114,6 +114,48 @@ func TestResolveAndMemoryMapCAS(t *testing.T) {
 	}
 }
 
+// A follower routes by the map the leader saves: after a move it must stop writing to
+// the unit the partition left (a dead unit would otherwise block field reports forever).
+func TestFollowerReloadsMovedMap(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	leader, follower := fakeRouter(t, 3), fakeRouter(t, 3)
+	follower.maps = leader.maps
+	if err := leader.LoadMap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := follower.LoadMap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	m := leader.current().m.clone()
+	if !planMoves(m, leader.units, deadNamed("store-2"), always) {
+		t.Fatal("a dead unit must start moves")
+	}
+	flip(m)
+	leader.mapMu.Lock()
+	err := leader.commitLocked(ctx, m)
+	leader.mapMu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := mapRefresh
+	mapRefresh = 10 * time.Millisecond
+	defer func() { mapRefresh = old }()
+	go follower.followMap(ctx)
+	deadline := time.Now().Add(5 * time.Second)
+	for fmt.Sprint(follower.current().m) != fmt.Sprint(m) {
+		if time.Now().After(deadline) {
+			t.Fatal("follower kept the old map")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for p, writes := range follower.current().writes {
+		if slices.ContainsFunc(writes, func(u *unit) bool { return u.name == "store-2" }) {
+			t.Fatalf("partition %d still writes to the moved-away unit", p)
+		}
+	}
+}
+
 // TestReconcileReReplicatesAndRebalances runs three units as schemas of one PostgreSQL.
 func TestReconcileReReplicatesAndRebalances(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)

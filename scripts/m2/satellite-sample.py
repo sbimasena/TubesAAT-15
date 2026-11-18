@@ -12,11 +12,19 @@ import urllib.request
 BASE = "https://satellite.naufarrel.dev"
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+open_feed = urllib.request.build_opener(NoRedirect()).open
+
+
 def capture(base, token, destination, seconds, offset):
     destination.mkdir(parents=True, exist_ok=True)
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     request = urllib.request.Request(base + "/v1/session", headers=headers)
-    with urllib.request.urlopen(request, timeout=5) as response:
+    with open_feed(request, timeout=5) as response:
         session = response.read(1024 * 1024 + 1)
         if len(session) > 1024 * 1024:
             raise ValueError("session exceeds 1 MiB")
@@ -27,7 +35,7 @@ def capture(base, token, destination, seconds, offset):
                                      headers={**headers, "Accept": "text/event-stream"})
     counts, ids, size = {}, [], 0
     started = time.monotonic()
-    with urllib.request.urlopen(request, timeout=5) as response:
+    with open_feed(request, timeout=5) as response:
         if response.headers.get_content_type() != "text/event-stream":
             raise ValueError("stream is not text/event-stream")
         with (destination / "stream.sse").open("xb") as output:
@@ -69,6 +77,7 @@ def main():
     try:
         result = capture(BASE, token, destination, args.seconds, args.from_offset)
     except urllib.error.HTTPError as error:
+        error.close()
         print(f"Feed HTTP {error.code}; partial files: {destination}", file=sys.stderr)
         return 1
     except (OSError, ValueError) as error:

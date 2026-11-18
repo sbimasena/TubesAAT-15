@@ -252,6 +252,6 @@ Use `make p2-status`, `make p2-failover` and `TARGET_URL=http://<aggregator-load
 
 ### M2 P4: satellite processing (Fithra)
 
-SSE transport, deterministic fire lifecycle, WILDFIRE/province mapping and replicated checkpoint recovery are implemented and tested independently. The live wire adapter is still awaiting an authenticated feed sample; no live satellite worker starts in `main` yet. Export `SATELLITE_TOKEN` locally and run `make p4-sample` to capture the session and raw SSE. Only one connection per group is allowed.
+Set `SATELLITE_TOKEN` in the ignored `.env` to enable the P4 worker in Compose or through the Kubernetes deployment script. The elected Aggregator connects to the feed, restores its replicated checkpoint, and materializes WILDFIRE events. To inspect the wire format first, run `make p4-sample` before starting the worker. The course feed allows one connection per group.
 
-Use `make p4-check` for repeatable offline tests; `TEST_DATABASE_URL` enables real PostgreSQL recovery tests on isolated schemas. Evidence is saved under ignored `artifacts/m2/runs/`. See [P4 decisions, limits and remaining owners](docs/m2/p4-satellite.md) and [AI-assistance disclosure](docs/m2/ai-usage.md).
+Use `make p4-check` for repeatable offline and recovery tests. `TEST_DATABASE_URL` enables the PostgreSQL integration tests on isolated schemas. Evidence is saved under ignored `artifacts/m2/runs/`. The [P4 runbook](docs/m2/p4-satellite.md) records the adapter assumptions and pending live acceptance runs. [AI-assistance disclosure](docs/m2/ai-usage.md)

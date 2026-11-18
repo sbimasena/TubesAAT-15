@@ -123,6 +123,15 @@ mkdir -p "$GENERATED"
   done
 } >"$GENERATED/kustomization.yaml"
 
+# One-time move from the M1 single-node broker (D-BROKER): serviceName is immutable and its
+# classic queues clash with the quorum ones, so the old StatefulSet and its disk must go.
+if [[ "$(kubectl -n "$NS" get statefulset rabbitmq -o 'jsonpath={.spec.serviceName}' 2>/dev/null)" == rabbitmq ]]; then
+  confirm "Replace the single-node broker with the 3-node cluster? Messages still queued in it are lost (the outbox resends unpublished events)."
+  # Foreground + wait: a PVC still Terminating would leave the new rabbitmq-0 Pending.
+  run kubectl -n "$NS" delete statefulset rabbitmq --cascade=foreground --wait
+  run kubectl -n "$NS" delete pvc data-rabbitmq-0 --ignore-not-found --wait
+fi
+
 run kubectl apply -k "$GENERATED"
 run kubectl apply -f "$TESTER_MANIFEST"
 run kubectl apply -k "$ROOT/deploy/k8s/observability"

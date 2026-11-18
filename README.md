@@ -1,8 +1,8 @@
-# Sistem Koordinasi Bencana IF4031 — Milestone 1
+# Sistem Koordinasi Bencana IF4031
 
 Purwarupa koordinasi bencana BNPB yang menggabungkan gempa/peringatan tsunami BMKG dan laporan gunung api PVMBG menjadi `HazardEvent` kanonis.
 
-## Milestone 2: Kubernetes (dalam pengerjaan)
+## Milestone 2: Kubernetes
 
 Prasyarat: Docker, `kubectl`, [`k3d`](https://k3d.io) (cluster dev), `make`, dan bash (di Windows: Git for Windows; `make` dapat dijalankan dari PowerShell). Buat `.env` dari `.env.example` seperti di bagian 1.
 
@@ -13,9 +13,60 @@ make status    # node, pod per node beserta label role
 make help      # semua target
 ```
 
-Client API tersedia di `http://127.0.0.1:8080` (k3d). Untuk cluster demo 3 node: `make deploy OVERLAY=cluster REGISTRY=docker.io/<user>` dengan kubeconfig cluster tersebut sebagai context aktif; image di-push sebagai `linux/amd64`. Manifest ada di `deploy/k8s` (Kustomize `base` + overlay `dev`/`cluster`), skrip di `scripts/k8s`, dan daftar aksi bersama di `scripts/m2/actions.json`.
+Client API tersedia di `http://127.0.0.1:8080` (k3d) atau `http://<IP node>:30080` (NodePort, cluster demo). Untuk cluster demo: `make deploy OVERLAY=cluster REGISTRY=docker.io/<user>` dengan kubeconfig cluster tersebut sebagai context aktif; image di-push sebagai `linux/amd64` dengan tag git SHA. `deploy.sh` idempoten, menolak push bila `services/` belum di-commit, dan menunggu semua rollout. Manifest ada di `deploy/k8s` (Kustomize `base` + overlay `dev`/`cluster`), skrip di `scripts/k8s`, dan daftar aksi bersama di `scripts/m2/actions.json`.
 
-Storage terdistribusi (P1): sharding/replikasi, Audit API, loader katalog, dashboard analitik, dan target `make p1-*` dijelaskan di [docs/m2/p1-storage.md](docs/m2/p1-storage.md).
+### Deklarasi topologi
+
+| Node | Host fisik | VM | IP |
+|---|---|---|---|
+| `node-a` (control plane + worker) | PC Windows (AMD, 32 GB) | VirtualBox, Ubuntu 24.04, 8 GB / 4 vCPU | `192.168.18.201` |
+| `node-b` (worker) | MacBook Intel (16 GB) | VirtualBox, Ubuntu 24.04, 6 GB / 2 vCPU | `192.168.18.202` |
+| `node-c` (worker) | PC Windows (VM kedua) | VirtualBox, Ubuntu 24.04, 8 GB / 4 vCPU | `192.168.18.203` |
+
+- k3s, satu router (bridged), IP statis. Node tersebar di dua host fisik. Semua node x86_64, karena image Tester Agent dan Sensor Pantai hanya amd64. Langkah perakitan: [docs/m2/setup-cluster.md](docs/m2/setup-cluster.md).
+- **`node-a` bukan target `wipe-node` atau node mati.** Consumer (jurnal di volume local-path) dan stack observabilitas dipaku ke `node-a`. Gangguan node diarahkan ke `node-b`/`node-c`.
+- Data store berada di disk node tempat pod berjalan (`local-path`).
+
+### Komponen M2
+
+| Komponen | Bentuk di cluster | Ketahanan |
+|---|---|---|
+| Aggregator (`role=aggregator`) | Deployment 3 replika, Lease `aggregator-leader` | Hanya leader yang polling, reconcile, dan publish outbox (epoch fencing). Semua replika melayani baca dan memproses field report. Lihat bagian P2 di bawah |
+| Canonical Store (`role=store`) | StatefulSet `store-0..2`, satu per node | 24 partisi, RF=2, peta partisi di ConfigMap (CAS). Re-replikasi setelah unit hilang 60 s (`REREPLICATE_AFTER_SECONDS`), amnesia, rebalancing. Lihat [docs/m2/p1-storage.md](docs/m2/p1-storage.md) |
+| RabbitMQ (`role=broker`) | StatefulSet `rabbitmq-0..2`, satu per node | Cluster 3 node (`classic_config`), quorum queue `notification`, `dashboard`, `field-reports`, `alerts.critical`. Tetap melayani dengan 2 dari 3 member; member yang kembali dengan disk kosong bergabung sendiri |
+| Consumer (`role=consumer`) | Deployment 1 replika di `node-a` | Dedup per `MessageId` (snapshot outbox) sebelum efek samping |
+| Observabilitas | Namespace `observability` | Prometheus, Grafana (dashboard "Overview" diprovision dari repo), Jaeger |
+
+Hanya pod `role=aggregator` yang bisa konek ke store (NetworkPolicy `store-ingress`, bukti `make p1-netpol`).
+
+**Compose setelah M2:** queue broker sekarang bertipe quorum. Volume broker Compose dari M1 masih berisi queue classic, dan consumer akan gagal dengan `PRECONDITION_FAILED`. Hapus sekali dengan `docker compose down -v`.
+
+### Variabel konfigurasi M2
+
+Tambahan dari tabel [Variabel konfigurasi](#variabel-konfigurasi). `deploy.sh` membaca kredensial dan token dari `.env` lalu menjadikannya Secret; variabel non-rahasia diset di manifest.
+
+| Variabel | Kegunaan |
+|---|---|
+| `AUDIT_TOKEN` | Bearer token Audit API `/internal/audit/*` (Secret `audit-token`) |
+| `PANTAI_AUTH_TOKEN` | Token yang diminta Sensor Pantai dari kliennya (Secret `pantai-token`) |
+| `FIELD_REPORT_PUBLISH_TIMEOUT_MS` | Compose saja (di cluster memakai default 5000): batas tunggu publisher confirm `POST /field-reports`; lewat batas ini klien menerima 503, bukan 202 |
+| `REREPLICATE_AFTER_SECONDS` | Manifest Aggregator (default 60): lama unit store tak terlihat sebelum partisinya dipindah |
+| `OVERLAY`, `REGISTRY` | Hanya untuk `make deploy`: `dev` (k3d import) atau `cluster` (push ke `REGISTRY`) |
+
+### Memicu skenario
+
+Setiap aksi tersedia sebagai target `make` dan tercatat di `scripts/m2/actions.json`. Daftar lengkap: `make help` dan `make tester-list`.
+
+| Problem | Target | Isi |
+|---|---|---|
+| Umum | `make status`, `make system-status`, `make obs-open`, `make open` | Pod per node, status Aggregator (storage, sumber, leader, DLQ), Grafana + Jaeger, RabbitMQ UI |
+| Tester Agent | `make tester S=<skenario>` | `kill-store`, `kill-leader`, `partition`, `clock-skew`, `schema`, `wipe-node` (profil practice) |
+| P1 | `make p1-checksum`, `p1-distribution`, `p1-wipe-node`, `p1-amnesia S=store-N`, `p1-load FILE=...`, `p1-surge`, `p1-audit`, `p1-netpol`, `p1-dashboard` | Lihat [docs/m2/p1-storage.md](docs/m2/p1-storage.md); bukti di [docs/m2/bukti-p1-cluster.md](docs/m2/bukti-p1-cluster.md) |
+| P2 | `make p2-status`, `p2-failover`, `p2-load` | Lihat bagian P2 di bawah |
+| Broker | `make broker-status`, `make broker-recover S=rabbitmq-N` | Anggota cluster dan replika setiap queue; kosongkan disk member yang crash-loop agar bergabung ulang |
+| Pemulihan | `make reset` | Kembalikan manifest dan mode mock PVMBG ke normal |
+
+`wipe-node` dari Tester Agent bisa terjebak loop mati-nyala pada node yang dipilihnya. Cara memutusnya ada di [docs/m2/temuan-tester-agent.md](docs/m2/temuan-tester-agent.md).
 
 ## 1. Jalankan sistem
 

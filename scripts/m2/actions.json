@@ -11,6 +11,8 @@
     {"id": "open", "group": "Umum", "label": "Buka UI (port-forward)", "make": "open", "destructive": false},
     {"id": "system-status", "group": "Umum", "label": "Status sistem (GET /internal/v1/status)", "make": "system-status", "destructive": false},
     {"id": "obs-open", "group": "Umum", "label": "Buka Grafana + Jaeger (port-forward)", "make": "obs-open", "destructive": false},
+    {"id": "broker-status", "group": "Umum", "label": "Status cluster RabbitMQ + replika queue", "make": "broker-status", "destructive": false},
+    {"id": "broker-recover", "group": "Umum", "label": "Kosongkan disk member RabbitMQ yang crash-loop", "make": "broker-recover", "params": ["S"], "destructive": true},
     {"id": "p1-checksum", "group": "P1", "label": "Checksum Audit API semua sumber", "make": "p1-checksum", "destructive": false},
     {"id": "p1-distribution", "group": "P1", "label": "Sebaran data per node/unit", "make": "p1-distribution", "destructive": false},
     {"id": "p1-dashboard", "group": "P1", "label": "Buka dashboard analitik", "make": "p1-dashboard", "destructive": false},

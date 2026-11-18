@@ -443,13 +443,16 @@ func (r *PostgresRepository) logCall(operation, correlationID string, started ti
 type partitionDigest struct {
 	count       int64
 	maxIngested int64 // unix micros; time.Time values from two units do not compare with ==
+	reports     int64 // field reports are insert-only, so their count is enough
 }
 
 func (r *PostgresRepository) digest(ctx context.Context, p int) (partitionDigest, error) {
 	var d partitionDigest
 	var maxIngested *time.Time
-	err := r.pool.QueryRow(ctx, "SELECT count(*), max(ingested_at) FROM hazard_events WHERE partition_id = $1", p).
-		Scan(&d.count, &maxIngested)
+	err := r.pool.QueryRow(ctx, `SELECT count(*), max(ingested_at),
+		(SELECT count(*) FROM field_reports WHERE partition_id = $1)
+		FROM hazard_events WHERE partition_id = $1`, p).
+		Scan(&d.count, &maxIngested, &d.reports)
 	if maxIngested != nil {
 		d.maxIngested = maxIngested.UnixMicro()
 	}
@@ -517,7 +520,7 @@ func (r *PostgresRepository) importPartition(ctx context.Context, epoch int64, e
 }
 
 // dropPartitionsExcept deletes the rows of partitions this unit no longer replicates,
-// left behind by moves. Events with an unpublished outbox message stay until the relay
+// left behind by moves, field reports included. Events with an unpublished outbox message stay until the relay
 // sends it; published messages of dropped events go with them (the FK needs that).
 const dropSQL = `
     WITH gone AS (
@@ -526,6 +529,8 @@ const dropSQL = `
           AND NOT EXISTS (SELECT 1 FROM hazard_outbox o WHERE o.hazard_id = e.hazard_id AND o.published_at IS NULL)
     ), sent AS (
         DELETE FROM hazard_outbox WHERE hazard_id IN (SELECT hazard_id FROM gone)
+    ), reports AS (
+        DELETE FROM field_reports WHERE NOT (partition_id = ANY($1::int[]))
     )
     DELETE FROM hazard_events WHERE hazard_id IN (SELECT hazard_id FROM gone)`
 

@@ -3,7 +3,9 @@ package satellite
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -163,5 +165,64 @@ func TestHeartbeatOffsetsDoNotCreateDetections(t *testing.T) {
 	state, projection, err := NewState().Next([]Mutation{{Offset: 1, Kind: "heartbeat"}, mutate(2, detection("N20", "243", "113.80000"))}, now)
 	if err != nil || state.Offset != 2 || len(state.Detections) != 1 || len(state.Events) != 0 || len(projection.Upserts) != 0 {
 		t.Fatalf("state=%+v projection=%+v err=%v", state, projection, err)
+	}
+}
+
+func TestIncrementalClustersMatchFullRebuild(t *testing.T) {
+	random := rand.New(rand.NewSource(49))
+	now := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	state := NewState()
+	pool := make([]Detection, 50)
+	for i := range pool {
+		pool[i] = detection("N20", fmt.Sprint(100+i), fmt.Sprintf("%.5f", 113.8+float64(i%15)*.003))
+	}
+	for i := range 300 {
+		point := pool[random.Intn(len(pool))]
+		mutation := mutate(int64(i), point)
+		switch random.Intn(3) {
+		case 1:
+			mutation.Kind, mutation.Key = "retract", point.Key()
+		case 2:
+			point.Confidence = []string{"l", "n", "h"}[random.Intn(3)]
+			mutation.Kind, mutation.Detection = "update", &point
+		}
+		next, _, err := state.Next([]Mutation{mutation}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state = next
+		input := make([]Detection, 0, len(state.Detections))
+		for _, d := range state.Detections {
+			input = append(input, d)
+		}
+		fires, singles, err := Cluster(input)
+		if err != nil || singles != state.Singles || len(fires) != len(state.Events) {
+			t.Fatalf("offset %d: full=%d/%d incremental=%d/%d err=%v", i, len(fires), singles, len(state.Events), state.Singles, err)
+		}
+		expected := map[string]bool{}
+		for _, fire := range fires {
+			expected[strings.Join(fire.DetectionKeys, ",")] = true
+		}
+		for _, event := range state.Events {
+			keys, err := eventKeys(event)
+			if err != nil || !expected[strings.Join(keys, ",")] {
+				t.Fatalf("offset %d: detection membership differs from full rebuild", i)
+			}
+		}
+	}
+}
+
+func BenchmarkStateClusteredThousandDetections(b *testing.B) {
+	batch := make([]Mutation, 1000)
+	for i := range batch {
+		// 50 independent groups of 20 detections each.
+		d := detection("N20", "243", fmt.Sprintf("%.6f", 100+float64(i/20)*.03+float64(i%20)*.00002))
+		batch[i] = mutate(int64(i+1), d)
+	}
+	now := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	for i := 0; i < b.N; i++ {
+		if _, _, err := NewState().Next(batch, now); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"time"
 
@@ -54,86 +55,113 @@ func (s *State) Watermark() time.Time {
 	return s.MaxEventTime.Add(-s.Lateness)
 }
 
-// applyMutation is copy-on-write: a failed batch leaves both the prior state and its
-// committed offset untouched. The caller must durably persist the returned state
-// and finish materializing its projection before accepting another batch.
-func (s *State) applyMutation(mutation Mutation, ingested time.Time) (*State, error) {
-	raw, err := json.Marshal(s)
-	if err != nil {
-		return nil, err
-	}
-	next := NewState()
-	if err := json.Unmarshal(raw, next); err != nil {
-		return nil, err
-	}
-	if next.Lateness <= 0 || next.Offset < -1 || next.Detections == nil || next.Owners == nil || next.Events == nil {
-		return nil, errors.New("satellite: invalid checkpoint")
-	}
-	if next.Seen == nil {
-		next.Seen = map[string]bool{}
-	}
-	if ingested.IsZero() {
-		return nil, errors.New("satellite: ingestion time required")
-	}
-
+// applyMutation changes only the private batch state. The grid allows an isolated
+// detection or heartbeat to advance the offset without reclustering old data.
+func (next *State) applyMutation(mutation Mutation, ingested time.Time, grid detectionGrid) error {
 	if mutation.Offset < 0 {
-		return nil, errors.New("satellite: negative offset")
+		return errors.New("satellite: negative offset")
 	}
 	if mutation.Offset <= next.Offset {
-		return next, nil
+		return nil
 	}
 	if next.Offset >= 0 && mutation.Offset != next.Offset+1 {
-		return nil, fmt.Errorf("satellite: mutation gap after %d", next.Offset)
+		return fmt.Errorf("satellite: mutation gap after %d", next.Offset)
 	}
+	ingested = ingested.Truncate(time.Microsecond)
+	if !ingested.After(next.LastIngested) {
+		ingested = next.LastIngested.Truncate(time.Microsecond).Add(time.Microsecond)
+	}
+	next.LastIngested = ingested
+	next.Offset = mutation.Offset
+	affected := map[string]bool{}
+	oldFires := map[string]domain.HazardEvent{}
+	touchFire := func(id string) {
+		if _, alreadyTouched := oldFires[id]; alreadyTouched {
+			return
+		}
+		if event, exists := next.Events[id]; exists {
+			oldFires[id] = event
+			for _, key := range event.Attributes["detection_keys"].([]string) {
+				affected[key] = true
+			}
+		}
+	}
+	touch := func(key string) {
+		affected[key] = true
+		touchFire(grid.active[key])
+		touchFire(next.Owners[key])
+	}
+	remove := func(key string) {
+		if old, found := grid.points[key]; found {
+			if id := grid.active[key]; id != "" {
+				touchFire(id)
+			} else {
+				next.Singles--
+			}
+			grid.remove(key, old)
+		}
+		delete(next.Detections, key)
+	}
+	addedKey := ""
 	switch mutation.Kind {
 	case "detection", "update":
 		if mutation.Detection == nil {
-			return nil, errors.New("satellite: detection required")
+			return errors.New("satellite: detection required")
 		}
 		p, err := parse(*mutation.Detection)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if !next.Seen[mutation.Detection.Key()] && !next.Watermark().IsZero() && p.at.Before(next.Watermark()) {
+		key := mutation.Detection.Key()
+		if _, exists := next.Detections[key]; mutation.Kind == "detection" && exists {
+			return nil
+		}
+		if !next.Seen[key] && !next.Watermark().IsZero() && p.at.Before(next.Watermark()) {
 			next.LateDetections++
 		}
 		if p.at.After(next.MaxEventTime) {
 			next.MaxEventTime = p.at
 		}
-		key := mutation.Detection.Key()
 		if mutation.Key != "" && mutation.Key != key {
 			if owner := next.Owners[mutation.Key]; owner != "" {
 				next.Owners[key] = owner
 			}
-			delete(next.Detections, mutation.Key)
+			remove(mutation.Key)
 		}
+		remove(key)
 		next.Detections[key] = *mutation.Detection
 		next.Seen[key] = true
+		if p.confidence != "l" {
+			addedKey = key
+			grid.neighbors(key, p, touch)
+			touch(key)
+			grid.add(key, p)
+		}
 	case "heartbeat":
-	// Some feeds assign offsets to heartbeats. Advance that position without
-	// fabricating a detection, while preserving the no-gap recovery contract.
+		return nil
 	case "retract":
 		if mutation.Key == "" {
-			return nil, errors.New("satellite: retraction key required")
+			return errors.New("satellite: retraction key required")
 		}
-		delete(next.Detections, mutation.Key)
+		remove(mutation.Key)
 	default:
-		return nil, fmt.Errorf("satellite: unsupported mutation %q", mutation.Kind)
+		return fmt.Errorf("satellite: unsupported mutation %q", mutation.Kind)
 	}
-	if !ingested.After(next.LastIngested) {
-		ingested = next.LastIngested.Add(time.Microsecond)
-	}
-	next.LastIngested = ingested
-	next.Offset = mutation.Offset
-	input := make([]Detection, 0, len(next.Detections))
-	for _, d := range next.Detections {
-		input = append(input, d)
+	input := make([]Detection, 0, len(affected))
+	for key := range affected {
+		if p, exists := grid.points[key]; exists {
+			input = append(input, p.d)
+			if grid.active[key] == "" && key != addedKey {
+				next.Singles--
+			}
+		}
+		delete(grid.active, key)
 	}
 	fires, singles, err := Cluster(input)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	next.Singles = singles
+	next.Singles += singles
 	// Each old identity nominates one successor, favouring the largest overlap.
 	// Ties use the component's smallest key. A merge keeps the smallest nominated ID.
 	sort.Slice(fires, func(i, j int) bool { return fires[i].DetectionKeys[0] < fires[j].DetectionKeys[0] })
@@ -157,7 +185,9 @@ func (s *State) applyMutation(mutation Mutation, ingested time.Time) (*State, er
 	for owner, choice := range nominations {
 		candidates[choice.component] = append(candidates[choice.component], owner)
 	}
-	active := map[string]domain.HazardEvent{}
+	for id := range oldFires {
+		delete(next.Events, id)
+	}
 	for i, fire := range fires {
 		if len(candidates[i]) > 0 {
 			sort.Strings(candidates[i])
@@ -165,11 +195,12 @@ func (s *State) applyMutation(mutation Mutation, ingested time.Time) (*State, er
 		}
 		// A split child whose smallest key was the old anchor must not collide with
 		// the ID retained by the larger successor. Salt deterministically if needed.
-		if _, reserved := nominations[fire.SourceRefID]; reserved && len(candidates[i]) == 0 {
+		_, inUse := next.Events[fire.SourceRefID]
+		if _, reserved := nominations[fire.SourceRefID]; (reserved || inUse) && len(candidates[i]) == 0 {
 			fire.SourceRefID += "-split-" + fmt.Sprint(next.Offset)
 		}
 		event := fire.Hazard(ingested)
-		previous, exists := next.Events[fire.SourceRefID]
+		previous, exists := oldFires[fire.SourceRefID]
 		if exists {
 			comparable := event
 			comparable.IngestedAt = previous.IngestedAt
@@ -179,27 +210,63 @@ func (s *State) applyMutation(mutation Mutation, ingested time.Time) (*State, er
 				event = previous
 			}
 		}
-		active[fire.SourceRefID] = event
+		next.Events[fire.SourceRefID] = event
 		for _, key := range fire.DetectionKeys {
 			next.Owners[key] = fire.SourceRefID
+			grid.active[key] = fire.SourceRefID
 		}
 	}
-	next.Events = active
-	return next, nil
+	return nil
 }
 
 // Apply every mutation in offset order even when the caller batches commits, so
 // a different crash/reconnect boundary cannot change merge/split identity choices.
 func (s *State) Next(batch []Mutation, ingested time.Time) (*State, Projection, error) {
-	next := s
-	for _, mutation := range batch {
-		updated, err := next.applyMutation(mutation, ingested)
+	if len(batch) == 0 {
+		return s, Projection{}, nil
+	}
+	if s.Lateness <= 0 || s.Offset < -1 || s.Detections == nil || s.Owners == nil || s.Events == nil {
+		return nil, Projection{}, errors.New("satellite: invalid checkpoint")
+	}
+	if ingested.IsZero() {
+		return nil, Projection{}, errors.New("satellite: ingestion time required")
+	}
+	next := *s
+	next.Detections, next.Owners, next.Seen = maps.Clone(s.Detections), maps.Clone(s.Owners), maps.Clone(s.Seen)
+	next.Events = maps.Clone(s.Events)
+	if next.Seen == nil {
+		next.Seen = map[string]bool{}
+	}
+	grid := detectionGrid{points: map[string]point{}, cells: map[[4]int64]map[string]point{}, active: map[string]string{}}
+	for id, event := range next.Events {
+		keys, err := eventKeys(event)
 		if err != nil {
 			return nil, Projection{}, err
 		}
-		next = updated
+		if _, ok := event.Attributes["detection_keys"].([]string); !ok {
+			event.Attributes = maps.Clone(event.Attributes)
+			event.Attributes["detection_keys"] = keys
+			next.Events[id] = event
+		}
+		for _, key := range keys {
+			grid.active[key] = id
+		}
 	}
-	if next == s {
+	for key, detection := range next.Detections {
+		p, err := parse(detection)
+		if err != nil {
+			return nil, Projection{}, err
+		}
+		if p.confidence != "l" {
+			grid.add(key, p)
+		}
+	}
+	for _, mutation := range batch {
+		if err := next.applyMutation(mutation, ingested, grid); err != nil {
+			return nil, Projection{}, err
+		}
+	}
+	if next.Offset == s.Offset {
 		return s, Projection{}, nil
 	}
 	projection := Projection{}
@@ -218,5 +285,25 @@ func (s *State) Next(batch []Mutation, ingested time.Time) (*State, Projection, 
 	}
 	sort.Slice(projection.Upserts, func(i, j int) bool { return projection.Upserts[i].HazardID < projection.Upserts[j].HazardID })
 	sort.Slice(projection.Retracted, func(i, j int) bool { return projection.Retracted[i].HazardID < projection.Retracted[j].HazardID })
-	return next, projection, nil
+	return &next, projection, nil
+}
+
+// JSON checkpoints restore attribute arrays as []any.
+func eventKeys(event domain.HazardEvent) ([]string, error) {
+	switch keys := event.Attributes["detection_keys"].(type) {
+	case []string:
+		return keys, nil
+	case []any:
+		result := make([]string, 0, len(keys))
+		for _, value := range keys {
+			key, ok := value.(string)
+			if !ok {
+				return nil, errors.New("satellite: invalid checkpoint detection key")
+			}
+			result = append(result, key)
+		}
+		return result, nil
+	default:
+		return nil, errors.New("satellite: checkpoint fire is missing detection keys")
+	}
 }

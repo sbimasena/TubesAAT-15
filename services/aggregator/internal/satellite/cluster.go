@@ -141,6 +141,9 @@ func Cluster(input []Detection) ([]Fire, int, error) {
 				for z := int64(-1); z <= 1; z++ {
 					for t := int64(-1); t <= 1; t++ {
 						for _, j := range grid[[4]int64{c[0] + x, c[1] + y, c[2] + z, c[3] + t}] {
+							if root(i) == root(j) {
+								continue
+							}
 							dt := p.at.Sub(points[j].at)
 							if dt >= -6*time.Hour && dt <= 6*time.Hour && distance(p, points[j]) <= 1 {
 								parents[root(i)] = root(j)

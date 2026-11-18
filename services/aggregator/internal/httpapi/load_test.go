@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -61,4 +62,44 @@ func TestLoadCatalog(t *testing.T) {
 	if got[0].Source != "BMKG" || got[0].HazardType != "SEISMIC" || got[0].SourceRefID != "g" || got[0].AreaName != "Palu" {
 		t.Fatalf("not mapped like a polled BMKG event: %+v", got[0])
 	}
+}
+
+func TestLoadUsesCurrentTermAndRejectsFollowers(t *testing.T) {
+	repo := &epochRepository{}
+	api := NewServer(repo, ingest.NewManager(nil, nil, repo, time.Second, nil), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	api.EnableAudit(fakeAudit{}, "secret")
+	active := true
+	api.EnableWriteTerm(func(context.Context) (int64, error) {
+		if !active {
+			return 0, errors.New("not leader")
+		}
+		return 17, nil
+	})
+	body := `[{"event_id":"a","region_name":"Palu","epicenter_lat":-0.9,"epicenter_lon":119.8,"occurred_at":"2018-09-28T10:02:00Z"}]`
+	post := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/internal/admin/load", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer secret")
+		response := httptest.NewRecorder()
+		api.Handler().ServeHTTP(response, req)
+		return response
+	}
+	if res := post(); res.Code != 200 || repo.epoch != 17 {
+		t.Fatalf("status=%d epoch=%d", res.Code, repo.epoch)
+	}
+	active = false
+	if res := post(); res.Code != 503 || res.Header().Get("Retry-After") != "1" || repo.calls != 1 {
+		t.Fatalf("status=%d calls=%d", res.Code, repo.calls)
+	}
+}
+
+type epochRepository struct {
+	storedRepository
+	epoch int64
+	calls int
+}
+
+func (r *epochRepository) Upsert(_ context.Context, epoch int64, events []domain.HazardEvent, _ string) ([]domain.HazardEvent, error) {
+	r.epoch = epoch
+	r.calls++
+	return events, nil
 }

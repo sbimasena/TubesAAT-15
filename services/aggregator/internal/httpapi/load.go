@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,8 +33,19 @@ func (s *Server) loadCatalog(w http.ResponseWriter, r *http.Request) {
 		events[i] = domain.MapSeismic(e, nil, now)
 	}
 	started := time.Now()
-	// Epoch 0 like ingest until internal/leader provides the lease epoch.
-	changed, err := s.repository.Upsert(r.Context(), 0, events, r.Header.Get("X-Correlation-ID"))
+	epoch := int64(0)
+	ctx := r.Context()
+	if s.writeTerm != nil {
+		var err error
+		epoch, err = s.writeTerm(ctx)
+		if err != nil {
+			w.Header().Set("Retry-After", "1")
+			writeAuditError(w, http.StatusServiceUnavailable, "not_leader", "catalog loads require the current leader")
+			return
+		}
+		ctx = store.WithWriteVerifier(ctx, func(ctx context.Context) error { _, err := s.writeTerm(ctx); return err })
+	}
+	changed, err := s.repository.Upsert(ctx, epoch, events, r.Header.Get("X-Correlation-ID"))
 	if errors.Is(err, store.ErrFenced) {
 		writeAuditError(w, http.StatusConflict, "fenced", "epoch usang")
 		return
@@ -95,3 +107,6 @@ func peekNonSpace(r *bufio.Reader) (byte, error) {
 		}
 	}
 }
+
+// EnableWriteTerm rejects catalog writes on followers and supplies the lease epoch.
+func (s *Server) EnableWriteTerm(term func(context.Context) (int64, error)) { s.writeTerm = term }

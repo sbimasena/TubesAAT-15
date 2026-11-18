@@ -118,6 +118,7 @@ func (r *Router) Close() {
 // Run keeps every unit migrated and watches its incarnation until ctx ends.
 func (r *Router) Run(ctx context.Context) {
 	var wg sync.WaitGroup
+	wg.Go(func() { r.followMap(ctx) })
 	for _, u := range r.units {
 		wg.Go(func() {
 			ticker := time.NewTicker(5 * time.Second)
@@ -133,6 +134,27 @@ func (r *Router) Run(ctx context.Context) {
 		})
 	}
 	wg.Wait()
+}
+
+// mapRefresh is how often every replica reloads the partition map. Only the leader
+// changes it, so a follower would otherwise keep writing to a unit it moved away from.
+var mapRefresh = 5 * time.Second
+
+func (r *Router) followMap(ctx context.Context) {
+	ticker := time.NewTicker(mapRefresh)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		loadCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		if err := r.LoadMap(loadCtx); err != nil && ctx.Err() == nil {
+			r.log(slog.LevelWarn, "partition map reload failed", "error", err)
+		}
+		cancel()
+	}
 }
 
 // CheckUnits runs one migration/incarnation pass over all units; failures are logged only.

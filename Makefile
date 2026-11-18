@@ -12,7 +12,7 @@ endif
 SH = "$(BASH)"
 
 .DEFAULT_GOAL := help
-.PHONY: help dev-up dev-down deploy status logs tester-list tester open reset p1-checksum p1-distribution p1-load p1-surge p1-wipe-node p1-dashboard p1-amnesia p1-audit p1-netpol obs-open system-status
+.PHONY: help dev-up dev-down deploy status logs tester-list tester open reset p1-checksum p1-distribution p1-load p1-surge p1-wipe-node p1-dashboard p1-amnesia p1-audit p1-netpol obs-open system-status broker-status broker-recover
 
 help: ## Daftar target
 	@$(SH) scripts/k8s/help.sh Makefile
@@ -46,6 +46,12 @@ system-status: ## Status sistem dari Aggregator (storage, sumber, leader, DLQ)
 
 obs-open: ## Port-forward Grafana (metrik) dan Jaeger (trace)
 	@$(SH) scripts/k8s/ops.sh obs-open
+
+broker-status: ## Anggota cluster RabbitMQ dan replika tiap quorum queue
+	@$(SH) scripts/k8s/ops.sh broker-status
+
+broker-recover: ## Kosongkan disk member RabbitMQ yang crash-loop agar bergabung ulang: make broker-recover S=rabbitmq-2
+	@$(SH) scripts/k8s/ops.sh broker-recover $(S)
 
 p1-checksum: ## Checksum Audit API per sumber dan semua sumber
 	@$(SH) scripts/k8s/ops.sh p1-checksum

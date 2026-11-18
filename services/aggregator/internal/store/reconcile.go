@@ -324,7 +324,8 @@ func boolInt(b bool) int {
 	return 0
 }
 
-// syncPartition copies every row of partition p from src into dst, newer ingested_at wins.
+// syncPartition copies every row of partition p from src into dst, newer ingested_at wins,
+// then the partition's field reports.
 func (r *Router) syncPartition(ctx context.Context, epoch int64, p int, src, dst *unit) error {
 	ctx, cancel := context.WithTimeout(ctx, syncTimeout)
 	defer cancel()
@@ -342,8 +343,20 @@ func (r *Router) syncPartition(ctx context.Context, epoch int64, p int, src, dst
 	if err != nil {
 		return fmt.Errorf("import into %s: %w", dst.name, err)
 	}
-	if copied > 0 {
-		r.log(slog.LevelInfo, "partition rows copied", "partition", p, "from", src.name, "to", dst.name, "rows", copied)
+	reports, err := src.repo.exportReports(ctx, p)
+	if err != nil {
+		return fmt.Errorf("export reports from %s: %w", src.name, err)
+	}
+	reportsCopied, err := dst.repo.importReports(ctx, epoch, reports)
+	if errors.Is(err, ErrFenced) {
+		return err
+	}
+	if err != nil {
+		return fmt.Errorf("import reports into %s: %w", dst.name, err)
+	}
+	if copied > 0 || reportsCopied > 0 {
+		r.log(slog.LevelInfo, "partition rows copied", "partition", p, "from", src.name, "to", dst.name,
+			"rows", copied, "reports", reportsCopied)
 	}
 	return nil
 }

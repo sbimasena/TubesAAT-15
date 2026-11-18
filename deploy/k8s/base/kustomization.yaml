@@ -21,9 +21,11 @@ resources:
   - sensor-pantai.yaml
 
 configMapGenerator:
-  # The k8s copy of infrastructure/message-broker; it diverges in M2 (quorum queues, 3 nodes).
+  # The k8s copy of infrastructure/message-broker plus clustering (3 nodes, Erlang cookie).
   - name: broker-topology
     files:
       - broker/definitions.json
       - broker/start-with-topology.sh
       - broker/10-limits.conf
+      - broker/20-cluster.conf
+      - broker/enabled_plugins

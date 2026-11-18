@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -33,6 +34,8 @@ type Processor struct {
 	epoch      int64
 	verify     func(context.Context) error
 	checkpoint recoveryCheckpoint
+	progress   atomic.Pointer[satelliteProgress]
+	session    atomic.Pointer[Session]
 }
 
 func NewProcessor(repo Repository, epoch int64, verify func(context.Context) error) (*Processor, error) {
@@ -40,6 +43,8 @@ func NewProcessor(repo Repository, epoch int64, verify func(context.Context) err
 		return nil, errors.New("satellite: repository and term verifier required")
 	}
 	processorReady.Set(0)
+	offsetLag.Set(-1)
+	eventLag.Set(-1)
 	return &Processor{repo: repo, epoch: epoch, verify: verify}, nil
 }
 
@@ -131,17 +136,20 @@ func (p *Processor) Offset() (int64, error) {
 	return p.checkpoint.State.Offset, nil
 }
 
-func (p *Processor) Process(ctx context.Context, batch []Mutation, ingested time.Time) (err error) {
+func (p *Processor) Process(ctx context.Context, batch []Mutation, ingested time.Time) error {
+	return p.process(ctx, batch, ingested, time.Now())
+}
+
+func (p *Processor) process(ctx context.Context, batch []Mutation, ingested, received time.Time) (err error) {
 	ctx, span := otel.Tracer("aggregator/satellite").Start(ctx, "satellite.process")
-	started := time.Now()
-	effectful := false
+	effectful := 0
 	defer func() {
 		if err != nil {
 			processorReady.Set(0)
 			span.RecordError(err)
 		} else {
-			if effectful {
-				commitLatency.Observe(time.Since(started).Seconds())
+			for range effectful {
+				commitLatency.Observe(time.Since(received).Seconds())
 			}
 			p.reportMetrics()
 		}
@@ -160,7 +168,7 @@ func (p *Processor) Process(ctx context.Context, batch []Mutation, ingested time
 	if next.Offset == p.checkpoint.State.Offset {
 		return nil
 	}
-	effectful = len(projection.Upserts) > 0 || len(projection.Retracted) > 0
+	effectful = len(projection.Upserts) + len(projection.Retracted)
 	checkpoint := recoveryCheckpoint{Version: 1, State: next, Pending: projection}
 	// Write-ahead checkpoint: the offset, raw detections, identity ledger and
 	// pending effects survive a crash before any HazardEvent is materialized.

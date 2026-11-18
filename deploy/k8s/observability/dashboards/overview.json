@@ -255,7 +255,7 @@
     {
       "id": 8,
       "type": "timeseries",
-      "title": "Satellite offset lag (adapter must observe session)",
+      "title": "Satellite offset lag",
       "description": "Request HTTP per detik yang dilayani tiap service.",
       "datasource": {
         "type": "prometheus",
@@ -269,7 +269,7 @@
       },
       "targets": [
         {
-          "expr": "bnpb_satellite_offset_lag and on(instance, job) (bnpb_satellite_processor_ready == 1)",
+          "expr": "(bnpb_satellite_offset_lag >= 0) and on(instance, job) (bnpb_satellite_processor_ready == 1)",
           "refId": "A",
           "legendFormat": "{{instance}} {{__name__}}"
         }
@@ -285,7 +285,7 @@
     {
       "id": 9,
       "type": "timeseries",
-      "title": "Satellite handler-to-commit p95",
+      "title": "Satellite frame-to-commit p95",
       "description": "Request HTTP per detik yang dilayani tiap service.",
       "datasource": {
         "type": "prometheus",
@@ -345,7 +345,7 @@
     {
       "id": 11,
       "type": "timeseries",
-      "title": "Satellite processor ready (0 until adapter/recovery)",
+      "title": "Satellite processor ready",
       "description": "Request HTTP per detik yang dilayani tiap service.",
       "datasource": {
         "type": "prometheus",

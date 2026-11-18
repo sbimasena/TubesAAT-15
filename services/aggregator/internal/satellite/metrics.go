@@ -16,19 +16,27 @@ var (
 	eventLag         = promauto.NewGauge(prometheus.GaugeOpts{Name: "bnpb_satellite_event_time_lag_seconds", Help: "Session virtual time minus maximum processed event time."})
 	lateDetections   = promauto.NewGauge(prometheus.GaugeOpts{Name: "bnpb_satellite_late_detections", Help: "Retained late detection identities in the durable checkpoint."})
 	singleDetections = promauto.NewGauge(prometheus.GaugeOpts{Name: "bnpb_satellite_single_detections", Help: "Isolated eligible detections, not fires."})
-	commitLatency    = promauto.NewHistogram(prometheus.HistogramOpts{Name: "bnpb_satellite_ingest_duration_seconds", Help: "Time for effectful batches from handler entry through replicated canonical commit and checkpoint completion.", Buckets: []float64{.01, .05, .1, .25, .5, 1, 2, 5, 10, 30, 60}})
+	commitLatency    = promauto.NewHistogram(prometheus.HistogramOpts{Name: "bnpb_satellite_ingest_duration_seconds", Help: "Per hazard effect, elapsed time from the first received frame of its batch through replicated commit and checkpoint completion.", Buckets: []float64{.01, .05, .1, .25, .5, 1, 2, 5, 10, 30, 60}})
 )
 
-// ObserveSession must be called by the owning worker, like Process. Lags use the
-// assistant's virtual clock, so a 60x feed is not compared to host wall time.
+type satelliteProgress struct {
+	offset    int64
+	eventTime time.Time
+}
+
 func (p *Processor) ObserveSession(latest int64, virtualNow time.Time) {
-	offset, err := p.Offset()
-	if err != nil {
+	p.session.Store(&Session{LatestOffset: latest, VirtualNow: virtualNow})
+	p.reportLag()
+}
+
+func (p *Processor) reportLag() {
+	progress, session := p.progress.Load(), p.session.Load()
+	if progress == nil || session == nil {
 		return
 	}
-	offsetLag.Set(float64(max(0, latest-offset)))
-	if !p.checkpoint.State.MaxEventTime.IsZero() {
-		eventLag.Set(max(0, virtualNow.Sub(p.checkpoint.State.MaxEventTime).Seconds()))
+	offsetLag.Set(float64(max(0, session.LatestOffset-progress.offset)))
+	if !progress.eventTime.IsZero() {
+		eventLag.Set(max(0, session.VirtualNow.Sub(progress.eventTime).Seconds()))
 	}
 }
 func (p *Processor) reportMetrics() {
@@ -36,6 +44,8 @@ func (p *Processor) reportMetrics() {
 	if err != nil {
 		return
 	}
+	p.progress.Store(&satelliteProgress{offset: offset, eventTime: p.checkpoint.State.MaxEventTime})
+	p.reportLag()
 	processorReady.Set(1)
 	processedOffset.Set(float64(offset))
 	lateDetections.Set(float64(p.checkpoint.State.LateDetections))

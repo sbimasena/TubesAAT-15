@@ -118,6 +118,14 @@ func main() {
 		}
 		return 0
 	})
+	var satelliteClient *satellite.StreamClient
+	if token := os.Getenv("SATELLITE_TOKEN"); token != "" {
+		satelliteClient, err = satellite.NewStreamClient(satellite.FeedURL, token)
+		if err != nil {
+			logger.Error("Invalid satellite configuration", "error", err)
+			os.Exit(1)
+		}
+	}
 	leaderDone := make(chan struct{})
 	go func() {
 		defer close(leaderDone)
@@ -142,6 +150,13 @@ func main() {
 				repository.Reconcile(term, epoch, 10*time.Second, positiveSecondsFromEnv("REREPLICATE_AFTER_SECONDS", 60))
 			}()
 			go func() { defer workers.Done(); messaging.Run(term, repository, brokerURL, "hazard.events", logger) }()
+			if satelliteClient != nil {
+				workers.Go(func() {
+					if err := satellite.RunWorker(term, satelliteClient, repository, epoch, election.Verify, logger); err != nil && term.Err() == nil {
+						logger.Error("Satellite worker stopped", "error", err)
+					}
+				})
+			}
 			workers.Wait()
 			logger.Info("leader workers stopped", "epoch", epoch)
 		}, stop)

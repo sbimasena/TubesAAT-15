@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"io"
 	"math/rand/v2"
 	"net"
@@ -18,6 +17,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // Frame preserves the SSE data bytes; decoding the assistant's JSON belongs in
@@ -25,9 +26,10 @@ import (
 var ErrProtocol = errors.New("satellite: invalid stream protocol")
 
 type Frame struct {
-	Kind   string
-	Offset int64
-	Data   []byte
+	Kind       string
+	Offset     int64
+	Data       []byte
+	ReceivedAt time.Time
 }
 
 // ReadSSE is synchronous: apply must durably finish before the next frame is read.
@@ -65,7 +67,7 @@ func ReadSSE(ctx context.Context, reader io.Reader, committed int64, apply func(
 				return fmt.Errorf("%w: offset gap after %d: got %d", ErrProtocol, committed, offset)
 			}
 		}
-		frame := Frame{Kind: kind, Offset: offset, Data: bytes.Clone(bytes.TrimSuffix(data, []byte{'\n'}))}
+		frame := Frame{Kind: kind, Offset: offset, Data: bytes.Clone(bytes.TrimSuffix(data, []byte{'\n'})), ReceivedAt: time.Now()}
 		if err := apply(ctx, frame); err != nil {
 			return err
 		}
@@ -152,7 +154,7 @@ func (r idleReader) Read(p []byte) (int, error) {
 	return r.reader.Read(p)
 }
 
-func (c *StreamClient) once(ctx context.Context, offset int64, apply func(context.Context, Frame) error) error {
+func (c *StreamClient) once(ctx context.Context, offset int64, apply func(context.Context, []Frame) error) error {
 	stream, cancel := context.WithCancel(ctx)
 	defer cancel()
 	req, err := http.NewRequestWithContext(stream, http.MethodGet, c.base+"/v1/stream?from="+strconv.FormatInt(max(offset, 0), 10), nil)
@@ -175,7 +177,7 @@ func (c *StreamClient) once(ctx context.Context, offset int64, apply func(contex
 	if strings.Split(response.Header.Get("Content-Type"), ";")[0] != "text/event-stream" {
 		return fmt.Errorf("%w: response is not SSE", ErrProtocol)
 	}
-	return ReadSSE(stream, idleReader{response.Body, c.idle, cancel}, offset, apply)
+	return readBatches(ctx, stream, idleReader{response.Body, c.idle, cancel}, offset, apply)
 }
 
 type streamHTTPError struct{ code int }
@@ -184,7 +186,7 @@ func (e *streamHTTPError) Error() string { return fmt.Sprintf("satellite: HTTP %
 
 // Run reloads the durable offset before every connection. Handler errors stop the
 // worker rather than consume past a failed commit. 429/503/disconnects back off.
-func (c *StreamClient) Run(ctx context.Context, load func(context.Context) (int64, error), apply func(context.Context, Frame) error) error {
+func (c *StreamClient) Run(ctx context.Context, load func(context.Context) (int64, error), apply func(context.Context, []Frame) error) error {
 	delay := time.Second
 	for ctx.Err() == nil {
 		offset, err := load(ctx)
@@ -193,12 +195,12 @@ func (c *StreamClient) Run(ctx context.Context, load func(context.Context) (int6
 		}
 		var applyErr error
 		progressed := false
-		err = c.once(ctx, offset, func(ctx context.Context, frame Frame) error {
-			if err := apply(ctx, frame); err != nil {
+		err = c.once(ctx, offset, func(ctx context.Context, frames []Frame) error {
+			if err := apply(ctx, frames); err != nil {
 				applyErr = err
 				return err
 			}
-			if frame.Offset > offset {
+			if frames[len(frames)-1].Offset > offset {
 				progressed = true
 			}
 			return nil

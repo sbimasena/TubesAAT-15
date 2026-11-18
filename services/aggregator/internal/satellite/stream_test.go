@@ -63,7 +63,8 @@ func TestStreamResumesFromDurableOffset(t *testing.T) {
 	defer server.Close()
 	client := &StreamClient{base: server.URL, token: "test-token", http: server.Client(), idle: time.Second}
 	applied := 0
-	err := client.Run(ctx, func(context.Context) (int64, error) { return committed.Load(), nil }, func(_ context.Context, f Frame) error {
+	err := client.Run(ctx, func(context.Context) (int64, error) { return committed.Load(), nil }, func(_ context.Context, frames []Frame) error {
+		f := frames[0]
 		applied++
 		committed.Store(f.Offset)
 		if f.Offset == 2 {
@@ -88,7 +89,7 @@ func TestIdleStreamIsCancelled(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	started := time.Now()
-	if err := client.once(ctx, -1, func(context.Context, Frame) error { return nil }); err == nil || time.Since(started) > 500*time.Millisecond {
+	if err := client.once(ctx, -1, func(context.Context, []Frame) error { return nil }); err == nil || time.Since(started) > 500*time.Millisecond {
 		t.Fatalf("idle stream did not stop: %v", err)
 	}
 }
@@ -106,7 +107,7 @@ func TestStreamDoesNotRetryCommitFailureOrUnauthorized(t *testing.T) {
 			defer server.Close()
 			client := &StreamClient{base: server.URL, token: "token", http: server.Client(), idle: time.Second}
 			failure := errors.New("store unavailable")
-			err := client.Run(context.Background(), func(context.Context) (int64, error) { return -1, nil }, func(context.Context, Frame) error { return failure })
+			err := client.Run(context.Background(), func(context.Context) (int64, error) { return -1, nil }, func(context.Context, []Frame) error { return failure })
 			if err == nil || calls.Load() != 1 {
 				t.Fatalf("calls=%d err=%v", calls.Load(), err)
 			}

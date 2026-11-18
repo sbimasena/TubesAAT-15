@@ -52,6 +52,9 @@ func (r *Router) commitLocked(ctx context.Context, m partitionMap) error {
 	if string(before) == string(after) {
 		return nil
 	}
+	if err := verifyWrite(ctx); err != nil {
+		return err
+	}
 	version, err := r.maps.save(ctx, m, r.mapVersion)
 	if err != nil {
 		return fmt.Errorf("save partition map: %w", err)
@@ -63,8 +66,7 @@ func (r *Router) commitLocked(ctx context.Context, m partitionMap) error {
 
 // Reconcile repairs placement every interval until ctx ends: amnesia recovery,
 // anti-entropy, re-replication of units unseen for deadAfter, and rebalancing.
-// shortcut: not leader-gated yet (Aggregator runs 1 replica); call it only from the
-// leader once internal/leader lands, passing the lease epoch.
+// Run only in the leader term, with WithWriteVerifier and the fencing epoch.
 func (r *Router) Reconcile(ctx context.Context, epoch int64, interval, deadAfter time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -83,6 +85,9 @@ func (r *Router) Reconcile(ctx context.Context, epoch int64, interval, deadAfter
 func (r *Router) reconcileOnce(ctx context.Context, epoch int64, deadAfter time.Duration) error {
 	r.mapMu.Lock()
 	defer r.mapMu.Unlock()
+	if err := verifyWrite(ctx); err != nil {
+		return err
+	}
 	if err := r.loadMapLocked(ctx); err != nil {
 		return err
 	}
@@ -129,6 +134,10 @@ func (r *Router) sweep(ctx context.Context, epoch int64, l *layout, dead func(*u
 			continue // a unit outside the map (just added) keeps its rows until it is given slots
 		}
 		ctx, cancel := context.WithTimeout(ctx, syncTimeout)
+		if err := verifyWrite(ctx); err != nil {
+			cancel()
+			return
+		}
 		dropped, err := u.repo.dropPartitionsExcept(ctx, epoch, keep)
 		cancel()
 		if err != nil {
@@ -322,6 +331,9 @@ func (r *Router) syncPartition(ctx context.Context, epoch int64, p int, src, dst
 	events, err := src.repo.exportPartition(ctx, p)
 	if err != nil {
 		return fmt.Errorf("export from %s: %w", src.name, err)
+	}
+	if err := verifyWrite(ctx); err != nil {
+		return err
 	}
 	copied, err := dst.repo.importPartition(ctx, epoch, events)
 	if errors.Is(err, ErrFenced) {

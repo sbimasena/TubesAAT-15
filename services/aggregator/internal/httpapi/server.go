@@ -18,6 +18,7 @@ import (
 )
 
 type Server struct {
+	cache      *readCache
 	repository store.Repository
 	manager    *ingest.Manager
 	logger     *slog.Logger
@@ -25,6 +26,7 @@ type Server struct {
 	auditToken string
 	analytics  analyzer
 	status     map[string]func(context.Context) any
+	writeTerm  func(context.Context) (int64, error)
 }
 
 func NewServer(repository store.Repository, manager *ingest.Manager, logger *slog.Logger) *Server {
@@ -69,7 +71,7 @@ func (s *Server) listHazards(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	events, err := s.repository.List(r.Context(), filter, r.Header.Get("X-Correlation-ID"))
+	events, err := s.readHazards(r.Context(), filter, r.Header.Get("X-Correlation-ID"))
 	if err != nil {
 		s.logger.Error("canonical query failed", "correlation_id", r.Header.Get("X-Correlation-ID"), "error", err)
 		http.Error(w, "canonical store unavailable", http.StatusServiceUnavailable)

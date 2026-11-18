@@ -12,13 +12,16 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/domain"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/httpapi"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/ingest"
+	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/leader"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/messaging"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/reporting"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/source"
@@ -87,29 +90,64 @@ func main() {
 	}
 	cancel()
 	registerStoreMetrics(repository)
+	election, err := leader.New()
+	if err != nil {
+		logger.Error("leader initialization failed", "error", err)
+		return
+	}
 	routerDone := make(chan struct{})
 	go func() {
 		defer close(routerDone)
 		repository.Run(ctx)
 	}()
-	reconcilerDone := make(chan struct{})
-	go func() {
-		defer close(reconcilerDone)
-		// Epoch 0 like ingest until leader election (P2) provides the lease epoch.
-		repository.Reconcile(ctx, 0, 10*time.Second, positiveSecondsFromEnv("REREPLICATE_AFTER_SECONDS", 60))
-	}()
 	bmkg := source.NewBMKGClient(bmkgBaseURL, bmkgKey, logger)
 	pvmbg := source.NewPVMBGClient(pvmbgBaseURL, pvmbgToken, logger)
-	manager := ingest.NewManager(bmkg, pvmbg, repository, interval, logger)
-	pollersDone := make(chan struct{})
+	manager := ingest.NewManager(bmkg, pvmbg, replicatedIngestStore{repository}, interval, logger)
+	statusDone := make(chan struct{})
 	go func() {
-		defer close(pollersDone)
-		manager.Run(ctx)
+		defer close(statusDone)
+		manager.RunStatusRefresh(ctx, repository, func() bool { _, active := election.Current(); return active })
 	}()
-	publisherDone := make(chan struct{})
+
+	promauto.NewGaugeFunc(prometheus.GaugeOpts{Name: "bnpb_leader_epoch", Help: "Current fencing epoch."}, func() float64 { e, _ := election.Current(); return float64(e) })
+	promauto.NewGaugeFunc(prometheus.GaugeOpts{Name: "bnpb_leader_active", Help: "Whether this instance owns the worker term."}, func() float64 {
+		_, a := election.Current()
+		if a {
+			return 1
+		}
+		return 0
+	})
+	leaderDone := make(chan struct{})
 	go func() {
-		defer close(publisherDone)
-		messaging.Run(ctx, repository, brokerURL, "hazard.events", logger)
+		defer close(leaderDone)
+		err := election.Run(ctx, func(term context.Context, epoch int64) {
+			term = store.WithWriteVerifier(term, election.Verify)
+			if err := repository.Fence(term, epoch); err != nil {
+				logger.Error("leader fence failed", "epoch", epoch, "error", err)
+				stop()
+				return
+			}
+			if err := manager.PrepareTerm(term, epoch, election.Verify, repository); err != nil {
+				logger.Error("leader checkpoint load failed", "error", err)
+				stop()
+				return
+			}
+			logger.Info("leader workers starting", "epoch", epoch, "pod", os.Getenv("POD_NAME"))
+			var workers sync.WaitGroup
+			workers.Add(3)
+			go func() { defer workers.Done(); manager.Run(term) }()
+			go func() {
+				defer workers.Done()
+				repository.Reconcile(term, epoch, 10*time.Second, positiveSecondsFromEnv("REREPLICATE_AFTER_SECONDS", 60))
+			}()
+			go func() { defer workers.Done(); messaging.Run(term, repository, brokerURL, "hazard.events", logger) }()
+			workers.Wait()
+			logger.Info("leader workers stopped", "epoch", epoch)
+		}, stop)
+		if err != nil {
+			logger.Error("leader election failed", "error", err)
+			stop()
+		}
 	}()
 	// D-FR: the Field Team report processor, one competing consumer per
 	// replica. Redelivery plus the idempotent report_id insert keeps every
@@ -120,10 +158,22 @@ func main() {
 		reporting.Run(ctx, brokerURL, reporting.NewRouterStore(repository), logger)
 	}()
 
-	api := httpapi.NewServer(repository, manager, logger)
+	api := httpapi.NewServer(replicatedIngestStore{repository}, manager, logger)
+	api.EnableWriteTerm(func(ctx context.Context) (int64, error) {
+		if err := election.Verify(ctx); err != nil {
+			return 0, err
+		}
+		epoch, _ := election.Current()
+		return epoch, nil
+	})
+	api.EnableReadCache()
 	api.EnableAudit(repository, auditToken)
 	api.EnableAnalytics(repository)
 	// GET /internal/v1/status: A adds "leader"/"satellite", B adds "deadletter" here.
+	api.AddStatus("leader", func(context.Context) any {
+		epoch, active := election.Current()
+		return map[string]any{"epoch": epoch, "is_me": active}
+	})
 	api.AddStatus("storage", func(context.Context) any { return repository.StorageStatus() })
 	api.AddStatus("sources", func(context.Context) any { return manager.Status() })
 	server := &http.Server{
@@ -149,11 +199,10 @@ func main() {
 		os.Exit(1)
 	}
 	stop()
-	<-pollersDone
-	<-publisherDone
+	<-leaderDone
+	<-statusDone
 	<-reportsDone
 	<-routerDone
-	<-reconcilerDone
 }
 
 // registerStoreMetrics exposes P1 placement per unit for the Grafana Overview.
@@ -235,4 +284,12 @@ func positiveSecondsFromEnv(key string, fallback int) time.Duration {
 		return time.Duration(fallback) * time.Second
 	}
 	return time.Duration(seconds) * time.Second
+}
+
+// Polling must fill every replica before checkpoint advancement; read-only and
+// legacy callers retain the Router's partial-write semantics.
+type replicatedIngestStore struct{ *store.Router }
+
+func (r replicatedIngestStore) Upsert(ctx context.Context, epoch int64, events []domain.HazardEvent, id string) ([]domain.HazardEvent, error) {
+	return r.UpsertReplicated(ctx, epoch, events, id)
 }

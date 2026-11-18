@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -20,6 +21,9 @@ type Manager struct {
 	repo     store.Repository
 	interval time.Duration
 	logger   *slog.Logger
+	epoch    int64
+	verify   func(context.Context) error
+	cursors  cursorStore
 
 	mu              sync.RWMutex
 	eventCursor     time.Time
@@ -75,6 +79,9 @@ func (m *Manager) runPoller(ctx context.Context, name string, poll func(context.
 }
 
 func (m *Manager) pollBMKG(ctx context.Context, correlationID string) {
+	if m.verify != nil {
+		ctx = source.WithLeaseVerifier(ctx, m.verify)
+	}
 	started := time.Now()
 	m.mu.RLock()
 	eventCursor, warningCursor := m.eventCursor, m.warningCursor
@@ -150,15 +157,22 @@ func (m *Manager) pollBMKG(ctx context.Context, correlationID string) {
 			m.logger.Info("BMKG poll complete", "correlation_id", correlationID, "events", 0, "latency_ms", elapsedMS(started))
 		}
 	}
-	m.mu.Lock()
-	m.eventCursor, m.warningCursor = eventCursor, warningCursor
-	m.mu.Unlock()
 	if eventErr == nil && warningErr == nil && !unresolvedWarning {
 		m.setIngested("BMKG")
 	}
+	if err := m.saveCheckpoint(ctx, "BMKG", checkpoint{EventCursor: eventCursor, WarningCursor: warningCursor, Events: m.eventsByID, Warnings: m.warningsByEvent}); err != nil {
+		m.setIngestionFailure("BMKG", correlationID, err)
+		return
+	}
+	m.mu.Lock()
+	m.eventCursor, m.warningCursor = eventCursor, warningCursor
+	m.mu.Unlock()
 }
 
 func (m *Manager) pollPVMBG(ctx context.Context, correlationID string) {
+	if m.verify != nil {
+		ctx = source.WithLeaseVerifier(ctx, m.verify)
+	}
 	started := time.Now()
 	m.mu.RLock()
 	reportCursor := m.reportCursor
@@ -199,20 +213,26 @@ func (m *Manager) pollPVMBG(ctx context.Context, correlationID string) {
 		}
 	}
 	if mappingErr == nil {
+		m.setIngested("PVMBG")
+		if err := m.saveCheckpoint(ctx, "PVMBG", checkpoint{ReportCursor: reportCursor}); err != nil {
+			m.setIngestionFailure("PVMBG", correlationID, err)
+			return
+		}
 		m.mu.Lock()
 		m.reportCursor = reportCursor
 		m.mu.Unlock()
-		m.setIngested("PVMBG")
 	}
 	// Keep the old cursor after a mapping failure so a later valid report
 	// cannot move the invalid record outside the retry window.
 }
 
 func (m *Manager) persist(ctx context.Context, sourceName, correlationID string, events []domain.HazardEvent) error {
-	// Epoch 0 is accepted only until a leader fences the store; leader election
-	// (internal/leader) replaces it with the lease epoch.
-	const epoch = 0
-	changedEvents, err := m.repo.Upsert(ctx, epoch, events, correlationID)
+	if m.verify != nil {
+		if err := m.verify(ctx); err != nil {
+			return err
+		}
+	}
+	changedEvents, err := m.repo.Upsert(ctx, m.epoch, events, correlationID)
 	if err != nil {
 		m.setIngestionFailure(sourceName, correlationID, err)
 		return err
@@ -249,4 +269,104 @@ func elapsedMS(start time.Time) float64 {
 
 func correlationID(sourceName string) string {
 	return fmt.Sprintf("poll-%s-%d", sourceName, time.Now().UTC().UnixNano())
+}
+
+type cursorStore interface {
+	SaveCursor(context.Context, int64, string, string) error
+	LoadCursor(context.Context, string) (string, error)
+}
+
+// A BMKG checkpoint includes correlation state: late warnings may refer to an
+// event older than the polling overlap after failover.
+type checkpoint struct {
+	Status        *SourceStatus
+	EventCursor   time.Time
+	WarningCursor time.Time
+	ReportCursor  time.Time
+	Events        map[string]domain.SeismicEvent
+	Warnings      map[string]domain.TsunamiWarning
+}
+
+// PrepareTerm is called with workers stopped, after the storage fence barrier.
+func (m *Manager) PrepareTerm(ctx context.Context, epoch int64, verify func(context.Context) error, cursors cursorStore) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.epoch, m.verify, m.cursors = epoch, verify, cursors
+	for _, source := range []string{"BMKG", "PVMBG"} {
+		raw, err := cursors.LoadCursor(ctx, source)
+		if err != nil {
+			return err
+		}
+		if raw == "" {
+			continue
+		}
+		var c checkpoint
+		if err := json.Unmarshal([]byte(raw), &c); err != nil {
+			return fmt.Errorf("load %s checkpoint: %w", source, err)
+		}
+		if c.Status != nil {
+			m.status[source] = *c.Status
+		}
+		if source == "BMKG" {
+			m.eventCursor, m.warningCursor = c.EventCursor, c.WarningCursor
+			if c.Events != nil {
+				m.eventsByID = c.Events
+			}
+			if c.Warnings != nil {
+				m.warningsByEvent = c.Warnings
+			}
+		} else {
+			m.reportCursor = c.ReportCursor
+		}
+	}
+	return nil
+}
+
+func (m *Manager) saveCheckpoint(ctx context.Context, source string, c checkpoint) error {
+	if m.cursors == nil {
+		return nil
+	} // M1 test repositories have no durable cursor API.
+	if err := m.verify(ctx); err != nil {
+		return err
+	}
+	m.mu.RLock()
+	status := m.status[source]
+	m.mu.RUnlock()
+	c.Status = &status
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	return m.cursors.SaveCursor(ctx, m.epoch, source, string(raw))
+}
+
+// RunStatusRefresh lets read-only followers report the last durable ingestion
+// status. Freshness still expires locally; followers never poll upstreams.
+func (m *Manager) RunStatusRefresh(ctx context.Context, cursors cursorStore, isLeader func() bool) {
+	ticker := time.NewTicker(m.interval)
+	defer ticker.Stop()
+	for {
+		if !isLeader() {
+			for _, source := range []string{"BMKG", "PVMBG"} {
+				raw, err := cursors.LoadCursor(ctx, source)
+				if err != nil {
+					continue
+				}
+				var c checkpoint
+				if json.Unmarshal([]byte(raw), &c) != nil || c.Status == nil {
+					continue
+				}
+				m.mu.Lock()
+				if !isLeader() {
+					m.status[source] = *c.Status
+				}
+				m.mu.Unlock()
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

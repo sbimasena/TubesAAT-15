@@ -100,8 +100,7 @@ func (p *publisher) publish(ctx context.Context, message store.OutboxMessage) er
 	}
 }
 
-// Run uses one worker per Aggregator instance. ponytail: M1 runs one replica;
-// add row leases before deploying multiple publishers to avoid unnecessary duplicates.
+// Run is started only by the Aggregator lease holder.
 // messageID is the consumer dedup key. Every store replica queues its own copy and
 // revisions can diverge between copies, so it comes from the content: same snapshot,
 // same ID on every unit; new content, new ID.

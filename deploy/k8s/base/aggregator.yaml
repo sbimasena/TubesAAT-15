@@ -1,11 +1,11 @@
-# Aggregator (role=aggregator). One replica until leader election lands (P2, owner A);
+# Aggregator (role=aggregator). Only the lease holder runs ingestion workers;
 # the only workload with store credentials (context-m2.md §6.4).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: aggregator
 spec:
-  replicas: 1
+  replicas: 3
   strategy:
     rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
   selector:
@@ -17,6 +17,12 @@ spec:
     spec:
       serviceAccountName: aggregator
       terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels: {app: aggregator}
       containers:
         - name: aggregator
           image: bnpb/aggregator
@@ -25,8 +31,6 @@ spec:
           env:
             - name: AGGREGATOR_PORT
               value: "8083"
-            - name: NODE_NAME
-              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
             # Unit unseen this long: the reconciler moves its partitions (P1.6). Longer than a
             # store pod restart, so kill-store does not trigger a full copy.
             - name: REREPLICATE_AFTER_SECONDS
@@ -111,6 +115,42 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: aggregator-partition-map
+subjects:
+  - kind: ServiceAccount
+    name: aggregator
+    namespace: sistem-informasi-kebencanaan-bnpb
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: aggregator
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels: {app: aggregator}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aggregator-leader
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    resourceNames: [aggregator-leader]
+    verbs: [get, update]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aggregator-leader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aggregator-leader
 subjects:
   - kind: ServiceAccount
     name: aggregator

@@ -22,6 +22,9 @@
     {"id": "p1-audit", "group": "P1", "label": "Audit API events + location", "make": "p1-audit", "destructive": false},
     {"id": "p1-load", "group": "P1", "label": "Muat katalog gempa + ukur beban per unit", "make": "p1-load", "params": ["FILE"], "destructive": false},
     {"id": "p1-surge", "group": "P1", "label": "Lonjakan gempa satu wilayah + ukur beban per unit", "make": "p1-surge", "params": ["N", "REGION"], "destructive": false},
-    {"id": "reset", "group": "Reset", "label": "Kembalikan sistem ke normal", "make": "reset", "destructive": false}
+    {"id": "reset", "group": "Reset", "label": "Kembalikan sistem ke normal", "make": "reset", "destructive": false},
+    {"id": "p2-status", "group": "P2", "label": "Leader Lease + pod placement", "make": "p2-status", "destructive": false},
+    {"id": "p2-load", "group": "P2", "label": "10k VU + scale 3 to 5 to 2", "make": "p2-load", "destructive": true},
+    {"id": "p2-failover", "group": "P2", "label": "Tester Agent kill-leader", "make": "p2-failover", "destructive": true}
   ]
 }

@@ -163,3 +163,26 @@ func TestListClassifiesResponseBodyTimeout(t *testing.T) {
 		t.Fatalf("expected body timeout, got %v", err)
 	}
 }
+
+func TestListRotatesAggregatorConnections(t *testing.T) {
+	var closed atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Close {
+			closed.Add(1)
+		}
+		w.Write([]byte(validResponse))
+	}))
+	defer upstream.Close()
+	client, err := NewClient(upstream.URL, time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 64; i++ {
+		if _, err := client.List(context.Background(), nil, "rotation"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if closed.Load() != 2 {
+		t.Fatalf("closed=%d, want 2", closed.Load())
+	}
+}

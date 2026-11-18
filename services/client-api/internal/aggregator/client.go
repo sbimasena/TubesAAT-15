@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/sbimasena/TubesAAT-15/services/client-api/internal/httpclient"
@@ -37,9 +38,10 @@ func (e *RequestError) Error() string { return fmt.Sprintf("aggregator %s: %v", 
 func (e *RequestError) Unwrap() error { return e.Err }
 
 type Client struct {
-	base   *url.URL
-	http   *http.Client
-	logger *slog.Logger
+	requests atomic.Uint64
+	base     *url.URL
+	http     *http.Client
+	logger   *slog.Logger
 }
 
 func NewClient(baseURL string, timeout time.Duration, logger *slog.Logger) (*Client, error) {
@@ -68,6 +70,8 @@ func (c *Client) List(ctx context.Context, filters url.Values, correlationID str
 	if err != nil {
 		return Envelope{}, &RequestError{Kind: ErrorTransport, Err: err}
 	}
+	// Rotate one connection per 32 reads so a Kubernetes Service can route to new pods.
+	request.Close = c.requests.Add(1)%32 == 0
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("X-Correlation-ID", correlationID)
 	started := time.Now()

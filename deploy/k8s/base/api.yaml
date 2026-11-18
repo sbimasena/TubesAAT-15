@@ -77,6 +77,12 @@ spec:
               value: "8080"
             - name: AUTH_INTERNAL_SECRET
               valueFrom: {secretKeyRef: {name: auth-credentials, key: AUTH_INTERNAL_SECRET}}
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom: {secretKeyRef: {name: broker-credentials, key: RABBITMQ_DEFAULT_USER}}
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom: {secretKeyRef: {name: broker-credentials, key: RABBITMQ_DEFAULT_PASS}}
+            - name: BROKER_URL
+              value: amqp://$(RABBITMQ_DEFAULT_USER):$(RABBITMQ_DEFAULT_PASS)@rabbitmq:5672/
           resources:
             requests: {memory: 128Mi}
             limits: {memory: 256Mi}

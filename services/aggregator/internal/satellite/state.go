@@ -17,11 +17,12 @@ import (
 // All over-limit detections are retained and counted; observation may tune it.
 const DefaultLateness = 24 * time.Hour
 
-// Mutation is an internal adapter contract, not the assistant's unknown JSON schema.
+// Mutation represents one ordered change to the satellite checkpoint.
 type Mutation struct {
 	Offset    int64
 	Kind      string
 	Detection *Detection
+	Changes   *detectionChanges
 	Key       string
 }
 
@@ -105,12 +106,31 @@ func (next *State) applyMutation(mutation Mutation, ingested time.Time, grid det
 	addedKey := ""
 	switch mutation.Kind {
 	case "detection", "update":
+		if mutation.Changes != nil {
+			previous, exists := next.Detections[mutation.Key]
+			if !exists {
+				if next.Seen[mutation.Key] {
+					return nil // A patch cannot restore a retracted detection.
+				}
+				return fmt.Errorf("%w: patch for unseen detection at offset %d", ErrProtocol, mutation.Offset)
+			}
+			if mutation.Changes.Confidence != nil {
+				previous.Confidence = *mutation.Changes.Confidence
+			}
+			if mutation.Changes.FRP != nil {
+				previous.FRP = *mutation.Changes.FRP
+			}
+			if previous == next.Detections[mutation.Key] {
+				return nil
+			}
+			mutation.Detection = &previous
+		}
 		if mutation.Detection == nil {
 			return errors.New("satellite: detection required")
 		}
 		p, err := parse(*mutation.Detection)
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: %v at offset %d", ErrProtocol, err, mutation.Offset)
 		}
 		key := mutation.Detection.Key()
 		if _, exists := next.Detections[key]; mutation.Kind == "detection" && exists {

@@ -18,8 +18,12 @@ type wireDetection struct {
 	FRP        json.RawMessage `json:"frp"`
 }
 
-// decodeFrame uses the assignment's VIIRS fields. The update/retract envelope
-// conventions need checking against an authenticated sample from the assistants.
+type detectionChanges struct {
+	FRP        *float64
+	Confidence *string
+}
+
+// The course feed puts new detections under "detection" and patches under "changes".
 func decodeFrame(frame Frame) (Mutation, error) {
 	mutation := Mutation{Offset: frame.Offset, Kind: frame.Kind}
 	if frame.Kind == "heartbeat" {
@@ -30,13 +34,18 @@ func decodeFrame(frame Frame) (Mutation, error) {
 	}
 	var wire struct {
 		wireDetection
-		Detection    *wireDetection `json:"detection"`
-		DetectionKey string         `json:"detection_key"`
-		Key          string         `json:"key"`
-		PreviousKey  string         `json:"previous_key"`
+		Detection    *wireDetection  `json:"detection"`
+		DetectionKey string          `json:"detection_key"`
+		Key          string          `json:"key"`
+		PreviousKey  string          `json:"previous_key"`
+		Offset       *int64          `json:"offset"`
+		Changes      json.RawMessage `json:"changes"`
 	}
 	if err := json.Unmarshal(frame.Data, &wire); err != nil {
 		return fail("invalid detection JSON")
+	}
+	if wire.Offset != nil && *wire.Offset != frame.Offset {
+		return fail("payload offset does not match SSE id")
 	}
 	detection := wire.wireDetection
 	if wire.Detection != nil {
@@ -50,6 +59,37 @@ func decodeFrame(frame Frame) (Mutation, error) {
 	key := wire.DetectionKey
 	if key == "" {
 		key = wire.Key
+	}
+	if frame.Kind == "update" && len(wire.Changes) != 0 {
+		if !validDetectionKey(key) {
+			return fail("invalid update key")
+		}
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(wire.Changes, &fields) != nil || fields == nil {
+			return fail("invalid update changes")
+		}
+		changes := &detectionChanges{}
+		for _, field := range []string{"satellite", "acq_date", "acq_time", "latitude", "longitude"} {
+			if _, found := fields[field]; found {
+				return fail("patch changes detection identity")
+			}
+		}
+		if raw, found := fields["confidence"]; found {
+			var value string
+			if json.Unmarshal(raw, &value) != nil || value == "" {
+				return fail("invalid update confidence")
+			}
+			changes.Confidence = &value
+		}
+		if raw, found := fields["frp"]; found {
+			value, err := strconv.ParseFloat(scalarText(raw), 64)
+			if err != nil {
+				return fail("invalid update FRP")
+			}
+			changes.FRP = &value
+		}
+		mutation.Key, mutation.Changes = key, changes
+		return mutation, nil
 	}
 	switch frame.Kind {
 	case "retract":

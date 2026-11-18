@@ -72,8 +72,15 @@ apply_secret auth-credentials \
   --from-literal=INTERNAL_OPS_CLIENT_PASSWORD="$INTERNAL_OPS_CLIENT_PASSWORD"
 apply_secret pantai-token --from-literal=token="$PANTAI_AUTH_TOKEN"
 apply_secret audit-token --from-literal=token="$AUDIT_TOKEN"
+# Pass the optional token through stdin to keep it out of process arguments.
+printf '%s' "${SATELLITE_TOKEN:-}" | apply_secret satellite-token --from-file=token=/dev/stdin
 # Pods restart when a credential changes: the hash goes into a pod template annotation.
-SECRETS_HASH="$(for key in "${REQUIRED[@]}"; do printf '%s=%s\n' "$key" "${!key}"; done | sha256 | cut -c1-16)"
+SECRETS_HASH="$(
+  {
+    for key in "${REQUIRED[@]}"; do printf '%s=%s\n' "$key" "${!key}"; done
+    printf 'SATELLITE_TOKEN=%s\n' "${SATELLITE_TOKEN:-}"
+  } | sha256 | cut -c1-16
+)"
 
 image_ref() {
   if [[ "$IMAGE_MODE" == push ]]; then echo "$REGISTRY/bnpb-$1:$TAG"; else echo "bnpb/$1:$TAG"; fi

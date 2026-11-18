@@ -251,6 +251,126 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Satellite offset lag",
+      "description": "Request HTTP per detik yang dilayani tiap service.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "(bnpb_satellite_offset_lag >= 0) and on(instance, job) (bnpb_satellite_processor_ready == 1)",
+          "refId": "A",
+          "legendFormat": "{{instance}} {{__name__}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Satellite frame-to-commit p95",
+      "description": "Request HTTP per detik yang dilayani tiap service.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(bnpb_satellite_ingest_duration_seconds_bucket[5m])))",
+          "refId": "A",
+          "legendFormat": "{{instance}} {{__name__}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Satellite late / singleton detections",
+      "description": "Request HTTP per detik yang dilayani tiap service.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "{__name__=~\"bnpb_satellite_(late|single)_detections\"}",
+          "refId": "A",
+          "legendFormat": "{{instance}} {{__name__}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Satellite processor ready",
+      "description": "Request HTTP per detik yang dilayani tiap service.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "bnpb_satellite_processor_ready",
+          "refId": "A",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {}
     }
   ],
   "templating": {

@@ -86,12 +86,12 @@ func parseFilter(r *http.Request) (store.Filter, error) {
 	filter := store.Filter{Limit: 100}
 	query := r.URL.Query()
 	filter.Source = strings.ToUpper(strings.TrimSpace(query.Get("source")))
-	if filter.Source != "" && filter.Source != "BMKG" && filter.Source != "PVMBG" {
-		return store.Filter{}, fmt.Errorf("source must be BMKG or PVMBG")
+	if filter.Source != "" && filter.Source != "BMKG" && filter.Source != "PVMBG" && filter.Source != "SATELIT" && filter.Source != "SENSOR_PANTAI" {
+		return store.Filter{}, fmt.Errorf("source must be BMKG, PVMBG, SATELIT or SENSOR_PANTAI")
 	}
 	filter.HazardType = strings.ToUpper(strings.TrimSpace(query.Get("hazard_type")))
-	if filter.HazardType != "" && filter.HazardType != "SEISMIC" && filter.HazardType != "VOLCANIC" {
-		return store.Filter{}, fmt.Errorf("hazard_type must be SEISMIC or VOLCANIC")
+	if filter.HazardType != "" && filter.HazardType != "SEISMIC" && filter.HazardType != "VOLCANIC" && filter.HazardType != "WILDFIRE" && filter.HazardType != "COASTAL" {
+		return store.Filter{}, fmt.Errorf("hazard_type must be SEISMIC, VOLCANIC, WILDFIRE or COASTAL")
 	}
 	if value := query.Get("since"); value != "" {
 		parsed, err := time.Parse(time.RFC3339Nano, value)

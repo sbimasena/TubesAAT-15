@@ -185,3 +185,29 @@ func TestJournalAndAcknowledgement(t *testing.T) {
 	}
 	t.Log("PASS: durable result before ack, single writer, new-ID update, restart dedup after lost ack, torn-tail recovery, invalid-message rejection, IO failure without ack, explicit corruption failure")
 }
+
+func TestSatelliteWithdrawalSurvivesReplay(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "satellite.jsonl")
+	j, err := openJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery := message("satellite-withdrawn", 2, &acknowledgement{})
+	delivery.Body = []byte(`{"hazard_id":"fire-test","source":"SATELIT","hazard_type":"WILDFIRE","severity":"WASPADA","area_name":"Kalimantan Tengah","ingested_at":"2026-11-12T00:00:01Z","attributes":{"retracted":true}}`)
+	r, err := decode(delivery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := j.save(r); err != nil || result != "notification_withdrawn" {
+		t.Fatalf("result=%s err=%v", result, err)
+	}
+	j.file.Close()
+	j, err = openJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.file.Close()
+	if !j.seen[delivery.MessageId] {
+		t.Fatal("withdrawal acknowledgement not durable")
+	}
+}

@@ -300,3 +300,9 @@ Hasil checker baru disimpan terpisah dari bukti laporan lama. Cara menampilkan h
 Kubernetes runs three Aggregator replicas; a Lease holder runs ingestion/reconciliation/publishing with a fencing epoch. Hazard reads use a one-second per-instance cache; Audit reads remain uncached. Compose remains single-instance. No new runtime configuration is required: Kubernetes supplies `KUBERNETES_SERVICE_HOST`, `KUBERNETES_SERVICE_PORT`, service-account files and `POD_NAME`.
 
 Use `make p2-status`, `make p2-failover` and `TARGET_URL=http://<aggregator-load-balancer> make p2-load`. The optional `ROLLOUT_IMAGE=<registry>/aggregator:<sha>` changes version during load. Load scripts run outside the cluster and save evidence under `artifacts/m2/runs/`. See [the P2 runbook and owner-assigned blockers](docs/m2/p2-aggregator.md) before claiming failure recovery or throughput criteria.
+
+### M2 P4: satellite processing (Fithra)
+
+Set `SATELLITE_TOKEN` in the ignored `.env` to enable the P4 worker in Compose or through the Kubernetes deployment script. The elected Aggregator connects to the feed, restores its replicated checkpoint, and materializes WILDFIRE events. To inspect the wire format first, run `make p4-sample` before starting the worker. The course feed allows one connection per group.
+
+Use `make p4-check` for repeatable offline and recovery tests. `TEST_DATABASE_URL` enables the PostgreSQL integration tests on isolated schemas. Evidence is saved under ignored `artifacts/m2/runs/`. The [P4 runbook](docs/m2/p4-satellite.md) records the verified course practice feed behavior and the remaining Kubernetes acceptance runs. [AI-assistance disclosure](docs/m2/ai-usage.md)

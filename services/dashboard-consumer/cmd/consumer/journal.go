@@ -18,11 +18,15 @@ import (
 const maxBody = 1 << 20
 
 type hazard struct {
-	HazardID   string `json:"hazard_id"`
-	Source     string `json:"source"`
-	HazardType string `json:"hazard_type"`
-	Severity   string `json:"severity"`
-	AreaName   string `json:"area_name"`
+	HazardID   string    `json:"hazard_id"`
+	Source     string    `json:"source"`
+	HazardType string    `json:"hazard_type"`
+	Severity   string    `json:"severity"`
+	AreaName   string    `json:"area_name"`
+	IngestedAt time.Time `json:"ingested_at"`
+	Attributes struct {
+		Retracted bool `json:"retracted"`
+	} `json:"attributes"`
 }
 
 type record struct {
@@ -67,7 +71,7 @@ func decode(delivery amqp.Delivery) (record, error) {
 		return r, errors.New("invalid HazardEvent JSON")
 	}
 	if body.HazardID == "" || len(body.HazardID) > 128 || body.AreaName == "" ||
-		!((body.Source == "BMKG" && body.HazardType == "SEISMIC") || (body.Source == "PVMBG" && body.HazardType == "VOLCANIC")) {
+		!((body.Source == "BMKG" && body.HazardType == "SEISMIC") || (body.Source == "PVMBG" && body.HazardType == "VOLCANIC") || (body.Source == "SATELIT" && body.HazardType == "WILDFIRE") || (body.Source == "SENSOR_PANTAI" && body.HazardType == "COASTAL")) {
 		return r, errors.New("invalid canonical identity/source/type/area")
 	}
 	switch body.Severity {
@@ -76,6 +80,9 @@ func decode(delivery amqp.Delivery) (record, error) {
 		return r, errors.New("invalid severity")
 	}
 	r.HazardID = body.HazardID
+	if body.Source == "SATELIT" && body.Attributes.Retracted {
+		r.Result = "dashboard_withdrawn"
+	}
 	return r, nil
 }
 
@@ -114,7 +121,7 @@ func openJournal(path string) (*journal, error) {
 			return fail(fmt.Errorf("corrupt journal at offset %d", offset))
 		}
 		if r.MessageID == "" || r.HazardID == "" || r.Revision <= 0 || r.CorrelationID == "" || r.ReceivedAt.IsZero() ||
-			!json.Valid(r.Payload) || (r.Result != "dashboard_updated" && r.Result != "stale_ignored") || j.seen[r.MessageID] {
+			!json.Valid(r.Payload) || (r.Result != "dashboard_updated" && r.Result != "stale_ignored" && r.Result != "dashboard_withdrawn") || j.seen[r.MessageID] {
 			return fail(fmt.Errorf("invalid journal record at offset %d", offset))
 		}
 		j.restore(r)
@@ -140,7 +147,7 @@ func openJournal(path string) (*journal, error) {
 
 func (j *journal) restore(r record) {
 	j.seen[r.MessageID] = true
-	if r.Result == "dashboard_updated" && r.Revision > j.latest[r.HazardID].Revision {
+	if (r.Result == "dashboard_updated" || r.Result == "dashboard_withdrawn") && newer(r, j.latest[r.HazardID]) {
 		j.latest[r.HazardID] = r
 	}
 }
@@ -149,8 +156,10 @@ func (j *journal) save(r record) (string, error) {
 	if j.seen[r.MessageID] {
 		return "duplicate", nil
 	}
-	r.Result = "dashboard_updated"
-	if r.Revision <= j.latest[r.HazardID].Revision {
+	if r.Result != "dashboard_withdrawn" {
+		r.Result = "dashboard_updated"
+	}
+	if !newer(r, j.latest[r.HazardID]) {
 		r.Result = "stale_ignored"
 	}
 	var encoded bytes.Buffer
@@ -172,4 +181,17 @@ func (j *journal) save(r record) (string, error) {
 	} // Caller closes/reopens journal before any further append.
 	j.restore(r)
 	return r.Result, nil
+}
+
+// Satellite checkpoints preserve a monotonic ingested_at across restarts/skew;
+// per-replica revision numbers can diverge after partial writes and repairs.
+func newer(incoming, previous record) bool {
+	var next, old hazard
+	if json.Unmarshal(incoming.Payload, &next) == nil && next.Source == "SATELIT" && !next.IngestedAt.IsZero() {
+		if json.Unmarshal(previous.Payload, &old) != nil || old.IngestedAt.IsZero() {
+			return true
+		}
+		return next.IngestedAt.After(old.IngestedAt)
+	}
+	return incoming.Revision > previous.Revision
 }

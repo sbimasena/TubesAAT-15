@@ -18,7 +18,7 @@ The authenticated practice feed sends new VIIRS records in `detection`, updates 
 
 D-LATE is **provisional: 24 virtual/event-time hours**. Watermark = maximum observed detection time minus this allowance. The 360-minute clustering edge rule is separate. All over-limit detections remain in durable state and are counted once per detection identity. Late arrivals still recompute affected results, so the watermark does not cause silent loss. No historical state is evicted yet; completion/window-retention policy needs the observed workload and update/retract horizon.
 
-Consumer messages still have a 1 MiB bound; exceptionally large detection-key lists need a reviewed transport strategy before that limit is reached. Full checkpoints are capped at **16 MiB**; exceeding it stops before advancing the offset. The processor copies active state once per batch and recomputes affected components per mutation. Replicated checkpoints still contain the full retained history. Measure checkpoint size and burst behavior on the course feed before testing the storage budget. Fithra and Sakti should move to incremental replicated state if the workload exceeds that budget.
+Consumer messages have a 1 MiB bound. Full checkpoints are capped at **16 MiB**. The processor stops before advancing the offset if a checkpoint exceeds that limit. It copies active state once per batch and recomputes affected components per mutation. Replicated checkpoints retain the full detection history. Measure checkpoint size and processing lag during dense bursts to assess this limit.
 
 Ingestion timestamps advance monotonically from the preceding checkpoint when host wall time moves backwards; satellite acquisition time remains unchanged. This prevents a newer update/tombstone from losing to an older replica during timestamp-based anti-entropy. Full cluster clock-skew/freeze acceptance remains separate.
 
@@ -64,15 +64,5 @@ go test -race -count=1 -v ./services/aggregator/internal/satellite \
 1. Set the token in the ignored `.env` for deployment. Keep only one practice feed connection open.
 2. Deploy through the team’s Kubernetes script. Check `GET /internal/v1/status`, the Aggregator logs, and the Audit API with `source=SATELIT`. Confirm the offset advances under the leader and that ingest resumes from the last committed offset after a disconnect.
 3. Run the course 60× profile. Record the peak offset lag, time between the last burst frame and zero lag, p95 frame-to-commit latency, and the final detection and fire totals. The catch-up target is ≤60 seconds after the burst ends. Repeat the same feed with a worker interruption and compare the final checksum and fire memberships against the uninterrupted run.
-4. Export the paginated SATELIT Audit result and compare it with the assistant’s reference. Match fires by sorted `detection_keys`, then compare the canonical counts, severity, coordinates and other fields supplied by the reference. Report missing, extra and mismatched groups separately. Run the live feed for the demo and retain the outputs with the assignment evidence.
-
-## Remaining work and owners
-
-| Part | Next action | Owner |
-|---|---|---|
-| Production state/performance | Review the replicated checkpoint/tombstone contract; replace full-state copies if observed workload exceeds the 16 MiB/CPU budget. Measure dense bursts, not only distributed synthetic points. | Fithra (processor), Sakti (storage review) |
-| Lifecycle assumptions | Confirm deterministic split/merge lineage and provisional lateness against observed behavior/reference expectations; finalize the state-retention/window-completion policy. | Fithra; assistants clarify ambiguous cases |
-| Real acceptance | Reachable cluster/VM access and live token: run 60x, kill, reconnect and checksum comparison; capture p95, lag and <=60-second catch-up evidence. | Sakti (platform/access), Fithra (P4 execution) |
-| Reference result | Run the full-stream comparison when assistant references are released. | Assistants (reference), Fithra (comparison) |
-
-Course practice compatibility and local recovery are verified. Cluster capacity, Kubernetes failover, the full-stream reference comparison and the demo still need evidence.
+4. Export `/internal/audit/events?source=SATELIT` after the feed has finished. Follow every `next_cursor` and concatenate the page `items` into one JSON array. Put the course reference in the same canonical format, then run `make p4-compare ACTUAL=actual.json REFERENCE=reference.json`. For a single-page export, the command also accepts a complete Audit response with `partial: false` and `next_cursor: null`. A partial export must be retried. The command matches exact detection-key membership, checks area, severity, coordinates, acquisition time, and the wildfire attributes, and reports missing, extra, and mismatched groups as JSON. Use the same timestamp format and numeric precision in both inputs. Use the restart checksum check in step 3 for identifier stability.
+5. Run the live feed for several minutes during the demo and retain the run output with the assignment evidence.

@@ -1,5 +1,5 @@
 {
-  "_comment": "Single action list shared by the Makefile, the Control Console and the runbook (context-m2.md §8.2). Add an entry together with every new make target.",
+  "_comment": "Action list for the cluster and acceptance targets in the Makefile.",
   "actions": [
     {"id": "dev-up", "group": "Umum", "label": "Buat/nyalakan cluster k3d", "make": "dev-up", "destructive": false},
     {"id": "dev-down", "group": "Umum", "label": "Hapus cluster k3d", "make": "dev-down", "destructive": true},
@@ -27,6 +27,7 @@
     {"id": "p2-load", "group": "P2", "label": "10k VU + scale 3 to 5 to 2", "make": "p2-load", "destructive": true},
     {"id": "p2-failover", "group": "P2", "label": "Tester Agent kill-leader", "make": "p2-failover", "destructive": true},
     {"id": "p4-sample", "group": "P4", "label": "Capture authenticated satellite feed sample", "make": "p4-sample", "destructive": false},
-    {"id": "p4-check", "group": "P4", "label": "Satellite replay and recovery checks", "make": "p4-check", "destructive": false}
+    {"id": "p4-check", "group": "P4", "label": "Satellite replay and recovery checks", "make": "p4-check", "destructive": false},
+    {"id": "p4-compare", "group": "P4", "label": "Compare satellite fires with the reference", "make": "p4-compare", "params": ["ACTUAL", "REFERENCE"], "destructive": false}
   ]
 }

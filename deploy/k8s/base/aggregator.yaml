@@ -67,10 +67,10 @@ spec:
           resources:
             requests: {memory: 256Mi}
             limits: {memory: 512Mi}
-          # Not /health: it fails while any store is down, and the API must still answer
-          # (partial: true) during kill-store instead of losing every endpoint.
+          # /health stays ready while any store answers. Allow the 3-second store timeout.
           readinessProbe:
-            tcpSocket: {port: http}
+            httpGet: {path: /health, port: http}
+            timeoutSeconds: 4
             periodSeconds: 5
           livenessProbe:
             tcpSocket: {port: http}

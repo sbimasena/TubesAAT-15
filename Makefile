@@ -1,5 +1,4 @@
-# Operational entry points (context-m2.md §8.2). Targets only delegate to scripts, which
-# print every command they run; every target also has an entry in scripts/m2/actions.json.
+# Cluster operations and acceptance checks. Keep scripts/m2/actions.json in sync.
 # Variables: OVERLAY=dev|cluster, REGISTRY=docker.io/<user>, SKIP_BUILD=1, YES=1.
 
 # Recipes call bash explicitly so they work from PowerShell/cmd (Windows) as well as from
@@ -98,6 +97,9 @@ p2-failover: ## Tester Agent kill-leader (asks for confirmation)
 p4-sample: ## Capture 60 seconds of live SSE using SATELLITE_TOKEN from the environment or .env
 	bash -c 'source scripts/k8s/lib.sh; if [[ -z "$${SATELLITE_TOKEN:-}" ]]; then load_env; fi; exec python3 scripts/m2/satellite-sample.py'
 
-.PHONY: p4-check
+.PHONY: p4-check p4-compare
 p4-check: ## Offline satellite/recovery tests; TEST_DATABASE_URL enables real PostgreSQL checks
 	@$(SH) scripts/m2/p4-check.sh
+
+p4-compare: ## Compare complete satellite exports: make p4-compare ACTUAL=actual.json REFERENCE=reference.json
+	python3 scripts/m2/compare-satellite.py "$(ACTUAL)" "$(REFERENCE)"

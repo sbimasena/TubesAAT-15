@@ -44,8 +44,7 @@ func NewHandler(client hazardLister, validator accessValidator, enableProvisiona
 			projectionError(w, err)
 			return
 		}
-		// DRAFT bulkhead (P5.5): per-role fetch capacity. Media exhaustion
-		// never blocks Field Team because the pools are independent.
+		// Reserve fetch capacity for this role after authentication.
 		release, ok := rolePools.acquire(info.Scope)
 		if !ok {
 			w.Header().Set("Retry-After", "1")

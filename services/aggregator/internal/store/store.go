@@ -59,7 +59,7 @@ type Location struct {
 	Role string // "primary" or "replica".
 }
 
-// Store is the Aggregator-facing storage API agreed for M2 (pembagian-kerja-m2.md §5).
+// Store is the Aggregator-facing API for canonical writes and audit queries.
 // Every method honours ctx and a per-unit timeout; none hangs on a dead unit.
 type Store interface {
 	// Fence is the leader barrier, called before any leader-only worker starts.

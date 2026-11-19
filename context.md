@@ -1,7 +1,6 @@
 # Project Context — IF4031 Milestone 1
 
-> This file is the working context for humans and coding agents contributing to this repository.
-> It summarizes the current architecture, task split, technical constraints, and implementation direction for IF4031 — Arsitektur Aplikasi Terdistribusi, Milestone 1.
+> Historical design notes for IF4031 Milestone 1. See the README for current deployment instructions.
 >
 > **Source-of-truth priority:** official assignment specification > `system-architecture.md` > this file > implementation convenience.
 > If this file conflicts with the official specification, follow the official specification and update this file.
@@ -548,73 +547,6 @@ For background polling, the poll cycle / ingestion operation should generate its
 
 ---
 
-## 14. Work Ownership
-
-The team has 3 members. Ownership is component-oriented, with a PIC per problem; ownership does not mean cross-cutting problems are solved by only one person.
-
-### Member A — Data & Aggregation
-
-Owns primarily:
-
-- BMKG Mock;
-- PVMBG Mock;
-- Aggregator;
-- source contracts;
-- polling;
-- source correlation;
-- HazardEvent mapping;
-- schema-evolution behavior.
-
-PIC:
-
-- P1;
-- Aggregator/upstream portion of P2.
-
-### Member B — API, Auth & Resilience
-
-Owns primarily:
-
-- Client-Facing API;
-- Auth / Token Service;
-- downstream scopes and authorization;
-- access/refresh flow;
-- request-side concurrency controls;
-- graceful-degradation response behavior.
-
-PIC:
-
-- P2 coordination;
-- P3.
-
-### Member C — Infrastructure, Storage & Messaging
-
-Owns primarily:
-
-- PostgreSQL / Canonical Store setup;
-- Docker / Docker Compose;
-- RabbitMQ;
-- notification consumer;
-- dashboard/audit consumer;
-- observability infrastructure;
-- load/failure-test infrastructure.
-
-PIC:
-
-- P4;
-- P5.
-
-### Cross-cutting rule
-
-P2 is shared across A/B/C:
-
-- A: upstream concurrency, independent pollers, timeouts;
-- B: downstream request resilience, rate/concurrency controls, response semantics;
-- C: stale persisted data, load testing, infrastructure behavior.
-
-No member should wait until integration week to define an interface needed by another member.
-
----
-
 ## 15. Problem Set Acceptance Context
 
 ### P1 — Architecture & Data Interoperability
@@ -729,7 +661,7 @@ This is a working structure, not an assignment-mandated folder layout.
 
 ---
 
-## 17. Implementation Rules for Coding Agents
+## 17. Implementation Constraints
 
 When generating or editing code in this repository:
 
@@ -794,17 +726,3 @@ Milestone 1 is ready only when:
 - report evidence exists for every acceptance criterion;
 - README contains commands to trigger every demo scenario;
 - final milestone tag is created only after clean-clone verification.
-
----
-
-## 20. Current Repository State
-
-At the time this context was created, the repository is still primarily in the architecture/planning phase.
-
-Existing relevant document:
-
-```text
-system-architecture.md
-```
-
-Use that document for the detailed architecture rationale and diagrams. Use this `context.md` as the concise operational context for implementation, code review, and AI-assisted development.

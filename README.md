@@ -23,7 +23,7 @@ Client API tersedia di `http://127.0.0.1:8080` (k3d) atau `http://<IP node>:3008
 | `node-b` (worker) | MacBook Intel (16 GB) | VirtualBox, Ubuntu 24.04, 6 GB / 2 vCPU | `192.168.18.202` |
 | `node-c` (worker) | PC Windows (VM kedua) | VirtualBox, Ubuntu 24.04, 8 GB / 4 vCPU | `192.168.18.203` |
 
-- k3s, satu router (bridged), IP statis. Node tersebar di dua host fisik. Semua node x86_64, karena image Tester Agent dan Sensor Pantai hanya amd64. Langkah perakitan: [docs/m2/setup-cluster.md](docs/m2/setup-cluster.md).
+- k3s, satu router (bridged), IP statis. Node tersebar di dua host fisik. Semua node x86_64, karena image Tester Agent dan Sensor Pantai hanya amd64.
 - **`node-a` bukan target `wipe-node` atau node mati.** Consumer (jurnal di volume local-path) dan stack observabilitas dipaku ke `node-a`. Gangguan node diarahkan ke `node-b`/`node-c`.
 - Data store berada di disk node tempat pod berjalan (`local-path`).
 
@@ -63,6 +63,7 @@ Setiap aksi tersedia sebagai target `make` dan tercatat di `scripts/m2/actions.j
 | Tester Agent | `make tester S=<skenario>` | `kill-store`, `kill-leader`, `partition`, `clock-skew`, `schema`, `wipe-node` (profil practice) |
 | P1 | `make p1-checksum`, `p1-distribution`, `p1-wipe-node`, `p1-amnesia S=store-N`, `p1-load FILE=...`, `p1-surge`, `p1-audit`, `p1-netpol`, `p1-dashboard` | Lihat [docs/m2/p1-storage.md](docs/m2/p1-storage.md); bukti di [docs/m2/bukti-p1-cluster.md](docs/m2/bukti-p1-cluster.md) |
 | P2 | `make p2-status`, `p2-failover`, `p2-load` | Lihat bagian P2 di bawah |
+| P4 | `make p4-sample`, `p4-check`, `p4-compare ACTUAL=... REFERENCE=...` | Sampling feed, recovery, dan perbandingan dengan hasil referensi |
 | Broker | `make broker-status`, `make broker-recover S=rabbitmq-N` | Anggota cluster dan replika setiap queue; kosongkan disk member yang crash-loop agar bergabung ulang |
 | Pemulihan | `make reset` | Kembalikan manifest dan mode mock PVMBG ke normal |
 
@@ -97,22 +98,22 @@ Compose membangun tujuh aplikasi Go dan menjalankan PostgreSQL/RabbitMQ, menungg
 
 Aggregator dan PostgreSQL tidak membuka port host. Checker membaca API Aggregator dari dalam container melalui `docker compose exec`, sehingga deployment yang diperiksa sama dengan deployment biasa.
 
-## 2. Jalankan skenario satu per satu
+## 2. Jalankan pemeriksaan regresi Compose
 
 Setiap checker memakai `.env` dan project Compose yang sama dengan perintah startup di atas. Hasil terbaru otomatis disimpan di `artifacts/checks/<nama-checker>/`; skrip mencetak lokasi hasil dan progresnya. Exit code `0` berarti lulus, selain itu berarti gagal. Berhenti jika satu skenario gagal dan baca hasil/log sebelum melanjutkan. Volume tidak dihapus oleh checker pada stack ini.
 
-| Problem | Jalankan | Skenario yang dipicu |
+| Pemeriksaan | Jalankan | Skenario yang dipicu |
 |---|---|---|
 | Deployment | `python3 scripts/check-deployment.py` | Sembilan layanan sehat, batas jaringan/secret, port Aggregator/DB tertutup, tiga identitas dan trace HTTP. |
-| P1: ingestion dan evolusi skema | `python3 scripts/check-ingestion.py` | Pemetaan PVMBG v1/v2 dan delivery ke dua consumer; outage PVMBG, freshness, data terakhir, independensi BMKG, recovery tanpa restart. PVMBG dikembalikan ke v1/outage=false. |
-| P2: lambat dan outage di bawah beban | `python3 scripts/check-client-p2.py` | Dua run k6, masing-masing 50 VU selama 60 detik: PVMBG delay 3000 ms lalu outage. Memeriksa latency, error, refresh, socket, data terakhir, dan recovery. Delay/schema/outage awal dipulihkan. **Perlu k6 dan lsof di host**, serta access TTL 60 detik. |
-| P3: kredensial upstream | `python3 scripts/check-cross-credentials.py` | Kredensial sumber sendiri harus diterima; kredensial silang dan request tanpa kredensial harus ditolak. Tidak mengubah layanan. |
-| P3: autentikasi downstream | `python3 scripts/check-member-b-auth.py --natural-expiry` | Login tiga peran, scope/proyeksi, penolakan field mentah, refresh/replay, token lama dan expiry alami. Menunggu TTL access yang nyata. |
-| P4: deployment mandiri dan storage | `python3 scripts/check-p4.py` | Rebuild PVMBG saja, JSONB v1/v2 tanpa migrasi tambahan, restart Aggregator/DB, isolasi storage, stop/start Auth/API dan trace. Schema PVMBG awal dipulihkan; restart Auth menghapus sesi lama. |
-| P5: fanout dan recovery | `python3 scripts/check-stage-3.py` | Notifikasi offline sementara dashboard tetap menerima; backlog, replay ID sama sebelum/sesudah restart consumer, lalu broker outage/reconnect. Layanan dipulihkan. |
-| P5: subscriber baru | `python3 scripts/check-p5-third.py` | Build/start subscriber ketiga, cocokkan event baru di tiga subscriber, periksa producer tidak berubah, lalu bersihkan subscriber/queue sementara. |
+| Ingestion dan evolusi skema | `python3 scripts/check-ingestion.py` | Pemetaan PVMBG v1/v2 dan delivery ke dua consumer; outage PVMBG, freshness, data terakhir, independensi BMKG, recovery tanpa restart. PVMBG dikembalikan ke v1/outage=false. |
+| Client API saat PVMBG lambat atau mati | `python3 scripts/check-client-p2.py` | Dua run k6, masing-masing 50 VU selama 60 detik: PVMBG delay 3000 ms lalu outage. Memeriksa latency, error, refresh, socket, data terakhir, dan recovery. Delay/schema/outage awal dipulihkan. **Perlu k6 dan lsof di host**, serta access TTL 60 detik. |
+| Kredensial upstream | `python3 scripts/check-cross-credentials.py` | Kredensial sumber sendiri harus diterima; kredensial silang dan request tanpa kredensial harus ditolak. Tidak mengubah layanan. |
+| Autentikasi downstream | `python3 scripts/check-member-b-auth.py --natural-expiry` | Login tiga peran, scope/proyeksi, penolakan field mentah, refresh/replay, token lama dan expiry alami. Menunggu TTL access yang nyata. |
+| Deployment mandiri dan storage | `python3 scripts/check-p4.py` | Rebuild PVMBG saja, JSONB v1/v2 tanpa migrasi tambahan, restart Aggregator/DB, isolasi storage, stop/start Auth/API dan trace. Schema PVMBG awal dipulihkan; restart Auth menghapus sesi lama. |
+| Fanout dan recovery | `python3 scripts/check-stage-3.py` | Notifikasi offline sementara dashboard tetap menerima; backlog, replay ID sama sebelum/sesudah restart consumer, lalu broker outage/reconnect. Layanan dipulihkan. |
+| Subscriber baru | `python3 scripts/check-p5-third.py` | Build/start subscriber ketiga, cocokkan event baru di tiga subscriber, periksa producer tidak berubah, lalu bersihkan subscriber/queue sementara. |
 
-Urutan praktis untuk memeriksa semua problem:
+Urutan pemeriksaan Compose:
 
 ```sh
 python3 scripts/check-deployment.py
@@ -131,7 +132,7 @@ Skenario tambahan:
 |---|---|
 | `python3 scripts/check-stage-2.py` | Persistence backlog broker. Skrip mematikan kedua consumer, menunggu backlog, menghentikan/menjalankan broker, lalu menghidupkan hanya consumer yang sebelumnya berjalan. |
 | `python3 scripts/check-member-b-resilience.py` | Kontrak respons publik, filter kosong, galat JSON, refresh, trace dan redaksi log. |
-| `python3 scripts/check-member-b-resilience.py --exercise-outages --burst-connections 64` | Tambahkan outage PVMBG/DB/Auth dan burst singkat; dependency/outage dipulihkan. Burst ini berbeda dari pengukuran P2 selama 60 detik. |
+| `python3 scripts/check-member-b-resilience.py --exercise-outages --burst-connections 64` | Tambahkan outage PVMBG/DB/Auth dan burst singkat. Checker memulihkan dependency dan mode outage. |
 | `python3 scripts/check-p1-report.py` | Jalankan ingestion, lalu cocokkan payload BMKG/warning dan PVMBG dengan data kanonis, migrasi, identitas container, trace dan consumer. |
 | `python3 scripts/check-clean-clone.py` | Build/start **commit HEAD** pada project/volume baru dengan kredensial sendiri, periksa deployment/fanout, lalu hapus hanya resource sementara. Perubahan belum di-commit tidak ikut. Port 28081/28082/28084/28080/35672 harus bebas. |
 
@@ -295,14 +296,14 @@ Freshness mengukur pipeline polling/commit, bukan umur tiap hazard atau keberhas
 
 Hasil checker baru disimpan terpisah dari bukti laporan lama. Cara menampilkan hasil dan merender gambar dijelaskan di [panduan skrip](scripts/README.md).
 
-### M2 P2: Aggregator leadership (Fithra)
+### M2 P2: Aggregator leadership
 
 Kubernetes runs three Aggregator replicas; a Lease holder runs ingestion/reconciliation/publishing with a fencing epoch. Hazard reads use a one-second per-instance cache; Audit reads remain uncached. Compose remains single-instance. No new runtime configuration is required: Kubernetes supplies `KUBERNETES_SERVICE_HOST`, `KUBERNETES_SERVICE_PORT`, service-account files and `POD_NAME`.
 
-Use `make p2-status`, `make p2-failover` and `TARGET_URL=http://<aggregator-load-balancer> make p2-load`. The optional `ROLLOUT_IMAGE=<registry>/aggregator:<sha>` changes version during load. Load scripts run outside the cluster and save evidence under `artifacts/m2/runs/`. See [the P2 runbook and owner-assigned blockers](docs/m2/p2-aggregator.md) before claiming failure recovery or throughput criteria.
+Use `make p2-status`, `make p2-failover` and `TARGET_URL=http://<aggregator-load-balancer> make p2-load`. Set `ROLLOUT_IMAGE=<registry>/aggregator:<sha>` to change version under load and require zero failed requests. Load scripts run outside the cluster and save evidence under `artifacts/m2/runs/`. [Aggregator acceptance runbook](docs/m2/p2-aggregator.md)
 
-### M2 P4: satellite processing (Fithra)
+### M2 P4: Satellite processing
 
 Set `SATELLITE_TOKEN` in the ignored `.env` to enable the P4 worker in Compose or through the Kubernetes deployment script. The elected Aggregator connects to the feed, restores its replicated checkpoint, and materializes WILDFIRE events. To inspect the wire format first, run `make p4-sample` before starting the worker. The course feed allows one connection per group.
 
-Use `make p4-check` for repeatable offline and recovery tests. `TEST_DATABASE_URL` enables the PostgreSQL integration tests on isolated schemas. Evidence is saved under ignored `artifacts/m2/runs/`. The [P4 runbook](docs/m2/p4-satellite.md) records the verified course practice feed behavior and the remaining Kubernetes acceptance runs. [AI-assistance disclosure](docs/m2/ai-usage.md)
+Use `make p4-check` for offline and recovery tests. `TEST_DATABASE_URL` enables the PostgreSQL integration tests on isolated schemas. Evidence is saved under `artifacts/m2/runs/`. Use `make p4-compare ACTUAL=actual.json REFERENCE=reference.json` to compare complete satellite exports. [Satellite acceptance runbook](docs/m2/p4-satellite.md) · [AI-assistance disclosure](docs/m2/ai-usage.md)

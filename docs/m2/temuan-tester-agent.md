@@ -15,7 +15,7 @@ Cluster: `node-a` (control plane + worker, 192.168.18.201), `node-c` (worker, 19
 
 - Gagal: `biner iptables tidak ditemukan di host (/host/sbin, /host/usr/sbin, dsb)`. Agent tetap melaporkan "pemulihan akhir selesai; keadaan bersih".
 - Penyebab: di Ubuntu 24.04 `/usr/sbin/iptables`, `iptables-save`, `iptables-restore` adalah symlink absolut ke `/etc/alternatives/…`; dari pod (host di-mount di `/host`) symlink itu menunjuk ke `/etc/alternatives` milik container, yang tidak ada.
-- Perbaikan (semua node): ganti dengan symlink relatif ke `xtables-nft-multi`, lihat `setup-cluster.md` langkah 2.
+- Perbaikan pada host uji: ketiga tautan memakai target relatif `xtables-nft-multi`.
 - Uji ulang setelah perbaikan: berhasil, `block_internode selama 30s` di `node-c` (17:35:37–17:36:07 UTC), keadaan bersih sesudahnya.
 - Uji ketiga (blokir 17:39:03–17:39:33 UTC): `ping -D` node-a → node-c 17:38:54–17:39:50 **0% loss**; `curl -k https://192.168.18.201:6443/ping` dari node-c tetap `pong`. Dengan 2 node (1 worker), `partition` tidak memblokir lalu lintas host-ke-host yang terlihat.
 - Uji keempat: `diff` `nft list ruleset` saat jendela vs sesudahnya di `node-a` dan `node-c` hanya berisi perubahan counter; **tidak ada aturan yang ditambahkan** di node mana pun. Dengan 2 node, `partition` praktis no-op meski log melaporkan sukses.

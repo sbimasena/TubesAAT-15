@@ -2,7 +2,7 @@
 // quorum queue (D-FR). A publish only succeeds after the broker confirms that a
 // majority of queue replicas persisted the message, which is what lets the
 // Client API answer 202 Accepted without losing a report whose consumers may
-// die at any moment (P3.6).
+// die before processing the report.
 package reportqueue
 
 import (
@@ -18,8 +18,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// QueueName is the frozen queue name (D-FR, context-m2 § decisions). Member C
-// declares the same queue in the broker topology with identical arguments.
+// QueueName matches the queue declared in the broker topology.
 const QueueName = "field-reports"
 
 const dialTimeout = 5 * time.Second

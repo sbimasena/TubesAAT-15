@@ -37,11 +37,7 @@ func mapPVMBGRecord(record source.PVMBGRecord) (event domain.HazardEvent, err er
 }
 
 func (m *Manager) parkPVMBG(ctx context.Context, raw []byte, sourceRefID string, since time.Time, cause error) error {
-	if errors.Is(cause, errPVMBGMapperPanic) {
-		// Retry with the cursor held until a durable retry worker exists.
-		return cause
-	}
-	reason := deadletter.Classify(cause)
+	reason := pvmbgReason(cause)
 	if m.pvmbgDLQ == nil {
 		return fmt.Errorf("PVMBG DLQ not configured: %w", cause)
 	}
@@ -54,6 +50,8 @@ func (m *Manager) parkPVMBG(ctx context.Context, raw []byte, sourceRefID string,
 	if !since.IsZero() {
 		position = since.UTC().Format(time.RFC3339Nano)
 	}
+	now := time.Now().UTC()
+	decision := deadletter.Decide(deadletter.DefaultPolicy(), reason, 1, now)
 	err := m.pvmbgDLQ.RecordPVMBG(ctx, m.epoch, deadletter.Message{
 		MessageID:   fmt.Sprintf("pvmbg:%x", sha256.Sum256(raw)),
 		Source:      "PVMBG",
@@ -61,9 +59,10 @@ func (m *Manager) parkPVMBG(ctx context.Context, raw []byte, sourceRefID string,
 		Reason:      reason,
 		SourceRefID: sourceRefID,
 		Position:    position,
-		ReceivedAt:  time.Now().UTC(),
+		ReceivedAt:  now,
 		Attempts:    1,
-		Status:      deadletter.StatusParked,
+		Status:      decision.Status,
+		NextRetryAt: decision.NextRetry,
 	})
 	if err != nil {
 		return fmt.Errorf("record PVMBG dead letter: %w", err)

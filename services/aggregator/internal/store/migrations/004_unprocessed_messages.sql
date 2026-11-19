@@ -1,4 +1,4 @@
--- D-DLQ (dibekukan 12 Nov, owner B + C): durable storage for messages the
+-- P3: durable storage for messages the
 -- Aggregator cannot process. The table is created identically on every unit;
 -- rows are routed by message_id (PartitionOf) with RF=2 copies, like
 -- hazard_events. P3.2: the failed payload is stored verbatim (raw bytes, never

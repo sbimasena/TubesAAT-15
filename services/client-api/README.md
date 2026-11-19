@@ -43,7 +43,7 @@ Galat yang dihasilkan handler hazard memakai JSON `{"error":{"code":"...","messa
 
 Kapasitas pengambilan data Aggregator dibagi per peran (pola bulkhead, P5.5): Media, Tim Lapangan, dan Operasi Internal masing-masing memiliki pool terpisah. Pool Media penuh menghasilkan `429` / `concurrency_limit` + `Retry-After: 1` hanya untuk Media, dan **tidak** mengurangi kapasitas Tim Lapangan — reservasi Field Team dijamin tersedia saat Media dibebani. Admission pool terjadi setelah introspeksi (peran baru diketahui di situ); introspeksi sendiri tetap dibatasi batas bersama di atas.
 
-Kapasitas default **40 / 20 / 4** (Media / Field Team / Internal Ops) melalui `CLIENT_API_MEDIA_POOL`, `CLIENT_API_FIELD_TEAM_POOL`, `CLIENT_API_INTERNAL_OPS_POOL`; semua harus bilangan bulat positif. Status: **draft 16 Nov 2026** sesuai keputusan anggota B — nilai akan ditinjau setelah load test P2/P5, dan konfigurasi ini belum final.
+Kapasitas default **40 / 20 / 4** (Media / Field Team / Internal Ops) melalui `CLIENT_API_MEDIA_POOL`, `CLIENT_API_FIELD_TEAM_POOL`, `CLIENT_API_INTERNAL_OPS_POOL`; semua harus bilangan bulat positif. Nilai ini sementara sampai uji beban P2/P5.
 
 Konfigurasi tambahan: `AUTH_BASE_URL`, `AUTH_REQUEST_TIMEOUT_MS`, dan `AUTH_INTERNAL_SECRET` (minimal 32 byte). Signing key JWT tidak diberikan kepada API Klien. Timeout penulisan server memberi jeda setelah jumlah timeout Auth dan Aggregator.
 
@@ -65,21 +65,28 @@ Jalankan Auth, API Klien, dan Aggregator yang sudah memiliki data BMKG/PVMBG. Un
 
 ```sh
 docker compose up --build -d --wait
-python3 scripts/check-member-b-auth.py --natural-expiry
+python3 scripts/check-downstream-auth.py --natural-expiry
 ```
 
 Skrip memeriksa login tiga peran, tujuh/sebelas field, penolakan permintaan mentah, rotasi, replay refresh token, dan penolakan access token lama sebelum expiry. `--natural-expiry` menunggu TTL nyata Tim Lapangan (default 60 detik, maksimal 300 detik untuk checkpoint), memeriksa `401`, lalu refresh tanpa login ulang dan memakai token baru. Jam sistem tidak diubah. Skrip tidak me-restart layanan, mengubah status sumber, atau menghapus volume. Output tidak berisi token, kredensial, atau payload hazard.
 
-Jika URL publik berbeda, gunakan `--auth-url` dan `--client-url`. Hasil ini adalah bukti bagian downstream P3 milik B; tidak menggantikan uji silang kredensial upstream milik A, uji beban/outage P2, atau verifikasi stack/fanout seluruh tim. Kontrak stale/freshness publik dan batas konkurensi/429 sudah diimplementasikan; pengukuran beban P2 tetap terpisah.
+Jika URL publik berbeda, gunakan `--auth-url` dan `--client-url`. Hasil ini adalah bukti bagian downstream P3; tidak menggantikan uji silang kredensial upstream, uji beban/outage P2, atau verifikasi stack/fanout seluruh tim. Kontrak stale/freshness publik dan batas konkurensi/429 sudah diimplementasikan; pengukuran beban P2 tetap terpisah.
 
 ## Pemeriksaan resiliensi
 
 Jalankan pada stack Compose yang sudah sehat. Checker mengikuti `.env` dan nama project Compose secara otomatis; `--env-file`/`--project-name` hanya diperlukan jika startup memakai konfigurasi khusus. Broker/consumer tidak diuji oleh checker ini. Jangan menjalankan demo yang mengubah sumber atau lifecycle secara bersamaan.
 
 ```sh
-python3 scripts/check-member-b-resilience.py --exercise-outages --burst-connections 128
+python3 scripts/check-downstream-resilience.py --exercise-outages --burst-connections 128
 ```
 
-Pemeriksaan dasar memvalidasi envelope/proyeksi Media, filter kosong 200, galat JSON 400/403, refresh, correlation ID lintas proses, identitas login/refresh, latensi outbound, dan redaksi token/secret pada log B. `--exercise-outages` mengaktifkan outage PVMBG untuk memeriksa data terakhir 200/stale, independensi BMKG, dan recovery; kemudian menghentikan/menjalankan kembali hanya PostgreSQL dan Auth pada project tersebut untuk memeriksa 503/health/recovery. Flag outage asal dipulihkan, layanan yang dihentikan dipulihkan, dan volume tidak dihapus. Auth restart tetap menghapus sesi memori.
+Pemeriksaan dasar memvalidasi envelope/proyeksi Media, filter kosong 200, galat JSON 400/403, refresh, correlation ID lintas proses, identitas login/refresh, latensi outbound, dan redaksi token/secret pada log downstream. `--exercise-outages` mengaktifkan outage PVMBG untuk memeriksa data terakhir 200/stale, independensi BMKG, dan recovery; kemudian menghentikan/menjalankan kembali hanya PostgreSQL dan Auth pada project tersebut untuk memeriksa 503/health/recovery. Flag outage asal dipulihkan, layanan yang dihentikan dipulihkan, dan volume tidak dihapus. Auth restart tetap menghapus sesi memori.
 
 Burst bersifat opsional dan singkat: hanya 200/429 yang diterima, serta jumlah 429 yang teramati dicatat. Burst tidak menjamin kapasitas selalu penuh; tes Go menahan tepat 64 request untuk memverifikasi batas secara deterministik. Bukti ini belum memenuhi uji P2 >=50 koneksi selama >=60 detik atau penerimaan stack/fanout seluruh tim. Output tidak memuat token, kredensial, atau payload hazard; stack tetap berjalan setelah checker selesai.
+
+## P3: inspeksi dan replay DLQ
+
+- `GET /internal/audit/unprocessed?source=PVMBG&limit=100` menampilkan metadata pesan aktif. Gunakan `next_cursor` sebagai `cursor` untuk halaman berikutnya. Payload mentah tidak dikirim ke klien.
+- `POST /internal/audit/unprocessed/replay` menerima `{"message_ids":["<message_id PVMBG>"]}`. `202` berarti permintaan diterima, bukan data sudah dipulihkan. Setelah replay berhasil, pesan tidak lagi muncul pada daftar.
+- Kedua rute wajib memakai access token **Internal Ops**. Media dan Tim Lapangan mendapat `403`. Client API memakai `AUDIT_TOKEN` untuk meneruskan request ke Aggregator; jangan gunakan credential ini sebagai pengganti token klien.
+- Replay diproses oleh leader Aggregator. Jika belum bisa menjangkau leader atau storage, API mengembalikan `503`; permintaan yang sama aman dicoba ulang.

@@ -44,6 +44,8 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /internal/audit/events", s.requireAuditToken(s.auditEvents))
 		mux.HandleFunc("GET /internal/audit/checksum", s.requireAuditToken(s.auditChecksum))
 		mux.HandleFunc("GET /internal/audit/location", s.requireAuditToken(s.auditLocation))
+		mux.HandleFunc("GET /internal/audit/unprocessed", s.requireAuditToken(s.auditUnprocessed))
+		mux.HandleFunc("POST /internal/audit/unprocessed/replay", s.requireAuditToken(s.auditReplay))
 		mux.HandleFunc("POST /internal/admin/load", s.requireAuditToken(s.loadCatalog))
 	}
 	if s.analytics != nil {

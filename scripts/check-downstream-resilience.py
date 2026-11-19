@@ -43,9 +43,9 @@ def main():
 
     ports = {"client": env.get("CLIENT_API_PORT", "8080"), "auth": env.get("AUTH_PORT", "8084"),
              "pvmbg": env.get("PVMBG_PORT", "8082")}
-    prefix = "member-b-resilience-" + uuid.uuid4().hex
+    prefix = "downstream-resilience-" + uuid.uuid4().hex
     started_at = datetime.now(timezone.utc).isoformat()
-    evidence = {"stage": "Member B Stage 5", "checked_at": started_at, "correlation_prefix": prefix,
+    evidence = {"stage": "downstream API Stage 5", "checked_at": started_at, "correlation_prefix": prefix,
                 "sustained_p2_load_checked": False, "full_stack_fanout_checked": False, "checks": []}
     sensitive = [env.get(key, "") for key in ("JWT_SIGNING_SECRET", "AUTH_INTERNAL_SECRET",
                  "MEDIA_CLIENT_PASSWORD", "FIELD_TEAM_CLIENT_PASSWORD", "INTERNAL_OPS_CLIENT_PASSWORD")]
@@ -186,7 +186,7 @@ def main():
         for service in ("auth", "client-api", "aggregator"):
             raw = compose("logs", "--no-log-prefix", "--since", started_at, service)
             if service != "aggregator":
-                assert not any(value and value in raw for value in sensitive), "Secret/token appeared in Member B logs"
+                assert not any(value and value in raw for value in sensitive), "Secret/token appeared in downstream API logs"
             records = []
             for line in raw.splitlines():
                 try:

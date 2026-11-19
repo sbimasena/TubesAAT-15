@@ -6,7 +6,7 @@ PVMBG is an independent Go service that seeds 20 historical volcanic reports and
 
 - `GET /health` is public and reports the active schema version, response delay in milliseconds, and whether outage simulation is active. These values let infrastructure checks restore the original runtime settings.
 - `GET /volcanic-reports?since=<RFC3339>` requires `Authorization: Bearer <PVMBG_TOKEN>`.
-- `POST /admin/schema-version` is **tokenless for P3**: the M2 spec (Tester Agent contract, line 99) lets Tester Agent call admin endpoints on mocks without providing a credential, so the schema-injection lever stays callable (previous 401 finding in `docs/m2/temuan-tester-agent.md`). It accepts `{"version":N}` or `{"mode":"<name>"}` (set exactly one of the two). Reports already emitted keep their original fields; a new report with the new shape is appended immediately. If the assistant later confirms Tester Agent sends a token, re-wrap this handler with `requirePVMBGToken`.
+- `POST /admin/schema-version` is **tokenless for P3** so Tester Agent can call it in the test environment. Do not expose this admin route publicly. It accepts `{"version":N}` or `{"mode":"<name>"}` (set exactly one of the two). Reports already emitted keep their original fields; a new report with the new shape is appended immediately.
 
 ### Mode skema (P3)
 

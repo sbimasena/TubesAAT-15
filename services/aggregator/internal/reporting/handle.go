@@ -5,14 +5,11 @@ import (
 	"log/slog"
 )
 
-// ReportStore is the durable effect of the processor. The implementation is
-// wired once member C's field_reports migration lands (D-FR: insert idempotent
-// with unique report_id). SaveReport must:
+// ReportStore persists reports before acknowledgement. SaveReport must:
 //   - insert the report and return accepted=true on first sight of report_id;
 //   - return accepted=false WITHOUT an error when report_id already exists,
 //     which is how a redelivered message is recognized (the caller acks);
-//   - return an error only for transient store failures, which makes the
-//     message redelivered (nothing is lost).
+//   - return an error when the required writes do not commit.
 type ReportStore interface {
 	SaveReport(ctx context.Context, report Report, correlationID string) (accepted bool, err error)
 	ParkReport(ctx context.Context, raw []byte, reason string, attempts int) error

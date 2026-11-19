@@ -1,4 +1,3 @@
-// AI assistance is disclosed in docs/m2/ai-usage.md; human review is required.
 package satellite
 
 import (

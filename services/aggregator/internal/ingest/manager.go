@@ -24,6 +24,7 @@ type Manager struct {
 	epoch    int64
 	verify   func(context.Context) error
 	cursors  cursorStore
+	pvmbgDLQ pvmbgDeadletter
 
 	mu              sync.RWMutex
 	eventCursor     time.Time
@@ -179,30 +180,45 @@ func (m *Manager) pollPVMBG(ctx context.Context, correlationID string) {
 	since := overlap(reportCursor)
 	m.mu.RUnlock()
 
-	reports, err := m.pvmbg.FetchVolcanicReports(ctx, since, correlationID)
+	batch, err := m.pvmbg.FetchVolcanicBatch(ctx, since, correlationID)
 	if err != nil {
 		m.setFailure("PVMBG", correlationID, err)
 		return
 	}
 	m.setSuccess("PVMBG")
-	canonical := make([]domain.HazardEvent, 0, len(reports))
-	var mappingErr error
-	for _, report := range reports {
-		event, mapErr := domain.MapVolcanic(report, time.Now().UTC())
-		if mapErr != nil {
-			mappingErr = mapErr
-			if m.logger != nil {
-				m.logger.Warn("PVMBG report skipped", "correlation_id", correlationID, "source_ref_id", report.ReportID, "error", mapErr)
+	if batch.Invalid != nil {
+		err := batch.Invalid
+		// An oversized capture is only a prefix, not a durable copy of the message.
+		if !batch.Truncated {
+			if parkErr := m.parkPVMBG(ctx, batch.Raw, "", since, err); parkErr != nil {
+				err = parkErr
+			}
+		}
+		m.setIngestionFailure("PVMBG", correlationID, err)
+		return // No trustworthy next position for a broken envelope.
+	}
+	canonical := make([]domain.HazardEvent, 0, len(batch.Records))
+	var parkFailure, recordFailure error
+	for _, record := range batch.Records {
+		event, err := mapPVMBGRecord(record)
+		if err != nil {
+			recordFailure = err
+			if parkErr := m.parkPVMBG(ctx, record.Raw, record.Report.ReportID, since, err); parkErr != nil {
+				parkFailure = parkErr
+			} else if record.Report.ReportedAt.After(reportCursor) {
+				reportCursor = record.Report.ReportedAt
 			}
 			continue
 		}
 		canonical = append(canonical, event)
-		if report.ReportedAt.After(reportCursor) {
-			reportCursor = report.ReportedAt
+		if record.Report.ReportedAt.After(reportCursor) {
+			reportCursor = record.Report.ReportedAt
 		}
 	}
-	if mappingErr != nil {
-		m.setIngestionFailure("PVMBG", correlationID, mappingErr)
+	if parkFailure != nil {
+		m.setIngestionFailure("PVMBG", correlationID, parkFailure)
+	} else if recordFailure != nil {
+		m.setIngestionFailure("PVMBG", correlationID, recordFailure)
 	}
 	if err := m.persist(ctx, "PVMBG", correlationID, canonical); err != nil {
 		return
@@ -212,18 +228,19 @@ func (m *Manager) pollPVMBG(ctx context.Context, correlationID string) {
 			m.logger.Info("PVMBG poll complete", "correlation_id", correlationID, "events", 0, "latency_ms", elapsedMS(started))
 		}
 	}
-	if mappingErr == nil {
-		m.setIngested("PVMBG")
-		if err := m.saveCheckpoint(ctx, "PVMBG", checkpoint{ReportCursor: reportCursor}); err != nil {
-			m.setIngestionFailure("PVMBG", correlationID, err)
-			return
-		}
-		m.mu.Lock()
-		m.reportCursor = reportCursor
-		m.mu.Unlock()
+	if parkFailure != nil {
+		return
 	}
-	// Keep the old cursor after a mapping failure so a later valid report
-	// cannot move the invalid record outside the retry window.
+	if recordFailure == nil {
+		m.setIngested("PVMBG")
+	}
+	if err := m.saveCheckpoint(ctx, "PVMBG", checkpoint{ReportCursor: reportCursor}); err != nil {
+		m.setIngestionFailure("PVMBG", correlationID, err)
+		return
+	}
+	m.mu.Lock()
+	m.reportCursor = reportCursor
+	m.mu.Unlock()
 }
 
 func (m *Manager) persist(ctx context.Context, sourceName, correlationID string, events []domain.HazardEvent) error {

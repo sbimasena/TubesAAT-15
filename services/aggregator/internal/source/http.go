@@ -87,6 +87,12 @@ func (c *PVMBGClient) getJSON(ctx context.Context, path string, since time.Time,
 }
 
 func (g jsonGetter) get(ctx context.Context, path string, since time.Time, correlationID, authHeader, credential string, destination any) error {
+	return g.getBody(ctx, path, since, correlationID, authHeader, credential, func(body io.Reader) error {
+		return json.NewDecoder(io.LimitReader(body, 10<<20)).Decode(destination)
+	})
+}
+
+func (g jsonGetter) getBody(ctx context.Context, path string, since time.Time, correlationID, authHeader, credential string, read func(io.Reader) error) error {
 	endpoint, err := url.Parse(g.baseURL + path)
 	if err != nil {
 		return fmt.Errorf("parse %s URL: %w", g.target, err)
@@ -123,8 +129,7 @@ func (g jsonGetter) get(ctx context.Context, path string, since time.Time, corre
 		g.logCall(correlationID, path, time.Since(started), response.StatusCode, err)
 		return fmt.Errorf("call %s %s: %w", g.target, path, err)
 	}
-	decoder := json.NewDecoder(io.LimitReader(response.Body, 10<<20))
-	if err := decoder.Decode(destination); err != nil {
+	if err := read(response.Body); err != nil {
 		g.logCall(correlationID, path, time.Since(started), response.StatusCode, err)
 		return fmt.Errorf("decode %s %s response: %w", g.target, path, err)
 	}

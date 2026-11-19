@@ -1,6 +1,6 @@
 # P1 — Storage terdistribusi: panduan kerja
 
-Panduan untuk anggota yang melanjutkan atau menguji P1. PIC: C. Keputusan desain lengkap ada di `context-m2.md` §7.1 dan §9.2 (D-P1); kontrak Audit API di `kontrak-m2.md` §7.
+Panduan implementasi dan pengujian P1. Keputusan desain lengkap ada di `context-m2.md` §7.1 dan §9.2 (D-P1); kontrak Audit API di `kontrak-m2.md` §7.
 
 ## Cara kerja singkat
 

@@ -14,6 +14,7 @@ import (
 )
 
 const pvmbgResponseLimit = 10 << 20 // same ceiling as the existing HTTP reader
+const pvmbgCaptureLimit = 32 << 20  // bounded archival capture, never decoded as a batch
 const pvmbgRecordLimit = 1 << 20    // per-message budget from the M2 working contract
 
 // PVMBGBatch separates an unreadable response from invalid individual records.
@@ -36,12 +37,14 @@ type PVMBGRecord struct {
 func (c *PVMBGClient) FetchVolcanicBatch(ctx context.Context, since time.Time, correlationID string) (PVMBGBatch, error) {
 	var batch PVMBGBatch
 	err := (jsonGetter{c.baseURL, c.client, c.logger, "pvmbg"}).getBody(ctx, "/volcanic-reports", since, correlationID, "Authorization", "Bearer "+c.token, func(body io.Reader) error {
-		raw, err := io.ReadAll(io.LimitReader(body, pvmbgResponseLimit+1))
+		raw, err := io.ReadAll(io.LimitReader(body, pvmbgCaptureLimit+1))
 		if err != nil {
 			return err
 		}
-		if len(raw) > pvmbgResponseLimit {
-			batch = PVMBGBatch{Raw: raw[:pvmbgResponseLimit], Invalid: deadletter.ErrMessageTooLarge, Truncated: true}
+		if len(raw) > pvmbgCaptureLimit {
+			batch = PVMBGBatch{Invalid: deadletter.ErrMessageTooLarge, Truncated: true}
+		} else if len(raw) > pvmbgResponseLimit {
+			batch = PVMBGBatch{Raw: raw, Invalid: deadletter.ErrMessageTooLarge}
 		} else {
 			batch = parsePVMBGBatch(raw)
 		}
@@ -84,7 +87,12 @@ func parsePVMBGBatch(raw []byte) PVMBGBatch {
 		case item[0] != '{':
 			record.Invalid = deadletter.ErrContractViolation
 		default:
+			var identity struct {
+				ReportID string `json:"report_id"`
+			}
+			_ = json.Unmarshal(item, &identity)
 			if err := json.Unmarshal(item, &record.Report); err != nil {
+				record.Report.ReportID = identity.ReportID
 				record.Invalid = errors.Join(deadletter.ErrSchemaIncompatible, err)
 			} else if report := record.Report; report.ReportID == "" || report.VolcanoID == "" ||
 				report.AlertLevel == "" || report.ReportedAt.IsZero() {
@@ -130,6 +138,52 @@ func parsePVMBGBatch(raw []byte) PVMBGBatch {
 		return bad
 	}
 	return batch
+}
+
+// DecodePVMBGReplay accepts one stored report. Known migrations are supported
+// only during recovery; normal ingestion keeps detecting incompatible inputs.
+func DecodePVMBGReplay(raw []byte) PVMBGRecord {
+	if len(raw) > pvmbgRecordLimit {
+		return PVMBGRecord{Invalid: deadletter.ErrMessageTooLarge}
+	}
+	wrapped := append(append([]byte{'['}, raw...), ']')
+	batch := parsePVMBGBatch(wrapped)
+	if batch.Invalid != nil || len(batch.Records) != 1 {
+		return PVMBGRecord{Invalid: deadletter.ErrMalformedJSON}
+	}
+	record := batch.Records[0]
+	if !errors.Is(record.Invalid, deadletter.ErrSchemaIncompatible) {
+		return record
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return record
+	}
+	changed := false
+	if fields["alert_level"] == nil && fields["status"] != nil {
+		fields["alert_level"] = fields["status"]
+		delete(fields, "status")
+		changed = true
+	}
+	if ts := fields["reported_at"]; len(ts) > 0 && ts[0] >= '0' && ts[0] <= '9' {
+		var seconds int64
+		if json.Unmarshal(ts, &seconds) == nil && seconds > 0 && seconds <= 253402300799 {
+			fields["reported_at"], _ = time.Unix(seconds, 0).UTC().MarshalJSON()
+			changed = true
+		}
+	}
+	if !changed {
+		return record
+	}
+	adapted, err := json.Marshal(fields)
+	if err != nil {
+		return record
+	}
+	batch = parsePVMBGBatch(append(append([]byte{'['}, adapted...), ']'))
+	if batch.Invalid == nil && len(batch.Records) == 1 {
+		return batch.Records[0]
+	}
+	return record
 }
 
 func trimJSONSpace(raw []byte) []byte { return bytes.Trim(raw, " \t\r\n") }

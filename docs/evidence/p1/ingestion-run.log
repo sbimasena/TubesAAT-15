@@ -23,4 +23,4 @@
 [ingestion +17s] Restoring schema and outage settings
 [ingestion +18s] Result file saved
 PASS: runtime v1/v2 mapping, both consumers, source outage/freshness and recovery without restart
-docs/evidence/member-a/p1/ingestion-check.json
+docs/evidence/p1/ingestion-check.json

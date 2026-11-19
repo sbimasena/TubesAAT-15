@@ -39,7 +39,7 @@ func NewManager(bmkg *source.BMKGClient, pvmbg *source.PVMBGClient, repo store.R
 	if interval <= 0 {
 		interval = 3 * time.Second
 	}
-	return &Manager{
+	m := &Manager{
 		bmkg:            bmkg,
 		pvmbg:           pvmbg,
 		repo:            repo,
@@ -49,6 +49,11 @@ func NewManager(bmkg *source.BMKGClient, pvmbg *source.PVMBGClient, repo store.R
 		warningsByEvent: make(map[string]domain.TsunamiWarning),
 		status:          initialStatus(time.Now().UTC()),
 	}
+	// The replicated store (store.Router) parks PVMBG records; test fakes may not.
+	if dlq, ok := repo.(pvmbgDeadletter); ok {
+		m.pvmbgDLQ = dlq
+	}
+	return m
 }
 
 func (m *Manager) Run(ctx context.Context) {

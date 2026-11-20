@@ -36,6 +36,13 @@ func (fakeAudit) Locate(_ context.Context, hazardID string) ([]store.Location, b
 	return nil, false, nil
 }
 
+func (fakeAudit) Unprocessed(_ context.Context, source, cursor string, limit int) (store.UnprocessedPage, error) {
+	if cursor == "bad" {
+		return store.UnprocessedPage{}, store.ErrInvalidCursor
+	}
+	return store.UnprocessedPage{Items: []store.UnprocessedItem{{MessageID: "pvmbg:test", Source: source, Attempts: limit, Status: "parked"}}}, nil
+}
+
 func TestAuditAPI(t *testing.T) {
 	api := NewServer(storedRepository{}, ingest.NewManager(nil, nil, storedRepository{}, time.Second, nil),
 		slog.New(slog.NewJSONHandler(io.Discard, nil)))
@@ -52,15 +59,29 @@ func TestAuditAPI(t *testing.T) {
 	}
 
 	for path, want := range map[string]int{
-		"/internal/audit/events?limit=0":          http.StatusBadRequest,
-		"/internal/audit/events?cursor=bad":       http.StatusBadRequest,
-		"/internal/audit/location":                http.StatusBadRequest,
-		"/internal/audit/location?hazard_id=nope": http.StatusNotFound,
-		"/internal/audit/location?hazard_id=hz-1": http.StatusOK,
+		"/internal/audit/events?limit=0":             http.StatusBadRequest,
+		"/internal/audit/events?cursor=bad":          http.StatusBadRequest,
+		"/internal/audit/location":                   http.StatusBadRequest,
+		"/internal/audit/location?hazard_id=nope":    http.StatusNotFound,
+		"/internal/audit/location?hazard_id=hz-1":    http.StatusOK,
+		"/internal/audit/unprocessed?limit=0":        http.StatusBadRequest,
+		"/internal/audit/unprocessed?source=unknown": http.StatusBadRequest,
+		"/internal/audit/unprocessed?cursor=bad":     http.StatusBadRequest,
 	} {
 		if got := get(path, "secret").Code; got != want {
 			t.Errorf("%s: status %d, want %d", path, got, want)
 		}
+	}
+	for _, token := range []string{"", "wrong"} {
+		if got := get("/internal/audit/unprocessed", token); got.Code != http.StatusUnauthorized {
+			t.Fatalf("direct DLQ route did not require the audit credential: %d", got.Code)
+		}
+	}
+	var dlq store.UnprocessedPage
+	auditResponse := get("/internal/audit/unprocessed?source=PVMBG&limit=1", "secret")
+	if err := json.Unmarshal(auditResponse.Body.Bytes(), &dlq); err != nil || auditResponse.Code != http.StatusOK ||
+		len(dlq.Items) != 1 || dlq.Items[0].Source != "PVMBG" || dlq.Items[0].Attempts != 1 || dlq.NextCursor != nil {
+		t.Fatalf("unexpected unprocessed response: status=%d body=%s error=%v", auditResponse.Code, auditResponse.Body, err)
 	}
 	for _, token := range []string{"", "wrong"} {
 		response := get("/internal/audit/events", token)

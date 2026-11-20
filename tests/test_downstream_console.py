@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("member_b_console", ROOT / "scripts/serve-member-b-ui.py")
+spec = importlib.util.spec_from_file_location("downstream_console", ROOT / "scripts/serve-downstream-ui.py")
 console = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(console)
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Konsol Pengujian Auth dan Client API</title>
+  <title>downstream API — Konsol Pengujian</title>
   <style>
     :root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#19283c;background:#f4f6fa;line-height:1.5;font-size:14px}
     *{box-sizing:border-box}body{margin:0}main{max-width:1160px;margin:auto;padding:28px 22px 60px}h1{font-size:28px;margin:4px 0 8px}h2{font-size:18px;margin:0 0 12px}h3{font-size:15px;margin:0 0 10px}p{margin:6px 0 12px}.muted,small{color:#58697e}.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:#235ab5;font-weight:700}.panel{background:#fff;border:1px solid #dbe2ec;border-radius:10px;padding:20px;margin-top:18px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.two{grid-template-columns:repeat(2,minmax(0,1fr))}.card{border:1px solid #dbe2ec;border-radius:8px;padding:15px;min-width:0}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.spread{justify-content:space-between}.actions{margin-top:12px}.notice{border-left:3px solid #e5ae37;background:#fff9eb;padding:12px 15px;margin-top:16px}label{display:block;font-size:12px;font-weight:600;margin:9px 0 4px}input,select,button,textarea{font:inherit}input,select,textarea{width:100%;padding:9px;border:1px solid #c6d1df;border-radius:6px;background:#fff;color:inherit}button{cursor:pointer;border:1px solid #b8c7db;border-radius:6px;padding:9px 13px;background:#fff;color:#193a69;font-weight:600}button:hover{background:#edf3fc}button.primary{background:#235ab5;border-color:#235ab5;color:#fff}button:disabled{opacity:.55;cursor:wait}button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #87b7ff;outline-offset:2px}.badge{display:inline-block;font-size:12px;font-weight:600;padding:3px 8px;border-radius:5px;background:#eef1f5;color:#526379}.pass{background:#e9f7ef;color:#12623b}.fail{background:#fff0f0;color:#a72230}.wait{background:#fff5db;color:#865c08}.mono,code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}code{overflow-wrap:anywhere}pre{background:#122137;color:#e6edf8;padding:14px;border-radius:7px;overflow:auto;max-height:360px;white-space:pre-wrap;word-break:break-word;margin-bottom:0}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:12px}th,td{padding:9px 10px;text-align:left;vertical-align:top;border-bottom:1px solid #e4eaf2}th{color:#58697e;font-weight:600}tbody tr:last-child td{border-bottom:0}td:first-child{white-space:nowrap}summary{cursor:pointer;color:#235ab5;font-weight:600}.sources{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}.source{padding:12px;border-radius:6px;border:1px solid #dbe2ec}#activity{padding:9px 12px;border:1px solid #dbe2ec;background:white;border-radius:6px;margin-top:14px;overflow-wrap:anywhere}#results td:last-child{max-width:390px;overflow-wrap:anywhere}.session{min-height:56px;margin-top:10px;font-size:12px}.session strong{color:#235ab5}.footnote{font-size:12px;margin-top:10px}a{color:#235ab5}
@@ -13,8 +13,8 @@
 <body>
 <main>
   <header>
-    <div class="eyebrow">Regresi Compose</div>
-    <h1>Konsol pengujian Auth dan Client API</h1>
+    <div class="eyebrow">IF4031 · Milestone 1 · Stage 1–5</div>
+    <h1>Konsol pengujian downstream API</h1>
     <p class="muted">Coba Auth, otorisasi API Klien, dan resiliensi pada service yang berjalan. Setiap hasil mencatat status HTTP, waktu request, dan correlation ID.</p>
     <div id="activity" role="status" aria-live="polite">Menghubungkan konsol lokal…</div>
   </header>
@@ -29,8 +29,8 @@
       <button id="export">Unduh hasil tanpa token</button>
     </div>
     <p class="footnote muted">Target ditentukan saat server konsol dijalankan. Tes Go mencakup hash Argon2id, konfigurasi, rotasi atomik, revokasi, cancellation, timeout, concurrency, dan redaksi log pada fixture. Rangkaian HTTP membutuhkan data BMKG dan PVMBG.</p>
-    <details><summary>Lihat cakupan pemeriksaan</summary><div class="table-wrap"><table><thead><tr><th>Komponen</th><th>Pemeriksaan</th><th>HTTP</th><th>Unit/race</th></tr></thead><tbody id="tasks"></tbody></table></div></details>
-    <div class="notice"><strong>Pemeriksaan manual:</strong> Verifikasi kontrak endpoint, lifecycle Docker, dan log proses melalui checker deployment.</div>
+    <details><summary>Lihat cakupan DS-01–DS-16</summary><div class="table-wrap"><table><thead><tr><th>Tugas</th><th>Pemeriksaan</th><th>HTTP</th><th>Unit/race</th></tr></thead><tbody id="tasks"></tbody></table></div></details>
+    <div class="notice"><strong>Pemeriksaan manual:</strong> DS-01 masih memiliki keputusan deployment sementara. DS-04 memerlukan build/lifecycle Docker. DS-16 memerlukan pemeriksaan log proses nyata. Hasil unit tidak membuktikan ketiga hal tersebut.</div>
     <pre id="unit-output" hidden></pre>
     <details id="export-fallback" hidden class="actions"><summary>JSON hasil untuk disalin</summary><p class="footnote muted">Jika browser tidak mengunduh file, salin JSON berikut dan simpan di luar repo. Data ini tidak memuat token, password, atau payload hazard.</p><label for="export-json">Bukti pengujian</label><textarea id="export-json" class="mono" rows="12" readonly></textarea></details>
   </section>
@@ -67,12 +67,14 @@
   <section class="panel" aria-labelledby="resilience-title">
     <h2 id="resilience-title">4. Resiliensi dan burst</h2>
     <div class="grid two">
-      <div class="card"><h3>Burst konkurensi</h3><p class="muted">Gunakan token Operasi Internal yang masih aktif. Request dijalankan paralel oleh server konsol agar batas koneksi browser tidak membatasi burst.</p><label for="burst-count">Jumlah request (2–128)</label><input id="burst-count" type="number" min="2" max="128" value="128"><button id="burst" class="actions">Jalankan burst</button><p class="footnote muted">429 tidak selalu muncul pada burst singkat. Tes Go memverifikasi batas 64 secara deterministik. Lihat panduan pengujian untuk beban berkelanjutan.</p></div>
-      <div class="card"><h3>Outage dan recovery</h3><label for="scenario">Skenario yang diubah operator</label><select id="scenario"><option value="pvmbg">PVMBG outage: data terakhir + stale</option><option value="auth">Auth berhenti: hazard 503, health 200</option><option value="storage">PostgreSQL berhenti: hazard 503, health 200</option><option value="recovery">Recovery: login ulang bila Auth restart</option></select><p id="scenario-help" class="footnote"></p><button id="observe">Amati respons saat ini</button><p class="footnote muted">Konsol tidak menghentikan service atau mengubah sumber. Operator menjalankan skenario lewat checker resiliensi; respons hanya dinilai terhadap keadaan yang dipilih.</p></div>
+      <div class="card"><h3>Burst konkurensi — DS-15</h3><p class="muted">Gunakan token Operasi Internal yang masih aktif. Request dijalankan paralel oleh server konsol agar batas koneksi browser tidak membatasi burst.</p><label for="burst-count">Jumlah request (2–128)</label><input id="burst-count" type="number" min="2" max="128" value="128"><button id="burst" class="actions">Jalankan burst</button><p class="footnote muted">429 tidak selalu muncul pada burst singkat. Tes Go memverifikasi batas 64 secara deterministik. Ini belum memenuhi P2 60 detik.</p></div>
+      <div class="card"><h3>Outage / recovery — DS-10, DS-13, DS-14</h3><label for="scenario">Skenario yang diubah operator</label><select id="scenario"><option value="pvmbg">PVMBG outage: data terakhir + stale</option><option value="auth">Auth berhenti: hazard 503, health 200</option><option value="storage">PostgreSQL berhenti: hazard 503, health 200</option><option value="recovery">Recovery: login ulang bila Auth restart</option></select><p id="scenario-help" class="footnote"></p><button id="observe">Amati respons saat ini</button><p class="footnote muted">Konsol tidak menghentikan service atau mengubah sumber. Operator menjalankan skenario lewat checker Stage 5; respons hanya dinilai terhadap keadaan yang dipilih.</p></div>
     </div>
     <details class="actions"><summary>Langkah operator untuk bukti yang belum bisa diperoleh dari browser</summary>
-      <p>Checker berikut mengubah outage PVMBG dan stop/start PostgreSQL/Auth, kemudian memulihkannya. Jalankan terpisah dari demo lain:</p>
-      <pre>python scripts/check-member-b-resilience.py --env-file .env.member-b.local --project-name NAMA_PROJECT --exercise-outages --burst-connections 128 --output HASIL_DI_LUAR_REPO.json</pre>
+      <p><strong>Kontrak downstream:</strong> lihat <code>services/client-api/README.md</code> dan <code>services/auth/README.md</code> untuk konfigurasi, autentikasi, dan batas konkurensi.</p>
+      <p><strong>DS-04:</strong> gunakan <code>scripts/check-downstream.py --start --check-lifecycle</code> dengan env/project lokal. Opsi tersebut menjalankan stack dan restart Auth dan Client API; kendala broker Windows tetap perlu ditangani pada deployment.</p>
+      <p><strong>DS-13–DS-16:</strong> checker berikut mengubah outage PVMBG dan stop/start PostgreSQL/Auth, kemudian memulihkannya. Jalankan terpisah dari demo lain:</p>
+      <pre>python scripts/check-downstream-resilience.py --env-file .env.downstream.local --project-name NAMA_PROJECT --exercise-outages --burst-connections 128 --output HASIL_DI_LUAR_REPO.json</pre>
       <p>Salin correlation ID hasil konsol untuk mencocokkannya dengan log Auth, API Klien, dan Aggregator. Latensi pada konsol adalah waktu request HTTP melalui relay; latensi outbound dan redaksi log proses perlu bukti dari checker/log.</p>
       <p><strong>Boundary:</strong> konsol hanya memanggil Auth/API Klien. Tidak ada endpoint introspeksi internal, secret layanan, atau akses PostgreSQL pada halaman.</p>
     </details>
@@ -93,22 +95,22 @@ const summary = ["hazard_id","source","hazard_type","severity","area_name","occu
 const canonical = [...summary,"source_ref_id","latitude","longitude","attributes"];
 const sourceFields = ["available","last_ingested_at","stale","stale_since","stale_after_seconds"];
 const taskNames = [
-  ["contract","Kontrak endpoint: review manual"],
-  ["auth-health","Health Auth; konfigurasi dan lifecycle server"],
-  ["api-health","Health API Klien; correlation ID"],
-  ["docker-lifecycle","Docker build / health / restart: checker operator"],
-  ["hazard-query","Filter / envelope Aggregator; timeout / cancellation"],
-  ["legacy-route","Alias checkpoint: nonaktif atau Auth/proyeksi wajib"],
-  ["login","Login 3 identitas; salah/silang; Argon2id pada unit"],
-  ["expiry","JWT; TTL; expiry alami"],
-  ["refresh","Refresh / replay / token lama; atomisitas pada unit"],
-  ["introspection","Introspeksi; old-token check; Auth outage manual"],
-  ["credentials","Tanpa / rusak / expired / old token → 401"],
-  ["projection","7/11 field; Media raw → 403"],
-  ["errors","Galat JSON; timeout / transport / cancellation pada unit"],
-  ["freshness","5 field sumber; stale / empty / recovery"],
-  ["concurrency","Burst / 429; permit dan cancellation pada unit"],
-  ["trace","Correlation ID / cache; log proses: checker operator"]
+  ["DS-01","Kontrak / keputusan sementara: review manual"],
+  ["DS-02","Health Auth; konfigurasi dan lifecycle server"],
+  ["DS-03","Health API Klien; correlation ID"],
+  ["DS-04","Docker build / health / restart: checker operator"],
+  ["DS-05","Filter / envelope Aggregator; timeout / cancellation"],
+  ["DS-06","Alias checkpoint: nonaktif atau Auth/proyeksi wajib"],
+  ["DS-07","Login 3 identitas; salah/silang; Argon2id pada unit"],
+  ["DS-08","JWT; TTL; expiry alami"],
+  ["DS-09","Refresh / replay / token lama; atomisitas pada unit"],
+  ["DS-10","Introspeksi; old-token check; Auth outage manual"],
+  ["DS-11","Tanpa / rusak / expired / old token → 401"],
+  ["DS-12","7/11 field; Media raw → 403"],
+  ["DS-13","Galat JSON; timeout / transport / cancellation pada unit"],
+  ["DS-14","5 field sumber; stale / empty / recovery"],
+  ["DS-15","Burst / 429; permit dan cancellation pada unit"],
+  ["DS-16","Correlation ID / cache; log proses: checker operator"]
 ];
 let info = null, busy = false, expiryCancelled = false;
 const sessions = {}, results = [], taskEvidence = {};
@@ -204,7 +206,7 @@ async function login(role, store = true) {
   const p = response.body;
   let good = response.status===200 && p?.token_type==="Bearer" && typeof p.access_token==="string" && typeof p.refresh_token==="string";
   if (good) { try { good = claims(p).scope===role && p.expires_in===info.expected_ttl; } catch { good=false; } }
-  checked(`Login ${names[role]} / TTL ${info.expected_ttl}s`,response,good,["login","expiry"]);
+  checked(`Login ${names[role]} / TTL ${info.expected_ttl}s`,response,good,["DS-07","DS-08"]);
   if (!good) throw new Error(`Login ${names[role]} gagal; periksa password, konfigurasi, atau service`);
   if (store) { sessions[role]=p; renderSessions(); }
   return p;
@@ -213,7 +215,7 @@ async function checkHealth() {
   let all = true;
   for (const target of ["auth","client"]) {
     const r = await call(target,"/health");
-    const good = checked(`Health ${target}`,r,r.status===200 && r.body?.status==="ok",[target==="auth"?"auth-health":"api-health"]);
+    const good = checked(`Health ${target}`,r,r.status===200 && r.body?.status==="ok",[target==="auth"?"DS-02":"DS-03"]);
     all = good && all;
   }
   return all;
@@ -222,99 +224,99 @@ async function projection(role, source) {
   const r = await call("client",`/hazards?source=${source}&limit=5`,{access:session(role)});
   const body = r.body, keys = role==="media" ? summary : canonical;
   const good = r.status===200 && exactKeys(body,["data","count","sources"]) && Array.isArray(body.data) && body.data.length>0 && body.count===body.data.length && body.data.every(h=>exactKeys(h,keys)&&h.source===source) && exactKeys(body.sources,["BMKG","PVMBG"]) && Object.values(body.sources).every(s=>exactKeys(s,sourceFields));
-  checked(`${names[role]} / ${source}: ${keys.length} field + sumber aman`,r,good,["hazard-query","projection","freshness"],good ? "Data nyata tersedia; tidak ada field tambahan" : "Perlu data kedua sumber dan kontrak yang sesuai");
+  checked(`${names[role]} / ${source}: ${keys.length} field + sumber aman`,r,good,["DS-05","DS-12","DS-14"],good ? "Data nyata tersedia; tidak ada field tambahan" : "Perlu data kedua sumber dan kontrak yang sesuai");
 }
 async function rotate(role) {
   const old = sessions[role] || await login(role);
   const before = await call("client","/hazards?limit=1",{access:old.access_token});
-  if (!checked(`${names[role]}: token aktif sebelum refresh`,before,before.status===200,["introspection"])) throw new Error("Login ulang sebelum menguji rotasi token yang masih aktif");
+  if (!checked(`${names[role]}: token aktif sebelum refresh`,before,before.status===200,["DS-10"])) throw new Error("Login ulang sebelum menguji rotasi token yang masih aktif");
   const r = await call("auth","/refresh",{method:"POST",payload:{refresh_token:old.refresh_token}});
   const good = r.status===200 && r.body?.access_token && r.body?.refresh_token && r.body.access_token!==old.access_token && r.body.refresh_token!==old.refresh_token;
-  checked(`${names[role]}: refresh merotasi pasangan token`,r,good,["refresh"]);
+  checked(`${names[role]}: refresh merotasi pasangan token`,r,good,["DS-09"]);
   if (!good) throw new Error("Refresh gagal");
   sessions[role] = r.body; renderSessions();
   const previous = await call("client","/hazards?limit=1",{access:old.access_token});
-  checked(`${names[role]}: access lama ditolak`,previous,previous.status===401,["refresh","introspection","credentials"]);
+  checked(`${names[role]}: access lama ditolak`,previous,previous.status===401,["DS-09","DS-10","DS-11"]);
   const replay = await call("auth","/refresh",{method:"POST",payload:{refresh_token:old.refresh_token}});
-  checked(`${names[role]}: replay refresh ditolak`,replay,replay.status===401,["refresh"]);
+  checked(`${names[role]}: replay refresh ditolak`,replay,replay.status===401,["DS-09"]);
   const next = await call("client","/hazards?limit=1",{access:session(role)});
-  checked(`${names[role]}: access baru diterima`,next,next.status===200,["refresh","credentials"]);
+  checked(`${names[role]}: access baru diterima`,next,next.status===200,["DS-09","DS-11"]);
 }
 async function rawDenied() {
   for (const query of ["include_raw=true",...canonical.filter(f=>!summary.includes(f)).map(f=>"fields="+f)]) {
     const r = await call("client","/hazards?"+query,{access:session("media")});
-    checked("Media / "+query,r,r.status===403 && r.body?.error?.code==="forbidden",["projection","errors"]);
+    checked("Media / "+query,r,r.status===403 && r.body?.error?.code==="forbidden",["DS-12","DS-13"]);
   }
 }
 async function invalidQuery() {
   const r = await call("client","/hazards?limit=invalid",{access:session($("role").value)});
-  checked("Limit salah → JSON 400",r,r.status===400 && exactKeys(r.body,["error","correlation_id"]) && r.body.correlation_id===r.sent_correlation_id,["errors"]);
+  checked("Limit salah → JSON 400",r,r.status===400 && exactKeys(r.body,["error","correlation_id"]) && r.body.correlation_id===r.sent_correlation_id,["DS-13"]);
 }
 async function emptyFilter() {
   const r = await call("client","/hazards?since=9999-01-01T00:00:00Z",{access:session($("role").value)});
-  checked("Filter masa depan → data kosong 200",r,r.status===200 && r.body?.count===0 && Array.isArray(r.body.data) && r.body.data.length===0,["freshness"]);
+  checked("Filter masa depan → data kosong 200",r,r.status===200 && r.body?.count===0 && Array.isArray(r.body.data) && r.body.data.length===0,["DS-14"]);
 }
 async function legacy() {
   const r = await call("client","/internal/provisional/hazards");
-  checked("Alias checkpoint tanpa token",r,info.legacy_enabled ? r.status===401 : r.status===404,["legacy-route"],info.legacy_enabled ? "Alias aktif wajib Auth" : "Alias nonaktif sesuai konfigurasi konsol");
+  checked("Alias checkpoint tanpa token",r,info.legacy_enabled ? r.status===401 : r.status===404,["DS-06"],info.legacy_enabled ? "Alias aktif wajib Auth" : "Alias nonaktif sesuai konfigurasi konsol");
   if (info.legacy_enabled) {
     const raw = await call("client","/internal/provisional/hazards?include_raw=true",{access:session("media")});
-    checked("Alias aktif / raw Media ditolak",raw,raw.status===403,["legacy-route","projection"]);
+    checked("Alias aktif / raw Media ditolak",raw,raw.status===403,["DS-06","DS-12"]);
   }
 }
 async function quickSuite() {
   if (!await checkHealth()) throw new Error("Jalankan Auth dan API Klien sebelum rangkaian HTTP");
   for (const access of [null,"invalid-token"]) {
     const r = await call("client","/hazards",{access});
-    checked(access ? "Bearer rusak → 401" : "Bearer hilang → 401",r,r.status===401,["credentials"]);
+    checked(access ? "Bearer rusak → 401" : "Bearer hilang → 401",r,r.status===401,["DS-11"]);
   }
   for (const role of roles) {
     await login(role);
     for (const source of ["BMKG","PVMBG"]) await projection(role,source);
     const wrong = await tool("/tool/login",{...credentials(role),password:"wrong-"+crypto.randomUUID()});
-    checked(`${names[role]}: password salah ditolak`,wrong,wrong.status===401,["login"]);
+    checked(`${names[role]}: password salah ditolak`,wrong,wrong.status===401,["DS-07"]);
   }
   const cross = await tool("/tool/login",{...credentials("media"),client_id:$("id-field-team").value});
-  checked("Password Media / ID Tim Lapangan ditolak",cross,cross.status===401,["login"]);
+  checked("Password Media / ID Tim Lapangan ditolak",cross,cross.status===401,["DS-07"]);
   await rawDenied();
   const unknown = await call("client","/hazards?fields=unknown_field",{access:session("media")});
-  checked("Field tak dikenal → 400",unknown,unknown.status===400,["projection"]);
+  checked("Field tak dikenal → 400",unknown,unknown.status===400,["DS-12"]);
   $("role").value="internal-ops";
   await invalidQuery(); await emptyFilter(); await legacy();
   for (const role of roles) await rotate(role);
-  record("Trace HTTP / Cache-Control",results.filter(r=>r.mode==="http"&&r.correlation_id).every(r=>r.verdict==="PASS") ? "PASS" : "CHECK",null,"Header diperiksa pada setiap respons; log outbound tetap diperiksa operator",["trace"]);
+  record("Trace HTTP / Cache-Control",results.filter(r=>r.mode==="http"&&r.correlation_id).every(r=>r.verdict==="PASS") ? "PASS" : "CHECK",null,"Header diperiksa pada setiap respons; log outbound tetap diperiksa operator",["DS-16"]);
 }
 async function naturalExpiry() {
   const pair = await login("field-team",false), c = claims(pair);
   const remaining = c.exp*1000 - Date.now() + 400;
   if (remaining<=0 || remaining>300000) throw new Error("Pilih TTL paling lama 300 detik untuk pemeriksaan expiry");
   const before = await call("client","/hazards?limit=1",{access:pair.access_token});
-  if (!checked("Tim Lapangan: aktif sebelum expiry",before,before.status===200,["expiry"])) return;
+  if (!checked("Tim Lapangan: aktif sebelum expiry",before,before.status===200,["DS-08"])) return;
   expiryCancelled=false; $("cancel-expiry").hidden=false; $("cancel-expiry").disabled=false;
   while (Date.now()<c.exp*1000+400) {
-    if (expiryCancelled) { record("Expiry alami","CHECK",null,"Penantian dibatalkan; belum ada bukti expiry",["expiry"]); return; }
+    if (expiryCancelled) { record("Expiry alami","CHECK",null,"Penantian dibatalkan; belum ada bukti expiry",["DS-08"]); return; }
     activity(`Menunggu expiry alami: ${Math.max(0,Math.ceil(c.exp-Date.now()/1000))} detik. Jam dan TTL tidak diubah.`);
     await new Promise(resolve=>setTimeout(resolve,250));
   }
   const expired = await call("client","/hazards?limit=1",{access:pair.access_token});
-  checked("TTL alami habis → 401",expired,expired.status===401,["expiry","credentials"]);
+  checked("TTL alami habis → 401",expired,expired.status===401,["DS-08","DS-11"]);
   const refreshed = await call("auth","/refresh",{method:"POST",payload:{refresh_token:pair.refresh_token}});
-  if (!checked("Refresh setelah expiry tanpa login ulang",refreshed,refreshed.status===200,["refresh"])) return;
+  if (!checked("Refresh setelah expiry tanpa login ulang",refreshed,refreshed.status===200,["DS-09"])) return;
   sessions["field-team"]=refreshed.body; renderSessions();
   const next = await call("client","/hazards?limit=1",{access:session("field-team")});
-  checked("Access hasil refresh setelah expiry → 200",next,next.status===200,["refresh","credentials"]);
+  checked("Access hasil refresh setelah expiry → 200",next,next.status===200,["DS-09","DS-11"]);
 }
 async function unitTests() {
   activity("Menjalankan tes Go + race pada Auth dan API Klien; tunggu hingga selesai…");
   const result = await tool("/tool/unit-tests",{});
   $("unit-output").hidden=false; $("unit-output").textContent=result.command+"\n\n"+result.output;
-  record("Go unit + race (Auth/API Klien)",result.passed ? "PASS" : "FAIL",null,"Tes komponen; bukan bukti seluruh stack Docker",taskNames.map(x=>x[0]).filter(id=>!["contract","docker-lifecycle"].includes(id)),"unit");
+  record("Go unit + race (Auth/API Klien)",result.passed ? "PASS" : "FAIL",null,"Tes komponen; bukan bukti seluruh stack Docker",taskNames.map(x=>x[0]).filter(id=>!["DS-01","DS-04"].includes(id)),"unit");
 }
 async function runBurst() {
   const result = await tool("/tool/burst",{count:Number($("burst-count").value),access:session("internal-ops")});
   showResponse({body:result});
   const verdict=result.unexpected_status_observed ? "FAIL" : result.controlled_429_observed ? "PASS" : "CHECK";
-  record("Burst konkurensi",verdict,null,`${result.connections} request · ${JSON.stringify(result.status_counts)} · p95 ${result.p95_ms}ms · ${result.correlation_prefix}`,["concurrency"]);
+  record("Burst konkurensi",verdict,null,`${result.connections} request · ${JSON.stringify(result.status_counts)} · p95 ${result.p95_ms}ms · ${result.correlation_prefix}`,["DS-15"]);
 }
 const scenarioHelp = {
   pvmbg:"Operator mengaktifkan outage PVMBG. Pilih token aktif; harapan: 200 dengan PVMBG available=false, stale=true, dan data tersimpan. BMKG tetap dapat dibaca.",
@@ -330,12 +332,12 @@ async function observe() {
   else if (scenario==="auth") good=r.status===503 && r.body?.error?.code==="auth_unavailable";
   else if (scenario==="storage") good=r.status===503 && r.body?.error?.code==="aggregator_unavailable";
   else good=r.status===200 && r.body?.sources && Object.values(r.body.sources).every(s=>s.available===true && s.stale===false);
-  checked("Observasi operator / "+scenario,r,good,scenario==="auth"?["introspection"]:scenario==="storage"?["errors"]:["freshness"],"Observasi tunggal; belum membuktikan transisi outage/recovery");
+  checked("Observasi operator / "+scenario,r,good,scenario==="auth"?["DS-10"]:scenario==="storage"?["DS-13"]:["DS-14"],"Observasi tunggal; belum membuktikan transisi outage/recovery");
   if (scenario==="pvmbg") {
     const bmkg=await call("client","/hazards?source=BMKG&limit=1",{access:session(active)});
-    checked("BMKG tetap terbaca saat PVMBG outage",bmkg,bmkg.status===200 && bmkg.body?.data?.length>0 && bmkg.body.sources?.BMKG?.available===true,["freshness"]);
+    checked("BMKG tetap terbaca saat PVMBG outage",bmkg,bmkg.status===200 && bmkg.body?.data?.length>0 && bmkg.body.sources?.BMKG?.available===true,["DS-14"]);
   }
-  const health=await call("client","/health"); checked("Health API Klien saat observasi",health,health.status===200,["api-health"]);
+  const health=await call("client","/health"); checked("Health API Klien saat observasi",health,health.status===200,["DS-03"]);
 }
 async function exclusive(fn) {
   if (busy) return;
@@ -347,17 +349,17 @@ async function exclusive(fn) {
 }
 function bind(id, fn) { $(id).addEventListener("click",()=>exclusive(fn)); }
 function exportResults() {
-  const data={tool:"Auth and Client API test console",exported_at:new Date().toISOString(),targets:{auth:info.auth_url,client:info.client_url},results,task_evidence:taskEvidence,
-    sustained_load_checked:false,full_stack_fanout_checked:false,notes:["Tokens, passwords, and hazard payloads omitted","Unit evidence differs from runtime evidence","Verify endpoint contracts, Docker lifecycle, and process logs separately"]};
+  const data={tool:"downstream API Stage 1–5 HTML console",exported_at:new Date().toISOString(),targets:{auth:info.auth_url,client:info.client_url},results,task_evidence:taskEvidence,
+    sustained_p2_load_checked:false,full_stack_fanout_checked:false,notes:["Tokens, passwords, and hazard payloads omitted","Unit evidence differs from runtime evidence","DS-01/DS-04 and process logs require operator verification"]};
   const json=JSON.stringify(data,null,2);
   $("export-fallback").hidden=false; $("export-fallback").open=true; $("export-json").value=json;
   const url=URL.createObjectURL(new Blob([json],{type:"application/json"}));
-  const a=document.createElement("a"); a.href=url; a.download="api-console-evidence.json"; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+  const a=document.createElement("a"); a.href=url; a.download="downstream-console-evidence.json"; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
   activity("JSON hasil siap. Jika unduhan tidak muncul, salin dari bagian JSON hasil untuk disalin.");
 }
 async function init() {
   try { const response=await fetch("/tool/info",{cache:"no-store"}); if (!response.ok) throw new Error(); info=await response.json(); }
-  catch { activity("Jalankan python scripts/serve-member-b-ui.py lalu buka URL konsol; file HTML tidak dapat dipakai lewat file://."); for (const b of document.querySelectorAll("button")) b.disabled=true; return; }
+  catch { activity("Jalankan python scripts/serve-downstream-ui.py lalu buka URL konsol; file HTML tidak dapat dipakai lewat file://."); for (const b of document.querySelectorAll("button")) b.disabled=true; return; }
   $("auth-url").textContent=info.auth_url; $("client-url").textContent=info.client_url;
   for (const role of roles) {
     const card=document.createElement("div"); card.className="card";
@@ -366,7 +368,7 @@ async function init() {
     $("pw-"+role).placeholder=info.roles[role].local_password_available ? "Kosong = gunakan env lokal" : "Masukkan password";
     bind("login-"+role,()=>login(role));
   }
-  taskEvidence["contract"]={http:"Review manual",unit:"—"}; taskEvidence["docker-lifecycle"]={http:"Checker Docker",unit:"—"}; renderTasks();
+  taskEvidence["DS-01"]={http:"Review manual",unit:"—"}; taskEvidence["DS-04"]={http:"Checker Docker",unit:"—"}; renderTasks();
   bind("health",checkHealth); bind("unit",unitTests); bind("quick",quickSuite);
   bind("rotate",()=>{ const role=$("role").value; if (!roles.includes(role)) throw new Error("Pilih salah satu identitas untuk refresh"); return rotate(role); });
   bind("expiry",naturalExpiry); $("cancel-expiry").addEventListener("click",()=>{expiryCancelled=true;});

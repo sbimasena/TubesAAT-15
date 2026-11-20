@@ -1,4 +1,4 @@
-# Bukti P1 Member A
+# Bukti P1 Aggregator integration
 
 Bukti berasal dari pengujian nyata pada workspace lokal, 9 Oktober 2026 pukul 19.41.19–19.41.39 WIB (12.41.19–12.41.39 UTC). Commit dasar aplikasi: `2d6280fcd8732a3d8f45992a9e9c32017b3a82ac`. Skrip dokumentasi baru masih merupakan perubahan workspace saat pengujian, sebagaimana metadata `tested_source: WORKSPACE` pada JSON.
 
@@ -23,17 +23,17 @@ Jalankan dari root repo dengan Freeze yang telah terpasang:
 freeze --execute 'python3 -B scripts/show-p1-evidence.py bmkg' \
   --config base --window --font.size 20 --margin 0 --padding 24 \
   --border.radius 0 --shadow.blur 0 --shadow.x 0 --shadow.y 0 \
-  --output docs/evidence/member-a/p1/p1-01-bmkg-tsunami.png
+  --output docs/evidence/p1/p1-01-bmkg-tsunami.png
 
 freeze --execute 'python3 -B scripts/show-p1-evidence.py pvmbg' \
   --config base --window --font.size 20 --margin 0 --padding 24 \
   --border.radius 0 --shadow.blur 0 --shadow.x 0 --shadow.y 0 \
-  --output docs/evidence/member-a/p1/p1-02-pvmbg-schema-evolution.png
+  --output docs/evidence/p1/p1-02-pvmbg-schema-evolution.png
 
 freeze --execute 'python3 -B scripts/show-p1-evidence.py runtime' \
   --config base --window --font.size 20 --margin 0 --padding 24 \
   --border.radius 0 --shadow.blur 0 --shadow.x 0 --shadow.y 0 \
-  --output docs/evidence/member-a/p1/p1-03-runtime-verification.png
+  --output docs/evidence/p1/p1-03-runtime-verification.png
 ```
 
 `show-p1-evidence.py` juga dapat dijalankan langsung di terminal. Gunakan `--input` untuk membaca hasil run lain. Gambar runtime menampilkan 12 karakter awal ID container; identitas lengkap tersedia pada JSON.
@@ -66,4 +66,4 @@ cd services/aggregator
 go test ./internal/ingest ./internal/httpapi
 ```
 
-Kedua paket lulus. Rujukan paragraf, tabel, diagram ASCII, dan caption tersedia pada `docs/report/member-a-additions.md`.
+Kedua paket lulus. Rujukan paragraf, tabel, diagram ASCII, dan caption tersedia pada `docs/report/ingestion-additions.md`.

@@ -32,7 +32,7 @@ def main():
     summary = {"hazard_id", "source", "hazard_type", "severity", "area_name", "occurred_at", "ingested_at"}
     canonical = summary | {"source_ref_id", "latitude", "longitude", "attributes"}
     source_fields = {"available", "last_ingested_at", "stale", "stale_since", "stale_after_seconds"}
-    prefix = "member-b-auth-" + uuid.uuid4().hex
+    prefix = "downstream-auth-" + uuid.uuid4().hex
     checks = []
 
     def call(origin, path, payload=None, access=None):
@@ -127,7 +127,7 @@ def main():
         elapsed = round(time.monotonic() - started, 3)
         checks.append("natural Field Team expiry -> refresh without login -> old token rejected")
 
-    evidence = {"stage": "Member B Stage 4", "status": "PASS",
+    evidence = {"stage": "downstream API Stage 4", "status": "PASS",
                 "checked_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "checks": checks, "natural_expiry_checked": args.natural_expiry,
                 "expiry_wait_seconds": elapsed, "correlation_prefix": prefix}

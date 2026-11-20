@@ -6,7 +6,7 @@ PVMBG is an independent Go service that seeds 20 historical volcanic reports and
 
 - `GET /health` is public and reports the active schema version, response delay in milliseconds, and whether outage simulation is active. These values let infrastructure checks restore the original runtime settings.
 - `GET /volcanic-reports?since=<RFC3339>` requires `Authorization: Bearer <PVMBG_TOKEN>`.
-- `POST /admin/schema-version` accepts requests without a bearer token so Tester Agent can change the mock schema. Send either `{"version":N}` or `{"mode":"<name>"}`. The mock preserves prior reports and immediately appends a new report using the selected schema.
+- `POST /admin/schema-version` is **tokenless for P3** so Tester Agent can call it in the test environment. Do not expose this admin route publicly. It accepts `{"version":N}` or `{"mode":"<name>"}` (set exactly one of the two). Reports already emitted keep their original fields; a new report with the new shape is appended immediately.
 
 ### Mode skema (P3)
 

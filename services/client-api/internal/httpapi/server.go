@@ -73,6 +73,10 @@ func NewHandler(client hazardLister, validator accessValidator, enableProvisiona
 			"sources": projectSources(envelope.Sources)})
 	}))
 	mux.HandleFunc("GET /hazards", serveHazards)
+	audit, _ := client.(unprocessedReader)
+	mux.HandleFunc("GET /internal/audit/unprocessed", limitRequests(permits, authenticate(validator, serveUnprocessed(audit, rolePools))))
+	replay, _ := client.(pvmbgReplayer)
+	mux.HandleFunc("POST /internal/audit/unprocessed/replay", limitRequests(permits, authenticate(validator, serveReplay(replay, rolePools))))
 	mux.Handle("POST /field-reports", serveFieldReports(permits, validator, reports))
 	// NOT FINAL: alias retirement awaits a checkpoint migration decision.
 	// Opt-in requests use the same Auth, projection, and admission limit as /hazards.

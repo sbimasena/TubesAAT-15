@@ -185,7 +185,7 @@ func main() {
 	api.EnableReadCache()
 	api.EnableAudit(repository, auditToken)
 	api.EnableAnalytics(repository)
-	// GET /internal/v1/status: A adds "leader"/"satellite", B adds "deadletter" here.
+	// Register component status providers before mounting the handler.
 	api.AddStatus("leader", func(context.Context) any {
 		epoch, active := election.Current()
 		return map[string]any{"epoch": epoch, "is_me": active}

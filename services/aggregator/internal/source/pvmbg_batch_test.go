@@ -73,8 +73,45 @@ func TestFetchVolcanicBatchCapsResponseAndPreservesRequest(t *testing.T) {
 	}))
 	defer server.Close()
 	got, err := NewPVMBGClient(server.URL, "test-token", nil).FetchVolcanicBatch(context.Background(), since, "test-poll")
-	if err != nil || !got.Truncated || !errors.Is(got.Invalid, deadletter.ErrMessageTooLarge) || len(got.Raw) != pvmbgResponseLimit {
+	if err != nil || got.Truncated || !errors.Is(got.Invalid, deadletter.ErrMessageTooLarge) || len(got.Raw) != 11<<20 ||
+		string(got.Raw) != strings.Repeat("x", 11<<20) {
 		t.Fatal(fmt.Errorf("unexpected bounded read: transport=%v payload=%v truncated=%v bytes=%d", err, got.Invalid, got.Truncated, len(got.Raw)))
+	}
+}
+
+func TestPVMBGCaptureCeilingDoesNotReturnAPrefix(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		chunk := strings.Repeat("x", 1<<20)
+		for range (pvmbgCaptureLimit >> 20) + 1 {
+			if _, err := io.WriteString(w, chunk); err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+	got, err := NewPVMBGClient(srv.URL, "token", nil).FetchVolcanicBatch(context.Background(), time.Time{}, "test")
+	if err != nil || !got.Truncated || !errors.Is(got.Invalid, deadletter.ErrMessageTooLarge) || len(got.Raw) != 0 {
+		t.Fatalf("expected an explicit, unarchived overflow: err=%v invalid=%v truncated=%v bytes=%d", err, got.Invalid, got.Truncated, len(got.Raw))
+	}
+}
+
+func TestDecodePVMBGReplayOnlyRepairsKnownChanges(t *testing.T) {
+	for _, raw := range []string{
+		strings.Replace(validPVMBGRecord, `"alert_level"`, `"status"`, 1),
+		strings.Replace(validPVMBGRecord, `"2026-11-17T03:51:05Z"`, `1794887465`, 1),
+	} {
+		original := parsePVMBGBatch([]byte("[" + raw + "]"))
+		if original.Records[0].Invalid == nil {
+			t.Fatal("live decoder silently accepted the schema change")
+		}
+		got := DecodePVMBGReplay([]byte(raw))
+		if got.Invalid != nil || got.Report.AlertLevel == "" || got.Report.ReportedAt.IsZero() {
+			t.Fatalf("known migration did not recover: %+v", got)
+		}
+	}
+	missing := strings.Replace(validPVMBGRecord, `"alert_level":"WASPADA",`, "", 1)
+	if got := DecodePVMBGReplay([]byte(missing)); !errors.Is(got.Invalid, deadletter.ErrSchemaIncompatible) {
+		t.Fatal("replay cannot invent missing information")
 	}
 }
 

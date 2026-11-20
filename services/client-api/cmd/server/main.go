@@ -41,6 +41,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	aggregatorClient.SetAuditToken(os.Getenv("AUDIT_TOKEN"))
 	authClient, err := authclient.New(cfg.AuthBaseURL, os.Getenv("AUTH_INTERNAL_SECRET"), cfg.AuthRequestTimeout, cfg.AuthIntrospectionCacheTTL, logger)
 	if err != nil {
 		logger.Error("invalid Auth configuration", "service", "client-api", "error", err)

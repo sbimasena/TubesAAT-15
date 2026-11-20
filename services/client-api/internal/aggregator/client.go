@@ -38,10 +38,11 @@ func (e *RequestError) Error() string { return fmt.Sprintf("aggregator %s: %v", 
 func (e *RequestError) Unwrap() error { return e.Err }
 
 type Client struct {
-	requests atomic.Uint64
-	base     *url.URL
-	http     *http.Client
-	logger   *slog.Logger
+	requests   atomic.Uint64
+	base       *url.URL
+	http       *http.Client
+	logger     *slog.Logger
+	auditToken string
 }
 
 func NewClient(baseURL string, timeout time.Duration, logger *slog.Logger) (*Client, error) {

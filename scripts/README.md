@@ -19,7 +19,7 @@ python3 scripts/check-deployment.py
 
 Memeriksa sembilan layanan healthy, port Aggregator/DB tertutup, ownership jaringan/secret, query dua sumber melalui tiga identitas, serta correlation ID/latensi pada log Client API, Auth, dan Aggregator. `--start` dapat membangun/menjalankan stack lebih dahulu. Jika sebelumnya menggunakan overlay operator manual, jalankan Compose utama kembali untuk menutup port sebelum checker deployment.
 
-## Pemeriksaan ingestion dan freshness
+## Pemeriksaan ingestion dan freshness Aggregator integration
 
 ```sh
 python3 scripts/check-ingestion.py
@@ -27,18 +27,18 @@ python3 scripts/check-ingestion.py
 
 Memeriksa mapping PVMBG v1/v2, confidence level, snapshot kanonis di dua jurnal consumer, freshness dan data tersimpan saat PVMBG outage, independensi BMKG, lalu recovery. Container utama tidak boleh restart. Skrip menambah laporan/snapshot/outbox/jurnal, lalu mengembalikan PVMBG ke v1/outage=false. Data yang ditambahkan tetap tersimpan.
 
-## Pemisahan kredensial dan autentikasi
+## Silang kredensial upstream (P3)
 
 ```sh
 python3 scripts/check-cross-credentials.py
-python3 scripts/check-member-b-auth.py --natural-expiry
+python3 scripts/check-downstream-auth.py --natural-expiry
 ```
 
 Checker upstream memeriksa kedua endpoint BMKG dan laporan PVMBG. Kredensial sendiri harus menghasilkan 200/array JSON; kredensial sumber lain pada header native, header trust domain asing, dan request tanpa kredensial harus menghasilkan 401/403. Kedua kredensial harus berbeda; redirect tidak diikuti. Bukti hanya berisi status/correlation ID, tanpa kredensial/payload. Tidak mengubah layanan.
 
 Checker Auth memeriksa tiga identitas, tujuh/sebelas field, metadata publik yang aman, penolakan field mentah, rotasi/replay, dan token lama. `--natural-expiry` menunggu TTL access nyata (maksimal 300 detik), lalu refresh tanpa login ulang. Tanpa opsi tersebut, pemeriksaan expiry alami dilewati. Kredensial/port dibaca dari Compose, sama seperti checker lain. [Detail kontrak Auth](../services/client-api/README.md#pemeriksaan-autentikasi).
 
-## Storage dan lifecycle mandiri
+## Storage dan lifecycle mandiri (P4)
 
 ```sh
 python3 scripts/check-p4.py
@@ -46,7 +46,7 @@ python3 scripts/check-p4.py
 
 Stop/build/start PVMBG saja; ubah schema v1/v2; cocokkan JSONB dengan pembacaan melalui tiga scope; restart Aggregator/PostgreSQL dengan volume tetap; probe storage dari tiga peran jaringan; stop/start Auth/API secara mandiri; dan cocokkan trace HTTP. Schema PVMBG awal dipulihkan. Restart Auth menghapus sesi lama; checker login ulang. Probe jaringan memakai `tests/compose-probes.yml` secara otomatis dan tidak membagikan password DB ke peran client/consumer.
 
-## Fanout, downtime, dan idempotensi
+## Fanout, downtime, dan idempotensi (P5)
 
 ```sh
 python3 scripts/check-stage-3.py
@@ -70,11 +70,11 @@ Probe queue memakai requeue, tanpa ack permanen/purge. Sesudah selesai atau gaga
 ## Resiliensi HTTP tambahan
 
 ```sh
-python3 scripts/check-member-b-resilience.py
-python3 scripts/check-member-b-resilience.py --exercise-outages --burst-connections 64
+python3 scripts/check-downstream-resilience.py
+python3 scripts/check-downstream-resilience.py --exercise-outages --burst-connections 64
 ```
 
-Pemeriksaan dasar mencakup proyeksi aman, filter kosong 200, galat JSON, refresh, trace dan redaksi log. `--exercise-outages` mengubah outage PVMBG dan stop/start PostgreSQL/Auth, lalu memulihkan flag/layanan. `--burst-connections` menerima 2–256 koneksi untuk burst singkat, mencatat 200/429; lihat pengujian beban Client API di bawah. [Detail resiliensi](../services/client-api/README.md#pemeriksaan-resiliensi).
+Pemeriksaan dasar mencakup proyeksi aman, filter kosong 200, galat JSON, refresh, trace dan redaksi log. `--exercise-outages` mengubah outage PVMBG dan stop/start PostgreSQL/Auth, lalu memulihkan flag/layanan. `--burst-connections` menerima 2–256 koneksi untuk burst singkat, mencatat 200/429; ini tidak menggantikan beban P2. [Detail resiliensi](../services/client-api/README.md#pemeriksaan-resiliensi).
 
 ## Beban Client API terautentikasi
 
@@ -105,7 +105,7 @@ python3 scripts/check-p1-report.py
 python3 scripts/show-p1-evidence.py runtime --input artifacts/checks/p1-report/report-check.json
 ```
 
-Checker laporan menjalankan ingestion dan mencocokkan payload BMKG/warning serta PVMBG v1/v2 dengan data kanonis. Ia memeriksa migrasi, container, trace dan consumer; menambah data/jurnal lalu memulihkan PVMBG ke v1/outage=false. `show-p1-evidence.py` membaca hasil tersimpan; bagian lain adalah `bmkg` dan `pvmbg`. [Bukti P1](../docs/evidence/member-a/p1/README.md) menjelaskan rendering terminal dengan Freeze.
+Checker laporan menjalankan ingestion dan mencocokkan payload BMKG/warning serta PVMBG v1/v2 dengan data kanonis. Ia memeriksa migrasi, container, trace dan consumer; menambah data/jurnal lalu memulihkan PVMBG ke v1/outage=false. `show-p1-evidence.py` membaca hasil tersimpan; bagian lain adalah `bmkg` dan `pvmbg`. [Bukti P1](../docs/evidence/p1/README.md) menjelaskan rendering terminal dengan Freeze.
 
 `render-report-diagrams.py` hanya membuat SVG/PNG arsitektur. Dependensi, lokasi dan caption ada di [panduan diagram](../docs/diagrams/README.md). Rendering tidak menjalankan ulang pengujian.
 

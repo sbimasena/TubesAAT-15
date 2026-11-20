@@ -2,11 +2,7 @@
 // processed by the Aggregator (P3): the classification rules, the message
 // shape, and the storage interface.
 //
-// Status: CONTRACT ONLY (decision 16 Nov 2026). The durable implementation
-// waits for migration 004 (table unprocessed_messages, D-DLQ: B + C) so the
-// router can partition it with the same RF=2 guarantee as hazard_events.
-// Nothing in this package may persist to memory-only storage that pretends to
-// be durable; see context-m2.md rule 10.
+// The replicated store persists failed payloads in unprocessed_messages.
 package deadletter
 
 import (

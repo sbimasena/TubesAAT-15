@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -25,6 +26,8 @@ type Config struct {
 	Timeout    time.Duration
 	InstanceID string
 	Logger     *slog.Logger
+	// WrapTransport may add tracing without sharing a global HTTP pool.
+	WrapTransport func(http.RoundTripper) http.RoundTripper
 	// Verify must check the active leader term before each upstream request.
 	Verify func(context.Context) error
 }
@@ -32,6 +35,7 @@ type Config struct {
 type Client struct {
 	config Config
 	http   *http.Client
+	pool   *http.Transport
 }
 
 // New uses a separate connection pool and never follows redirects with tokens.
@@ -51,18 +55,27 @@ func New(config Config) (*Client, error) {
 		return nil, fmt.Errorf("pantai: timeout must be positive")
 	}
 	config.BaseURL = strings.TrimRight(config.BaseURL, "/")
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Telemetry may replace DefaultTransport with a wrapper. Build our own
+	// pool instead of type-asserting or sharing that global transport.
+	transport := &http.Transport{Proxy: http.ProxyFromEnvironment,
+		DialContext:       (&net.Dialer{Timeout: config.Timeout, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2: true, IdleConnTimeout: 90 * time.Second,
+		TLSHandshakeTimeout: config.Timeout, ExpectContinueTimeout: time.Second}
 	transport.MaxIdleConns = 2
 	transport.MaxIdleConnsPerHost = 2
 	transport.MaxConnsPerHost = 2
 	transport.ResponseHeaderTimeout = config.Timeout
-	return &Client{config: config, http: &http.Client{
-		Transport: transport, Timeout: config.Timeout,
+	var decorated http.RoundTripper = transport
+	if config.WrapTransport != nil {
+		decorated = config.WrapTransport(transport)
+	}
+	return &Client{config: config, pool: transport, http: &http.Client{
+		Transport: decorated, Timeout: config.Timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}, nil
 }
 
-func (c *Client) Close() { c.http.CloseIdleConnections() }
+func (c *Client) Close() { c.pool.CloseIdleConnections() }
 
 // HTTPError carries status and Retry-After without retaining an upstream body.
 type HTTPError struct {

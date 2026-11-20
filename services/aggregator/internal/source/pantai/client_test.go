@@ -29,6 +29,30 @@ func newTestClient(t *testing.T, server *httptest.Server, configure func(*Config
 	return client
 }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestHTTPTransportDecorationKeepsPoolIndependent(t *testing.T) {
+	previous := http.DefaultTransport
+	var globalCalls, decoratedCalls atomic.Int32
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) { globalCalls.Add(1); return previous.RoundTrip(r) })
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(envelope(validObservation)) }))
+	defer server.Close()
+	client := newTestClient(t, server, func(c *Config) {
+		c.WrapTransport = func(pool http.RoundTripper) http.RoundTripper {
+			return roundTripFunc(func(r *http.Request) (*http.Response, error) { decoratedCalls.Add(1); return pool.RoundTrip(r) })
+		}
+	})
+	if _, err := client.Observations(context.Background(), "", 10, "decorated"); err != nil {
+		t.Fatal(err)
+	}
+	if globalCalls.Load() != 0 || decoratedCalls.Load() != 1 {
+		t.Fatal("source used the global pool or skipped the tracing wrapper")
+	}
+}
+
 func TestHTTPContractAndSecretSafeLogs(t *testing.T) {
 	var logs bytes.Buffer
 	var verified atomic.Int32

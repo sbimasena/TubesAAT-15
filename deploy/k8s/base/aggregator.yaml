@@ -39,6 +39,8 @@ spec:
               valueFrom: {secretKeyRef: {name: source-credentials, key: BMKG_API_KEY}}
             - name: PVMBG_TOKEN
               valueFrom: {secretKeyRef: {name: source-credentials, key: PVMBG_TOKEN}}
+            - name: PANTAI_AUTH_TOKEN
+              valueFrom: {secretKeyRef: {name: pantai-token, key: token}}
             - name: SATELLITE_TOKEN
               valueFrom: {secretKeyRef: {name: satellite-token, key: token, optional: true}}
             - name: AUDIT_TOKEN

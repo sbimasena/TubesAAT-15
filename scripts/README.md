@@ -180,3 +180,17 @@ python3 -B scripts/m2/pantai-resilience.py
 Memerlukan Docker dan Python 3. Container Go 1.27.1 memakai source read-only dan `--network none`; server HTTP fixture berjalan di dalam container. Tes memakai race detector, clock terkontrol untuk backoff/breaker, dan HTTP timeout nyata. Skenario kontrak image resmi tidak dijalankan oleh command ini; gunakan sampling dan `TEST_PANTAI_URL` untuk itu.
 
 Hasil tersimpan di `artifacts/m2/runs/<waktu>-pantai-resilience-<acak>/`: `tests.jsonl` berisi event Go; `pantai-resilience.json` mencatat scope, commit dasar + `tested_source=WORKSPACE`, command, daftar tes PASS/skip, exit code dan cleanup. Tes gate wajib yang tidak PASS atau tes terpilih yang skip membuat hasil FAIL. `--output-dir <direktori-baru>` mengubah lokasi hasil. `p5_acceptance=false`: ini bukti mekanisme lokal, bukan integrasi runtime, validasi freshness profil ujian, benchmark cluster atau game day.
+
+## Integrasi ingestion Pantai
+
+```sh
+make p5-ingestion
+# Alternatif tanpa make/bash:
+python3 -B scripts/m2/pantai-ingestion.py
+```
+
+Checker memakai helper fixture P3, lalu menambah image resmi Sensor Pantai pada project Compose baru. Kredensial/port/volume sementara dan bootstrap broker LF tidak mengubah stack yang sudah ada. Uji live mencakup mapping sampai API terproteksi, proyeksi Media, restart Aggregator tanpa duplikasi ID sampel, pause/unpause sensor, data tersimpan yang tetap dapat dibaca dengan metadata stale, serta pemulihan otomatis. Sampel latensi beberapa read disimpan apa adanya; ini bukan sustained load atau bukti p95 M1.
+
+Tes race memakai PostgreSQL nyata: kegagalan checkpoint setelah efek commit, replay idempoten, retensi byte asli, barrier RF2 DLQ dan penolakan epoch lama. Uji kontrak mandiri `TestOfficialSensorContract` dikecualikan dari suite Go di jaringan storage; image resmi diuji melalui stack live. Tes lain yang skip atau gate wajib yang tidak PASS menyebabkan FAIL.
+
+Hasil ada di `artifacts/m2/runs/<waktu>-coastal-<acak>/pantai-ingestion.json`, beserta `build.log`, `*-tests.jsonl`, dan log cleanup/diagnostik. `physical_cluster_acceptance=false` dan `p5_acceptance=false`: jalur notifikasi kritis, zero loss, p95 ≤5 detik, failover node fisik, dan game day memerlukan bukti terpisah. Base Compose tetap tidak menjalankan sensor kecuali URL dikonfigurasi; checker menambahkan sensor lewat override privatnya.

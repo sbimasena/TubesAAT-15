@@ -106,6 +106,10 @@ p5-sample: ## Sample the official Sensor Pantai over HTTP on an isolated practic
 p5-resilience: ## Run isolated Sensor Pantai adapter and resilience fault tests with the race detector
 	@$(SH) scripts/m2/pantai-resilience.sh
 
+.PHONY: p5-ingestion
+p5-ingestion: ## Verify coastal ingestion, restart and sensor outage on an isolated Compose stack
+	@$(SH) scripts/m2/pantai-ingestion.sh
+
 .PHONY: p4-sample
 p4-sample: ## Capture 60 seconds of live SSE using SATELLITE_TOKEN from the environment or .env
 	bash -c 'source scripts/k8s/lib.sh; if [[ -z "$${SATELLITE_TOKEN:-}" ]]; then load_env; fi; exec python3 scripts/m2/satellite-sample.py'

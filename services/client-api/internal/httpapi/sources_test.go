@@ -8,6 +8,29 @@ import (
 	"testing"
 )
 
+func TestCoastalCachedReadKeepsStaleMetadataWithoutLeakingDiagnostics(t *testing.T) {
+	var wire map[string]any
+	if err := json.Unmarshal([]byte(testHazardResponse), &wire); err != nil {
+		t.Fatal(err)
+	}
+	wire["sources"].(map[string]any)["SENSOR_PANTAI"] = map[string]any{"available": false, "stale": true, "stale_after_seconds": 10, "last_error": "private sensor failure", "ingestion_error": "private payload"}
+	raw, _ := json.Marshal(wire)
+	lister := listerFunc(func(context.Context, url.Values, string) ([]byte, error) { return raw, nil })
+	handler := NewHandler(lister, &testValidator{scope: "media"}, false, 64, DefaultPools(), nil, nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, hazardRequest("/hazards?source=SENSOR_PANTAI"))
+	var response struct {
+		Sources map[string]map[string]any `json:"sources"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &response) != nil {
+		t.Fatal("cached read failed", w.Code)
+	}
+	status := response.Sources["SENSOR_PANTAI"]
+	if len(status) != 5 || status["stale"] != true || status["available"] != false || status["last_error"] != nil || status["ingestion_error"] != nil {
+		t.Fatalf("coastal metadata leaked or changed: %+v", status)
+	}
+}
+
 func TestStoredReadsRemainSuccessfulWithExplicitSourceMetadata(t *testing.T) {
 	for _, scope := range []string{"media", "field-team", "internal-ops"} {
 		for _, scenario := range []string{"fresh", "cached during outage", "empty filter", "metadata reset", "no observed ingestion"} {

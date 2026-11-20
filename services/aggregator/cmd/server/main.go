@@ -18,6 +18,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/coastal"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/domain"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/httpapi"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/ingest"
@@ -104,6 +105,28 @@ func main() {
 	bmkg := source.NewBMKGClient(bmkgBaseURL, bmkgKey, logger)
 	pvmbg := source.NewPVMBGClient(pvmbgBaseURL, pvmbgToken, logger)
 	manager := ingest.NewManager(bmkg, pvmbg, replicatedIngestStore{repository}, interval, logger)
+	coastalConfig, err := coastalConfigFromEnv()
+	if err != nil {
+		logger.Error("invalid coastal configuration", "error", err)
+		os.Exit(1)
+	}
+	var coast *coastal.Runtime
+	coastalStatusDone := make(chan struct{})
+	if coastalConfig.BaseURL != "" {
+		coast, err = coastal.NewRuntime(coastalConfig, repository, election.Verify, logger)
+		if err != nil {
+			logger.Error("coastal initialization failed", "error", err)
+			os.Exit(1)
+		}
+		defer coast.Close()
+		manager.AddSourceStatus(coastal.Source, coast.Status)
+		go func() {
+			defer close(coastalStatusDone)
+			coast.RefreshStatus(ctx, func() bool { _, active := election.Current(); return active })
+		}()
+	} else {
+		close(coastalStatusDone)
+	}
 	statusDone := make(chan struct{})
 	go func() {
 		defer close(statusDone)
@@ -150,6 +173,14 @@ func main() {
 				repository.Reconcile(term, epoch, 10*time.Second, positiveSecondsFromEnv("REREPLICATE_AFTER_SECONDS", 60))
 			}()
 			go func() { defer workers.Done(); messaging.Run(term, repository, brokerURL, "hazard.events", logger) }()
+			if coast != nil {
+				workers.Go(func() {
+					if err := coast.Run(term, epoch); err != nil && term.Err() == nil {
+						logger.Error("coastal worker stopped", "error_type", fmt.Sprintf("%T", err))
+						stop()
+					}
+				})
+			}
 			if satelliteClient != nil {
 				workers.Go(func() {
 					if err := satellite.RunWorker(term, satelliteClient, repository, epoch, election.Verify, logger); err != nil && term.Err() == nil {
@@ -193,6 +224,9 @@ func main() {
 	api.AddStatus("satellite", func(ctx context.Context) any { return satellite.StoredStatus(ctx, repository) })
 	api.AddStatus("storage", func(context.Context) any { return repository.StorageStatus() })
 	api.AddStatus("sources", func(context.Context) any { return manager.Status() })
+	if coast != nil {
+		api.AddStatus("coastal", func(context.Context) any { return coast.Detail() })
+	}
 	server := &http.Server{
 		Addr:              ":" + port,
 		Handler:           api.Handler(),
@@ -220,6 +254,7 @@ func main() {
 	<-statusDone
 	<-reportsDone
 	<-routerDone
+	<-coastalStatusDone
 }
 
 // registerStoreMetrics exposes P1 placement per unit for the Grafana Overview.

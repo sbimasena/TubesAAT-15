@@ -40,7 +40,7 @@ type Batch struct {
 	GeneratedAt time.Time
 	NextCursor  *string
 	Records     []Record
-	Raw         []byte // complete envelope, only when Invalid is non-nil
+	Raw         []byte // complete envelope for validation and metadata quarantine
 	Invalid     error
 	Truncated   bool
 }
@@ -219,7 +219,7 @@ func DecodeBatch(raw []byte) Batch {
 	if _, ok := fields["next_cursor"]; !ok {
 		return bad(violation("required_next_cursor"))
 	}
-	var batch Batch
+	batch := Batch{Raw: raw}
 	if err := json.Unmarshal(fields["generated_at"], &batch.GeneratedAt); err != nil || batch.GeneratedAt.IsZero() {
 		return bad(violation("generated_at_type"))
 	}

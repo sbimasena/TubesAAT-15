@@ -30,6 +30,7 @@
     {"id": "p4-sample", "group": "P4", "label": "Capture authenticated satellite feed sample", "make": "p4-sample", "destructive": false},
     {"id": "p4-check", "group": "P4", "label": "Satellite replay and recovery checks", "make": "p4-check", "destructive": false},
     {"id": "p5-sample", "group": "P5", "label": "Isolated official Sensor Pantai HTTP sample", "make": "p5-sample", "destructive": false},
-    {"id": "p5-resilience", "group": "P5", "label": "Isolated Pantai adapter and resilience fault tests", "make": "p5-resilience", "destructive": false}
+    {"id": "p5-resilience", "group": "P5", "label": "Isolated Pantai adapter and resilience fault tests", "make": "p5-resilience", "destructive": false},
+    {"id": "p5-ingestion", "group": "P5", "label": "Isolated coastal ingestion, restart and outage checks", "make": "p5-ingestion", "destructive": false}
   ]
 }

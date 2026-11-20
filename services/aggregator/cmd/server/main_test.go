@@ -6,7 +6,25 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestCoastalEnvironmentConfiguration(t *testing.T) {
+	t.Setenv("PANTAI_BASE_URL", "http://sensor-pantai:8080")
+	t.Setenv("PANTAI_AUTH_TOKEN", "temporary-token")
+	t.Setenv("PANTAI_PAGE_LIMIT", "25")
+	t.Setenv("PANTAI_REQUEST_TIMEOUT_MS", "500")
+	config, err := coastalConfigFromEnv()
+	if err != nil || config.PageLimit != 25 || config.Timeout != 500*time.Millisecond || config.Token != "temporary-token" {
+		t.Fatalf("coastal env: %+v %v", config, err)
+	}
+	for _, value := range []string{"0", "-1", "not-a-number", "9223372036854775807"} {
+		t.Setenv("PANTAI_REQUEST_TIMEOUT_MS", value)
+		if _, err := coastalConfigFromEnv(); err == nil {
+			t.Fatal("invalid coastal duration accepted")
+		}
+	}
+}
 
 func TestInspectLocalAPI(t *testing.T) {
 	status, correlation := http.StatusOK, "inspect-test"

@@ -35,6 +35,7 @@ type Manager struct {
 	eventsByID      map[string]domain.SeismicEvent
 	warningsByEvent map[string]domain.TsunamiWarning
 	status          map[string]SourceStatus
+	statusProviders map[string]func() SourceStatus
 }
 
 func NewManager(bmkg *source.BMKGClient, pvmbg *source.PVMBGClient, repo store.Repository, interval time.Duration, logger *slog.Logger) *Manager {

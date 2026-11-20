@@ -28,6 +28,20 @@ func (r *crashRepository) UpsertReplicated(ctx context.Context, epoch int64, eve
 	return r.Repository.UpsertReplicated(ctx, epoch, events, id)
 }
 
+// termRepository records whether a lost leader term could still touch state.
+type termRepository struct {
+	Repository
+	loaded bool
+}
+
+func (r *termRepository) LoadCursor(context.Context, string) (string, error) {
+	r.loaded = true
+	return "", nil
+}
+func (r *termRepository) SaveCursorReplicated(context.Context, int64, string, string) error {
+	return nil
+}
+
 // All storage units use independent schemas of a disposable PostgreSQL. This
 // exercises durable recovery and Audit views, without claiming VM/node failover.
 func postgresRouter(t *testing.T) *store.Router {
@@ -78,6 +92,21 @@ func postgresRouter(t *testing.T) *store.Router {
 		t.Fatal(err)
 	}
 	return router
+}
+
+func TestRestoreStopsBeforeReadingWhenTermIsLost(t *testing.T) {
+	repo := &termRepository{}
+	verifyErr := errors.New("leader term lost")
+	processor, err := NewProcessor(repo, 1, func(context.Context) error { return verifyErr })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := processor.Restore(context.Background()); !errors.Is(err, verifyErr) {
+		t.Fatalf("Restore error = %v, want term loss", err)
+	}
+	if repo.loaded {
+		t.Fatal("checkpoint was read after the leader term was lost")
+	}
 }
 
 func TestProcessorRecoversPendingEffectsFromPostgres(t *testing.T) {

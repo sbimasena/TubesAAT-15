@@ -182,6 +182,8 @@ func main() {
 				})
 			}
 			if satelliteClient != nil {
+				// Satellite processing is a leader-only module: follower replicas
+				// never open the feed or write fire state.
 				workers.Go(func() {
 					if err := satellite.RunWorker(term, satelliteClient, repository, epoch, election.Verify, logger); err != nil && term.Err() == nil {
 						logger.Error("Satellite worker stopped", "error", err)

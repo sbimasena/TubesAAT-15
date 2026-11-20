@@ -29,7 +29,7 @@ func (r *cacheRepository) Ping(context.Context) error { return nil }
 func TestReadCacheExpiresAndDoesNotCacheErrors(t *testing.T) {
 	r := &cacheRepository{}
 	s := NewServer(r, nil, nil)
-	s.EnableReadCache()
+	s.EnableReadCache(time.Second)
 	f := store.Filter{Source: "BMKG", Limit: 100}
 	for i := 0; i < 2; i++ {
 		if _, err := s.readHazards(context.Background(), f, "test"); err != nil {
@@ -58,5 +58,40 @@ func TestReadCacheExpiresAndDoesNotCacheErrors(t *testing.T) {
 	}
 	if len(s.cache.entries) > 128 {
 		t.Fatal("unbounded cache")
+	}
+}
+
+func TestReadCacheCanBeDisabled(t *testing.T) {
+	r := &cacheRepository{}
+	s := NewServer(r, nil, nil)
+	s.EnableReadCache(0)
+	f := store.Filter{Source: "BMKG", Limit: 100}
+	for i := 0; i < 2; i++ {
+		if _, err := s.readHazards(context.Background(), f, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if r.calls != 2 {
+		t.Fatalf("repository calls = %d, want 2 with cache disabled", r.calls)
+	}
+	status, ok := s.CacheStatus().(map[string]any)
+	if !ok || status["enabled"] != false {
+		t.Fatalf("cache status = %#v, want disabled", status)
+	}
+}
+
+func TestReadCacheReportsHitRatio(t *testing.T) {
+	r := &cacheRepository{}
+	s := NewServer(r, nil, nil)
+	s.EnableReadCache(time.Second)
+	f := store.Filter{Source: "BMKG", Limit: 100}
+	for i := 0; i < 2; i++ {
+		if _, err := s.readHazards(context.Background(), f, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status, ok := s.CacheStatus().(map[string]any)
+	if !ok || status["enabled"] != true || status["hits"] != uint64(1) || status["misses"] != uint64(1) || status["hit_ratio"] != 0.5 {
+		t.Fatalf("cache status = %#v", status)
 	}
 }

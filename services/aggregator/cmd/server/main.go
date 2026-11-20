@@ -213,7 +213,16 @@ func main() {
 		epoch, _ := election.Current()
 		return epoch, nil
 	})
-	api.EnableReadCache()
+	cacheTTL := time.Second
+	if raw := strings.TrimSpace(os.Getenv("AGGREGATOR_READ_CACHE_TTL_MS")); raw != "" {
+		ms, err := strconv.Atoi(raw)
+		if err != nil || ms < 0 {
+			logger.Error("Invalid read cache TTL", "variable", "AGGREGATOR_READ_CACHE_TTL_MS", "value", raw)
+			os.Exit(1)
+		}
+		cacheTTL = time.Duration(ms) * time.Millisecond
+	}
+	api.EnableReadCache(cacheTTL)
 	api.EnableAudit(repository, auditToken)
 	api.EnableAnalytics(repository)
 	// Register component status providers before mounting the handler.
@@ -221,6 +230,7 @@ func main() {
 		epoch, active := election.Current()
 		return map[string]any{"epoch": epoch, "is_me": active}
 	})
+	api.AddStatus("cache", func(context.Context) any { return api.CacheStatus() })
 	api.AddStatus("satellite", func(ctx context.Context) any { return satellite.StoredStatus(ctx, repository) })
 	api.AddStatus("storage", func(context.Context) any { return repository.StorageStatus() })
 	api.AddStatus("sources", func(context.Context) any { return manager.Status() })

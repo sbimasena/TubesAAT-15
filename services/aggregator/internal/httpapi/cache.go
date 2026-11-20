@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/domain"
@@ -22,10 +23,41 @@ type readCache struct {
 	entries map[store.Filter]cachedRead
 	pending singleflight.Group
 	bytes   int
+	ttl     time.Duration
+	hits    atomic.Uint64
+	misses  atomic.Uint64
 }
 
-// EnableReadCache bounds per-instance memory and freshness. Audit reads bypass it.
-func (s *Server) EnableReadCache() { s.cache = &readCache{entries: make(map[store.Filter]cachedRead)} }
+// EnableReadCache bounds per-instance memory and freshness. A non-positive TTL
+// disables the cache so P2 can compare cache and storage scaling directly.
+func (s *Server) EnableReadCache(ttl time.Duration) {
+	if ttl <= 0 {
+		s.cache = nil
+		return
+	}
+	s.cache = &readCache{entries: make(map[store.Filter]cachedRead), ttl: ttl}
+}
+
+// CacheStatus reports bounded cache state and the measured hit ratio.
+func (s *Server) CacheStatus() any {
+	if s.cache == nil {
+		return map[string]any{"enabled": false}
+	}
+	c := s.cache
+	c.mu.Lock()
+	entries, bytes := len(c.entries), c.bytes
+	c.mu.Unlock()
+	hits, misses := c.hits.Load(), c.misses.Load()
+	total := hits + misses
+	ratio := 0.0
+	if total > 0 {
+		ratio = float64(hits) / float64(total)
+	}
+	return map[string]any{
+		"enabled": true, "ttl_ms": c.ttl.Milliseconds(), "hits": hits,
+		"misses": misses, "hit_ratio": ratio, "entries": entries, "bytes": bytes,
+	}
+}
 
 func (s *Server) readHazards(ctx context.Context, f store.Filter, id string) ([]domain.HazardEvent, error) {
 	if s.cache == nil {
@@ -35,16 +67,18 @@ func (s *Server) readHazards(ctx context.Context, f store.Filter, id string) ([]
 	c.mu.Lock()
 	entry, ok := c.entries[f]
 	c.mu.Unlock()
-	if ok && time.Since(entry.at) < time.Second {
+	if ok && time.Since(entry.at) < c.ttl {
+		c.hits.Add(1)
 		return entry.events, nil
 	}
+	c.misses.Add(1)
 	key := fmt.Sprintf("%s|%s|%s|%d", f.Source, f.HazardType, f.Since.Format(time.RFC3339Nano), f.Limit)
 	result := c.pending.DoChan(key, func() (any, error) {
 		// A previous in-flight request may have filled the cache before DoChan.
 		c.mu.Lock()
 		entry, ok := c.entries[f]
 		c.mu.Unlock()
-		if ok && time.Since(entry.at) < time.Second {
+		if ok && time.Since(entry.at) < c.ttl {
 			return entry.events, nil
 		}
 		started := time.Now()

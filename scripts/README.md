@@ -154,3 +154,17 @@ Untuk laporan Tim Lapangan, checker menjeda storage, mengirim lima laporan hingg
 `p3-check.json` menyimpan hasil, scope, konfigurasi, bukti per kasus, dan hasil cleanup; `run.log`, `build.log`, serta `*-tests.jsonl` menyimpan langkah dan hasil Go. Kegagalan menyimpan `diagnostics.log`. Resource fixture dibersihkan pada akhir run; volume stack lain tetap dipertahankan. Gunakan `--reports N` (1..50) dan `--output-dir <direktori-baru>` untuk variasi terukur.
 
 `physical_cluster_acceptance=false` berlaku meskipun hasil lokal PASS: pengujian ini tidak membuktikan kehilangan node fisik, quorum broker tiga node, atau failover Kubernetes. Bukti tersebut harus dikumpulkan terpisah pada cluster.
+
+## Sampel HTTP Sensor Pantai M2
+
+```sh
+make p5-sample
+# Alternatif tanpa make/bash, dengan window yang eksplisit:
+python3 -B scripts/m2/pantai-sample.py --seconds 30 --speed 60
+```
+
+Memerlukan Docker dan Python 3. Image resmi dipatok ke digest dari spek; container practice memakai port localhost dan token sementara lalu dihapus. Stack yang sudah berjalan dan `.env` pribadi tidak dipakai. `--output-dir` harus menunjuk direktori baru; default `artifacts/m2/runs/<waktu>-pantai-<acak>/`.
+
+`pantai-sample.json` merekam status, latensi tiap request, path/cursor, raw body dalam Base64, hash byte hasil capture, serta status cleanup. Capture tiap respons dibatasi 1 MiB dan ditandai `truncated` bila terpotong; capture terpotong bukan bukti pesan lengkap. `sensor.log` berisi keluaran container. Untuk membaca raw body: `base64.b64decode(sample["raw_base64"])`. Token tidak ditulis ke bukti.
+
+Hasil `SAMPLED` hanya berarti sampling selesai. Ini bukan PASS kriteria P5, benchmark, bukti semua perilaku sensor sudah ditemukan, atau bukti pengiriman alert kritis. Seed/speed tercatat untuk reproduksi fixture, tidak digunakan sebagai aturan ingestion.

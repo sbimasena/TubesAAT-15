@@ -84,3 +84,23 @@ python3 scripts/check-ingestion.py
 Jalankan dari root repository. Skrip mengembalikan PVMBG ke skema v1 dan outage=false; laporan yang sudah dibuat tetap ada. Lihat [README utama](../../README.md) untuk prasyarat dan efek pemeriksaan.
 
 Konfigurasi wajib: `BMKG_BASE_URL`, `PVMBG_BASE_URL`, `BMKG_API_KEY`, `PVMBG_TOKEN`, `DATABASE_URL`, dan `BROKER_URL`. Kredensial kedua sumber harus berbeda. Nilai contoh Compose hanya untuk pengembangan lokal.
+
+## Adapter Sensor Pantai M2
+
+`internal/source/pantai` menyediakan klien `GET /v1/stations` dan `GET /v1/observations`, autentikasi Bearer, correlation/instance ID, verifikasi leader sebelum request, dan pool HTTP terpisah. Timeout default dua detik membatasi header dan body. Redirect ditolak; respons non-200 dikembalikan sebagai `HTTPError` dengan status/`Retry-After`, tanpa retry tersembunyi atau body error di log. Cursor diperlakukan sebagai string buram dan tidak disimpan oleh adapter.
+
+Validasi struktural memeriksa field wajib beserta tipe/null, waktu RFC3339, identitas tidak kosong, koordinat station, UTF-8, field duplikat dan kedalaman JSON. Field tambahan diterima tanpa boleh menimpa field kanonis melalui perbedaan kapitalisasi. Rekaman invalid dan valid dipisah; raw record tetap utuh untuk calon penulisan DLQ. Error menyediakan alasan `contract_violation:<detail>`. Adapter belum menulis DLQ atau HazardEvent.
+
+Batas defensif awal: respons untuk decoding 10 MiB, capture arsip maksimal 32 MiB, rekaman 1 MiB, kedalaman 128, dan permintaan 1–1000 item. Nilai ini kebijakan lokal sementara, bukan batas yang dijanjikan vendor. Bila capture melebihi 32 MiB, `Truncated=true` dan raw dikosongkan; worker tidak boleh menganggap payload lengkap atau memajukan checkpoint. Kegagalan transport/body juga tidak menghasilkan page yang boleh di-commit.
+
+**Aturan mapping sementara yang disetujui:** `critical=true` menjadi `AWAS`, selain itu `NORMAL`; `area_name` memakai `province` dari station. Ini asumsi proyek sementara, bukan aturan eksplisit spek, dan belum dihubungkan ke runtime.
+
+**Belum final:** rentang fisik dan kebijakan `quality`, hubungan waktu virtual dengan freshness, serta kebijakan cursor berulang. Mapping, poller durable leader-only, penyisihan melalui store, circuit breaker/backoff dan alert kritis belum dihubungkan ke runtime. Tidak ada ambang fisik yang ditebak oleh adapter. `generated_at` dan `observed_at` dipertahankan; waktu virtual sensor tidak dibandingkan langsung dengan wall clock host.
+
+```sh
+cd services/aggregator
+go test ./internal/source/pantai
+# Tambahkan TEST_PANTAI_URL/TEST_PANTAI_TOKEN untuk uji kontrak image resmi.
+```
+
+Sampling image resmi yang terisolasi tersedia lewat `make p5-sample`; lihat [panduan skrip](../../scripts/README.md). Hasil sampling tidak membuktikan penerimaan P5.

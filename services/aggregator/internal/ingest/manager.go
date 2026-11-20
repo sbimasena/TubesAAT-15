@@ -3,11 +3,13 @@ package ingest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/deadletter"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/domain"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/source"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/store"
@@ -65,7 +67,12 @@ func (m *Manager) Run(ctx context.Context) {
 	}()
 	go func() {
 		defer workers.Done()
-		m.runPoller(ctx, "PVMBG", m.pollPVMBG)
+		m.runPoller(ctx, "PVMBG", func(ctx context.Context, id string) {
+			m.pollPVMBG(ctx, id)
+			if err := m.retryPVMBG(ctx, id); err != nil && ctx.Err() == nil && m.logger != nil {
+				m.logger.Warn("PVMBG replay failed", "correlation_id", id, "error", err)
+			}
+		})
 	}()
 	workers.Wait()
 }
@@ -203,6 +210,7 @@ func (m *Manager) pollPVMBG(ctx context.Context, correlationID string) {
 		return // No trustworthy next position for a broken envelope.
 	}
 	canonical := make([]domain.HazardEvent, 0, len(batch.Records))
+	validRecords := make([]source.PVMBGRecord, 0, len(batch.Records))
 	var parkFailure, recordFailure error
 	for _, record := range batch.Records {
 		event, err := mapPVMBGRecord(record)
@@ -216,6 +224,7 @@ func (m *Manager) pollPVMBG(ctx context.Context, correlationID string) {
 			continue
 		}
 		canonical = append(canonical, event)
+		validRecords = append(validRecords, record)
 		if record.Report.ReportedAt.After(reportCursor) {
 			reportCursor = record.Report.ReportedAt
 		}
@@ -226,6 +235,19 @@ func (m *Manager) pollPVMBG(ctx context.Context, correlationID string) {
 		m.setIngestionFailure("PVMBG", correlationID, recordFailure)
 	}
 	if err := m.persist(ctx, "PVMBG", correlationID, canonical); err != nil {
+		// Keep the checkpoint for a normal repoll even if the DLQ is also
+		// unavailable. A partial canonical write is safe to retry by ID.
+		if _, durableRetry := m.pvmbgDLQ.(pvmbgReplayStore); durableRetry && ctx.Err() == nil &&
+			deadletter.Retryable(pvmbgReason(err)) && !errors.Is(err, store.ErrFenced) {
+			for _, record := range validRecords {
+				if err := m.parkPVMBG(ctx, record.Raw, record.Report.ReportID, since, err); err != nil {
+					if m.logger != nil {
+						m.logger.Warn("PVMBG retry could not be scheduled; checkpoint retained", "correlation_id", correlationID, "error", err)
+					}
+					break
+				}
+			}
+		}
 		return
 	}
 	if len(canonical) == 0 {

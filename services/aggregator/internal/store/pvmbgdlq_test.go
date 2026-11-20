@@ -77,6 +77,58 @@ func TestRecordPVMBGRequiresAllTargetsFenceAndDeduplicates(t *testing.T) {
 	if !bytes.Equal(saved, raw) || source != "PVMBG" || status != "parked" || ref != "bad" {
 		t.Fatal("parked payload or metadata changed")
 	}
+	// Audit pages union the replicas, exclude recovered rows and never
+	// return the raw payload. Use a second ID to exercise the page boundary.
+	second := msg
+	second.MessageID = "pvmbg:zz"
+	second.Status = deadletter.StatusRetrying
+	second.Reason = deadletter.ReasonTimeout
+	nextRetry := time.Now().UTC().Add(time.Minute)
+	second.NextRetryAt = &nextRetry
+	if err := r.RecordPVMBG(ctx, 3, second); err != nil {
+		t.Fatal(err)
+	}
+	recovered := msg
+	recovered.MessageID = "pvmbg:recovered"
+	recovered.Status = deadletter.StatusRecovered
+	if err := r.RecordPVMBG(ctx, 3, recovered); err != nil {
+		t.Fatal(err)
+	}
+	firstPage, err := r.Unprocessed(ctx, "PVMBG", "", 1)
+	if err != nil || len(firstPage.Items) != 1 || firstPage.Items[0].MessageID != msg.MessageID || firstPage.NextCursor == nil {
+		t.Fatalf("first audit page: %+v err=%v", firstPage, err)
+	}
+	lastPage, err := r.Unprocessed(ctx, "PVMBG", *firstPage.NextCursor, 1)
+	if err != nil || len(lastPage.Items) != 1 || lastPage.Items[0].MessageID != second.MessageID ||
+		!lastPage.Items[0].Retryable || lastPage.NextCursor != nil {
+		t.Fatalf("last audit page: %+v err=%v", lastPage, err)
+	}
+	if _, err := r.Unprocessed(ctx, "", "%%", 1); !errors.Is(err, ErrInvalidCursor) {
+		t.Fatalf("invalid audit cursor: %v", err)
+	}
+
+	older := msg
+	older.MessageID = "pvmbg:older"
+	older.Status = deadletter.StatusRetrying
+	older.NextRetryAt = &nextRetry
+	if err := r.RecordPVMBG(ctx, 3, older); err != nil {
+		t.Fatal(err)
+	}
+	newer := older
+	newer.MessageID = "pvmbg:newer"
+	newer.ReceivedAt = older.ReceivedAt.Add(time.Second)
+	due := time.Now().UTC().Add(-time.Second)
+	newer.NextRetryAt = &due
+	if err := r.RecordPVMBG(ctx, 3, newer); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.PendingPVMBGReplay(ctx, time.Now().UTC()); err != nil || got != nil {
+		t.Fatalf("newer report overtook its delayed predecessor: %+v, %v", got, err)
+	}
+	if got, err := r.PendingPVMBGReplay(ctx, nextRetry.Add(time.Second)); err != nil ||
+		got == nil || got.MessageID != older.MessageID {
+		t.Fatalf("oldest replay was not selected first: %+v, %v", got, err)
+	}
 
 	if err := r.Fence(ctx, 5); err != nil {
 		t.Fatal(err)

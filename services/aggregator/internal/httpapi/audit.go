@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -25,6 +27,58 @@ func (s *Server) requireAuditToken(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+type unprocessedReader interface {
+	Unprocessed(context.Context, string, string, int) (store.UnprocessedPage, error)
+}
+
+func (s *Server) auditUnprocessed(w http.ResponseWriter, r *http.Request) {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		writeAuditError(w, http.StatusBadRequest, "bad_request", "query tidak valid")
+		return
+	}
+	for key, values := range q {
+		if len(values) != 1 || (key != "source" && key != "limit" && key != "cursor") {
+			writeAuditError(w, http.StatusBadRequest, "bad_request", "query tidak valid")
+			return
+		}
+	}
+	source, cursor := q.Get("source"), q.Get("cursor")
+	switch source {
+	case "", "BMKG", "PVMBG", "SATELIT", "SENSOR_PANTAI", "FIELD_REPORT":
+	default:
+		writeAuditError(w, http.StatusBadRequest, "bad_request", "source tidak valid")
+		return
+	}
+	limit := 100
+	if q.Has("limit") {
+		limit, err = strconv.Atoi(q.Get("limit"))
+		if err != nil || limit < 1 || limit > 1000 {
+			writeAuditError(w, http.StatusBadRequest, "bad_request", "limit harus 1..1000")
+			return
+		}
+	}
+	if len(cursor) > 700 {
+		writeAuditError(w, http.StatusBadRequest, "bad_request", "cursor tidak valid")
+		return
+	}
+	reader, ok := s.audit.(unprocessedReader)
+	if !ok {
+		writeAuditError(w, http.StatusServiceUnavailable, "unavailable", "DLQ storage tidak tersedia")
+		return
+	}
+	page, err := reader.Unprocessed(r.Context(), source, cursor, limit)
+	if errors.Is(err, store.ErrInvalidCursor) {
+		writeAuditError(w, http.StatusBadRequest, "bad_request", "cursor tidak valid")
+		return
+	}
+	if err != nil {
+		s.auditUnavailable(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
 }
 
 func writeAuditError(w http.ResponseWriter, status int, code, message string) {

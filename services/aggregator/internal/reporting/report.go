@@ -2,11 +2,6 @@
 // consumer on the "field-reports" quorum queue running inside every Aggregator
 // replica. Guarantee chain: at-least-once delivery + idempotent insert on a
 // unique report_id = effectively-once processing of each accepted report.
-//
-// STATUS: skeleton (17 Nov 2026). The durable effect (ReportStore) awaits
-// member C's field_reports migration; wiring into cmd/server/main.go starts
-// only after a real store exists, because consuming without a durable effect
-// and acking would drop reports.
 package reporting
 
 import (

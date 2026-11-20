@@ -18,8 +18,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// QueueName is the frozen queue name (D-FR, context-m2 § decisions). Member C
-// declares the same queue in the broker topology with identical arguments.
+// QueueName matches the broker topology used by the P3 field report path.
 const QueueName = "field-reports"
 
 const dialTimeout = 5 * time.Second

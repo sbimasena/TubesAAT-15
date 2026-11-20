@@ -1,5 +1,5 @@
 # Auth and Client API (role=api, Lampiran B "Auth dan Client-Facing API").
-# Auth keeps sessions in memory: one replica until D-AUTH (owner B) is decided.
+# Auth keeps sessions in memory and must run as one replica until sessions are shared.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -75,6 +75,8 @@ spec:
           env:
             - name: CLIENT_API_PORT
               value: "8080"
+            - name: AUDIT_TOKEN
+              valueFrom: {secretKeyRef: {name: audit-token, key: token}}
             - name: AUTH_INTERNAL_SECRET
               valueFrom: {secretKeyRef: {name: auth-credentials, key: AUTH_INTERNAL_SECRET}}
             - name: RABBITMQ_DEFAULT_USER

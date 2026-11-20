@@ -1,4 +1,4 @@
--- D-FR (dibekukan 12 Nov, owner B + C): Field Team reports accepted by the
+-- P3: Field Team reports accepted by the
 -- Client API (202 after broker confirm on the field-reports quorum queue).
 -- The processor is a competing consumer on every Aggregator replica; the
 -- idempotent insert (PRIMARY KEY report_id + ON CONFLICT DO NOTHING) turns

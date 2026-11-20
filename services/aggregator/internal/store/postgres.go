@@ -191,7 +191,8 @@ const upsertSQL = `WITH changed AS (
         longitude = EXCLUDED.longitude, occurred_at = EXCLUDED.occurred_at,
         ingested_at = EXCLUDED.ingested_at, attributes = EXCLUDED.attributes,
         revision = hazard_events.revision + 1
-    WHERE ROW(hazard_events.source, hazard_events.source_ref_id, hazard_events.hazard_type,
+     WHERE (NOT $14::boolean OR EXCLUDED.occurred_at > hazard_events.occurred_at)
+     AND ROW(hazard_events.source, hazard_events.source_ref_id, hazard_events.hazard_type,
         hazard_events.severity, hazard_events.area_name, hazard_events.latitude,
         hazard_events.longitude, hazard_events.occurred_at, hazard_events.attributes)
     IS DISTINCT FROM ROW(EXCLUDED.source, EXCLUDED.source_ref_id, EXCLUDED.hazard_type,
@@ -234,7 +235,7 @@ func (r *PostgresRepository) Upsert(ctx context.Context, epoch int64, events []d
 		err = tx.QueryRow(ctx, upsertSQL, event.HazardID, event.Source, event.SourceRefID,
 			event.HazardType, event.Severity, event.AreaName, event.Latitude, event.Longitude,
 			event.OccurredAt, event.IngestedAt, attributes, correlationID,
-			PartitionOf(event.HazardID)).Scan(&payload)
+			PartitionOf(event.HazardID), ctx.Value(pvmbgReplayKey{}) == true).Scan(&payload)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue // Identical polling result: no update or outbox message.
 		}

@@ -1,8 +1,8 @@
-"""Serve the local Member B console and relay fixed Auth/Client API routes.
+"""Serve the local downstream API console and relay fixed Auth/Client API routes.
 
 Requires Python 3 standard library. Targets are loopback HTTP services only.
 Local credentials are optional; passwords and sessions are never written by this tool.
-The console can run Member B's Go tests and a bounded burst, but does not alter
+The console can run downstream Go tests and a bounded burst, but does not alter
 service lifecycle, source state, Compose configuration, or database contents.
 """
 import argparse
@@ -178,7 +178,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.trusted():
             return
         if self.path == "/":
-            self.reply(200, (ROOT / "tests/member-b-console.html").read_bytes(), "text/html; charset=utf-8")
+            self.reply(200, (ROOT / "tests/downstream-console.html").read_bytes(), "text/html; charset=utf-8")
         elif self.path == "/tool/info":
             env = self.server.settings["env"]
             self.reply(200, {"auth_url": self.server.settings["auth"], "client_url": self.server.settings["client"],
@@ -265,7 +265,7 @@ def main():
     server.daemon_threads = True
     server.settings = {"env": env, "auth": auth, "client": client}
     server.operation_lock = threading.Lock()
-    print(f"Member B console: http://127.0.0.1:{args.port}", flush=True)
+    print(f"downstream API console: http://127.0.0.1:{args.port}", flush=True)
     print(f"Auth: {auth}; Client API: {client}. Stop with Ctrl+C.", flush=True)
     try:
         server.serve_forever()

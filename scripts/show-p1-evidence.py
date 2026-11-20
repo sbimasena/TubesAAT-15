@@ -19,7 +19,7 @@ def columns(left, right):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('section', choices=['bmkg', 'pvmbg', 'runtime'])
-    parser.add_argument('--input', type=Path, default=Path('docs/evidence/member-a/p1/report-check.json'))
+    parser.add_argument('--input', type=Path, default=Path('docs/evidence/p1/report-check.json'))
     args = parser.parse_args()
     d = json.loads(args.input.read_text())
     print('P1 / ' + args.section.upper() + ' / hasil pengujian tersimpan')

@@ -32,7 +32,7 @@ Client API tersedia di `http://127.0.0.1:8080` (k3d) atau `http://<IP node>:3008
 | Komponen | Bentuk di cluster | Ketahanan |
 |---|---|---|
 | Aggregator (`role=aggregator`) | Deployment 3 replika, Lease `aggregator-leader` | Hanya leader yang polling, reconcile, dan publish outbox (epoch fencing). Semua replika melayani baca dan memproses field report. Lihat bagian P2 di bawah |
-| Canonical Store (`role=store`) | StatefulSet `store-0..2`, satu per node | 24 partisi, RF=2, peta partisi di ConfigMap (CAS). Re-replikasi setelah unit hilang 60 s (`REREPLICATE_AFTER_SECONDS`), amnesia, rebalancing. Lihat [docs/m2/p1-storage.md](docs/m2/p1-storage.md) |
+| Canonical Store (`role=store`) | StatefulSet `store-0..2`, satu per node | 24 partisi, RF=2, peta partisi di ConfigMap (CAS). Re-replikasi setelah unit hilang 60 s (`REREPLICATE_AFTER_SECONDS`), amnesia, rebalancing. |
 | RabbitMQ (`role=broker`) | StatefulSet `rabbitmq-0..2`, satu per node | Cluster 3 node (`classic_config`), quorum queue `notification`, `dashboard`, `field-reports`, `alerts.critical`. Tetap melayani dengan 2 dari 3 member; member yang kembali dengan disk kosong bergabung sendiri |
 | Consumer (`role=consumer`) | Deployment 1 replika di `node-a` | Dedup per `MessageId` (snapshot outbox) sebelum efek samping |
 | Observabilitas | Namespace `observability` | Prometheus, Grafana (dashboard "Overview" diprovision dari repo), Jaeger |
@@ -61,12 +61,12 @@ Setiap aksi tersedia sebagai target `make` dan tercatat di `scripts/m2/actions.j
 |---|---|---|
 | Umum | `make status`, `make system-status`, `make obs-open`, `make open` | Pod per node, status Aggregator (storage, sumber, leader, DLQ), Grafana + Jaeger, RabbitMQ UI |
 | Tester Agent | `make tester S=<skenario>` | `kill-store`, `kill-leader`, `partition`, `clock-skew`, `schema`, `wipe-node` (profil practice) |
-| P1 | `make p1-checksum`, `p1-distribution`, `p1-wipe-node`, `p1-amnesia S=store-N`, `p1-load FILE=...`, `p1-surge`, `p1-audit`, `p1-netpol`, `p1-dashboard` | Lihat [docs/m2/p1-storage.md](docs/m2/p1-storage.md); bukti di [docs/m2/bukti-p1-cluster.md](docs/m2/bukti-p1-cluster.md) |
+| P1 | `make p1-checksum`, `p1-distribution`, `p1-wipe-node`, `p1-amnesia S=store-N`, `p1-load FILE=...`, `p1-surge`, `p1-audit`, `p1-netpol`, `p1-dashboard` | Bandingkan checksum sebelum dan sesudah gangguan. Setelah pemulihan, total baris di ketiga unit semestinya dua kali jumlah event unik. Dashboard tersedia di `http://127.0.0.1:18083/dashboard` setelah `make p1-dashboard`. |
 | P2 | `make p2-status`, `p2-failover`, `p2-load` | Lihat bagian P2 di bawah |
 | Broker | `make broker-status`, `make broker-recover S=rabbitmq-N` | Anggota cluster dan replika setiap queue; kosongkan disk member yang crash-loop agar bergabung ulang |
 | Pemulihan | `make reset` | Kembalikan manifest dan mode mock PVMBG ke normal |
 
-`wipe-node` dari Tester Agent bisa terjebak loop mati-nyala pada node yang dipilihnya. Cara memutusnya ada di [docs/m2/temuan-tester-agent.md](docs/m2/temuan-tester-agent.md).
+Jika skenario latihan `wipe-node` mengulang shutdown setelah node menyala kembali, isolasi jaringan VM yang terdampak. Dari node yang masih sehat, periksa `configmap/tester-run` di namespace `tester-agent`. Cadangkan dan hapus ConfigMap itu hanya setelah memastikan isinya adalah run `wipe-node` yang macet dan tidak ada skenario lain berjalan. Setelah itu sambungkan kembali jaringan VM. Jangan jalankan skenario destruktif di luar cluster latihan.
 
 ## 1. Jalankan sistem
 
@@ -107,7 +107,7 @@ Setiap checker memakai `.env` dan project Compose yang sama dengan perintah star
 | P1: ingestion dan evolusi skema | `python3 scripts/check-ingestion.py` | Pemetaan PVMBG v1/v2 dan delivery ke dua consumer; outage PVMBG, freshness, data terakhir, independensi BMKG, recovery tanpa restart. PVMBG dikembalikan ke v1/outage=false. |
 | P2: lambat dan outage di bawah beban | `python3 scripts/check-client-p2.py` | Dua run k6, masing-masing 50 VU selama 60 detik: PVMBG delay 3000 ms lalu outage. Memeriksa latency, error, refresh, socket, data terakhir, dan recovery. Delay/schema/outage awal dipulihkan. **Perlu k6 dan lsof di host**, serta access TTL 60 detik. |
 | P3: kredensial upstream | `python3 scripts/check-cross-credentials.py` | Kredensial sumber sendiri harus diterima; kredensial silang dan request tanpa kredensial harus ditolak. Tidak mengubah layanan. |
-| P3: autentikasi downstream | `python3 scripts/check-member-b-auth.py --natural-expiry` | Login tiga peran, scope/proyeksi, penolakan field mentah, refresh/replay, token lama dan expiry alami. Menunggu TTL access yang nyata. |
+| P3: autentikasi downstream | `python3 scripts/check-downstream-auth.py --natural-expiry` | Login tiga peran, scope/proyeksi, penolakan field mentah, refresh/replay, token lama dan expiry alami. Menunggu TTL access yang nyata. |
 | P4: deployment mandiri dan storage | `python3 scripts/check-p4.py` | Rebuild PVMBG saja, JSONB v1/v2 tanpa migrasi tambahan, restart Aggregator/DB, isolasi storage, stop/start Auth/API dan trace. Schema PVMBG awal dipulihkan; restart Auth menghapus sesi lama. |
 | P5: fanout dan recovery | `python3 scripts/check-stage-3.py` | Notifikasi offline sementara dashboard tetap menerima; backlog, replay ID sama sebelum/sesudah restart consumer, lalu broker outage/reconnect. Layanan dipulihkan. |
 | P5: subscriber baru | `python3 scripts/check-p5-third.py` | Build/start subscriber ketiga, cocokkan event baru di tiga subscriber, periksa producer tidak berubah, lalu bersihkan subscriber/queue sementara. |
@@ -118,7 +118,7 @@ Urutan praktis untuk memeriksa semua problem:
 python3 scripts/check-deployment.py
 python3 scripts/check-ingestion.py
 python3 scripts/check-cross-credentials.py
-python3 scripts/check-member-b-auth.py --natural-expiry
+python3 scripts/check-downstream-auth.py --natural-expiry
 python3 scripts/check-p4.py
 python3 scripts/check-stage-3.py
 python3 scripts/check-p5-third.py
@@ -130,8 +130,8 @@ Skenario tambahan:
 | Jalankan | Tujuan dan efek |
 |---|---|
 | `python3 scripts/check-stage-2.py` | Persistence backlog broker. Skrip mematikan kedua consumer, menunggu backlog, menghentikan/menjalankan broker, lalu menghidupkan hanya consumer yang sebelumnya berjalan. |
-| `python3 scripts/check-member-b-resilience.py` | Kontrak respons publik, filter kosong, galat JSON, refresh, trace dan redaksi log. |
-| `python3 scripts/check-member-b-resilience.py --exercise-outages --burst-connections 64` | Tambahkan outage PVMBG/DB/Auth dan burst singkat; dependency/outage dipulihkan. Burst ini berbeda dari pengukuran P2 selama 60 detik. |
+| `python3 scripts/check-downstream-resilience.py` | Kontrak respons publik, filter kosong, galat JSON, refresh, trace dan redaksi log. |
+| `python3 scripts/check-downstream-resilience.py --exercise-outages --burst-connections 64` | Tambahkan outage PVMBG/DB/Auth dan burst singkat; dependency/outage dipulihkan. Burst ini berbeda dari pengukuran P2 selama 60 detik. |
 | `python3 scripts/check-p1-report.py` | Jalankan ingestion, lalu cocokkan payload BMKG/warning dan PVMBG dengan data kanonis, migrasi, identitas container, trace dan consumer. |
 | `python3 scripts/check-clean-clone.py` | Build/start **commit HEAD** pada project/volume baru dengan kredensial sendiri, periksa deployment/fanout, lalu hapus hanya resource sementara. Perubahan belum di-commit tidak ikut. Port 28081/28082/28084/28080/35672 harus bebas. |
 
@@ -295,14 +295,14 @@ Freshness mengukur pipeline polling/commit, bukan umur tiap hazard atau keberhas
 
 Hasil checker baru disimpan terpisah dari bukti laporan lama. Cara menampilkan hasil dan merender gambar dijelaskan di [panduan skrip](scripts/README.md).
 
-### M2 P2: Aggregator leadership (Fithra)
+### M2 P2: Aggregator leadership
 
 Kubernetes runs three Aggregator replicas; a Lease holder runs ingestion/reconciliation/publishing with a fencing epoch. Hazard reads use a one-second per-instance cache; Audit reads remain uncached. Compose remains single-instance. No new runtime configuration is required: Kubernetes supplies `KUBERNETES_SERVICE_HOST`, `KUBERNETES_SERVICE_PORT`, service-account files and `POD_NAME`.
 
-Use `make p2-status`, `make p2-failover` and `TARGET_URL=http://<aggregator-load-balancer> make p2-load`. The optional `ROLLOUT_IMAGE=<registry>/aggregator:<sha>` changes version during load. Load scripts run outside the cluster and save evidence under `artifacts/m2/runs/`. See [the P2 runbook and owner-assigned blockers](docs/m2/p2-aggregator.md) before claiming failure recovery or throughput criteria.
+Use `make p2-status`, `make p2-failover` and `TARGET_URL=http://<aggregator-load-balancer> make p2-load`. The optional `ROLLOUT_IMAGE=<registry>/aggregator:<sha>` changes version during load. Run load tests outside the cluster against the load balancer, not a pod port-forward. Evidence is saved under `artifacts/m2/runs/`. Compare successful-response throughput for one and three replicas with the same data and configuration; check request failures separately during rollout.
 
-### M2 P4: satellite processing (Fithra)
+### M2 P4: satellite processing
 
 Set `SATELLITE_TOKEN` in the ignored `.env` to enable the P4 worker in Compose or through the Kubernetes deployment script. The elected Aggregator connects to the feed, restores its replicated checkpoint, and materializes WILDFIRE events. To inspect the wire format first, run `make p4-sample` before starting the worker. The course feed allows one connection per group.
 
-Use `make p4-check` for repeatable offline and recovery tests. `TEST_DATABASE_URL` enables the PostgreSQL integration tests on isolated schemas. Evidence is saved under ignored `artifacts/m2/runs/`. The [P4 runbook](docs/m2/p4-satellite.md) records the verified course practice feed behavior and the remaining Kubernetes acceptance runs. [AI-assistance disclosure](docs/m2/ai-usage.md)
+Use `make p4-check` for offline and recovery tests. Set `TEST_DATABASE_URL` to a disposable PostgreSQL instance to enable integration tests. Evidence is saved under ignored `artifacts/m2/runs/`. Check progress via `GET /internal/v1/status` and the Audit API with `source=SATELIT`. For cluster validation, compare the final checksum and fire membership before and after a worker interruption. The province reference data retains its [MIT license and attribution](docs/m2/data/province-centres-LICENSE.txt).

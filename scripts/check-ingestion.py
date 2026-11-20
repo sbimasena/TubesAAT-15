@@ -37,7 +37,7 @@ evidence = {"started_at": now(), "states_before": development_states()}
 
 
 def request(port, path, body=None, token=None):
-    headers = {"X-Correlation-ID": "member-a-ingestion-check"}
+    headers = {"X-Correlation-ID": "ingestion-ingestion-check"}
     if token:
         headers["Authorization"] = "Bearer " + token
     if body is not None:

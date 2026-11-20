@@ -2,6 +2,36 @@
 source "$(dirname "$0")/../k8s/lib.sh"
 need kubectl k6
 [[ -n "${TARGET_URL:-}" ]] || die 'Set TARGET_URL to the Aggregator load balancer URL (a pod port-forward cannot measure scaling)'
+if [[ "${1:-}" == throughput ]]; then
+  need python3
+  confirm "Measure throughput with one and three Aggregator replicas in $(kubectl config current-context)?"
+  mkdir -p "$ROOT/artifacts/m2/runs"
+  out="$ROOT/artifacts/m2/runs/$(date -u +%Y%m%dT%H%M%SZ)-p2-throughput"
+  original="$(kubectl -n "$NS" get deployment aggregator -o jsonpath='{.spec.replicas}')"
+  trap 'run kubectl -n "$NS" scale deployment aggregator --replicas="$original"' EXIT
+  for replicas in 1 3; do
+    run kubectl -n "$NS" scale deployment aggregator --replicas="$replicas"
+    run kubectl -n "$NS" rollout status deployment/aggregator --timeout=120s
+    REQUIRE_ZERO_FAILURES=0 run k6 run --summary-export "$out-$replicas.json" "$ROOT/tests/k6/m2-aggregator.js"
+  done
+  python3 - "$out" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+def rate(replicas):
+    summary = json.loads(Path(f"{sys.argv[1]}-{replicas}.json").read_text())
+    return summary["metrics"]["responses_200"]["rate"]
+
+one, three = rate(1), rate(3)
+if one <= 0:
+    sys.exit("No successful responses in the one-replica baseline")
+ratio = three / one
+print(f"Successful responses/s: {one:.2f} at 1 replica, {three:.2f} at 3 replicas, ratio {ratio:.3f}×")
+sys.exit(ratio < 2)
+PY
+  exit
+fi
 confirm "Run 10k VU and change Aggregator replicas 3 -> 5 -> 2 in $(kubectl config current-context)?"
 mkdir -p "$ROOT/artifacts/m2/runs"
 out="$ROOT/artifacts/m2/runs/$(date -u +%Y%m%dT%H%M%SZ)-p2-load"

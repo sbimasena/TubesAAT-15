@@ -1,12 +1,16 @@
+import io
 import json
 from pathlib import Path
+import runpy
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import Mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/m2/compare-satellite.py"
+export_events = runpy.run_path(str(SCRIPT.with_name("export-satellite.py")))["export_events"]
 
 
 def fire(keys, severity="WASPADA"):
@@ -50,3 +54,29 @@ class SatelliteComparisonTests(unittest.TestCase):
         result = self.compare({"partial": False, "items": [], "next_cursor": "next"}, [])
         self.assertEqual(result.returncode, 2)
         self.assertIn("following every Audit cursor", result.stderr)
+
+    def test_audit_export_follows_and_encodes_cursor(self):
+        connection = Mock()
+        connection.getresponse.side_effect = [self.page("a&b", [1]), self.page(None, [2])]
+        self.assertEqual(export_events(connection, "test-token"), [1, 2])
+        args = connection.request.call_args
+        self.assertIn("cursor=a%26b", args.args[1])
+        self.assertEqual(args.kwargs["headers"]["Authorization"], "Bearer test-token")
+
+    def test_audit_export_rejects_repeated_cursor_and_degraded_storage(self):
+        connection = Mock()
+        connection.getresponse.side_effect = [self.page("repeat"), self.page("repeat")]
+        with self.assertRaisesRegex(ValueError, "repeated cursor"):
+            export_events(connection, "test-token")
+        connection.getresponse.side_effect = [self.page(None, unavailable=["store-0"])]
+        with self.assertRaisesRegex(ValueError, "storage is degraded"):
+            export_events(connection, "test-token")
+
+    @staticmethod
+    def page(cursor, items=(), unavailable=()):
+        response = io.StringIO(json.dumps({
+            "items": items, "partial": False, "unavailable_units": list(unavailable),
+            "next_cursor": cursor,
+        }))
+        response.status = 200
+        return response

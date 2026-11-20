@@ -82,13 +82,16 @@ p1-surge: ## Lonjakan gempa satu wilayah + ukur tulis per unit: make p1-surge N=
 reset: ## Kembalikan manifest (replika, image) dan mode mock PVMBG ke normal
 	@$(SH) scripts/k8s/ops.sh reset
 
-.PHONY: p2-status p2-load p2-failover
+.PHONY: p2-status p2-load p2-throughput p2-failover
 p2-status: ## Leader lease and Aggregator pod placement
 	kubectl -n sistem-informasi-kebencanaan-bnpb get lease aggregator-leader -o yaml
 	kubectl -n sistem-informasi-kebencanaan-bnpb get pods -l app=aggregator -o wide
 
 p2-load: ## 10k VU + scale 3 to 5 to 2; requires TARGET_URL, optional ROLLOUT_IMAGE
 	@$(SH) scripts/m2/p2-load.sh
+
+p2-throughput: ## Measure successful request throughput at 1 and 3 replicas; requires TARGET_URL
+	@$(SH) scripts/m2/p2-load.sh throughput
 
 p2-failover: ## Tester Agent kill-leader (asks for confirmation)
 	@$(SH) scripts/k8s/ops.sh tester kill-leader
@@ -97,9 +100,12 @@ p2-failover: ## Tester Agent kill-leader (asks for confirmation)
 p4-sample: ## Capture 60 seconds of live SSE using SATELLITE_TOKEN from the environment or .env
 	bash -c 'source scripts/k8s/lib.sh; if [[ -z "$${SATELLITE_TOKEN:-}" ]]; then load_env; fi; exec python3 scripts/m2/satellite-sample.py'
 
-.PHONY: p4-check p4-compare
+.PHONY: p4-check p4-compare p4-export
 p4-check: ## Offline satellite/recovery tests; TEST_DATABASE_URL enables real PostgreSQL checks
 	@$(SH) scripts/m2/p4-check.sh
 
 p4-compare: ## Compare complete satellite exports: make p4-compare ACTUAL=actual.json REFERENCE=reference.json
 	python3 scripts/m2/compare-satellite.py "$(ACTUAL)" "$(REFERENCE)"
+
+p4-export: ## Export all SATELIT Audit events as JSON on stdout
+	@$(SH) scripts/k8s/ops.sh p4-export

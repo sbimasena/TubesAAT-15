@@ -168,3 +168,15 @@ Memerlukan Docker dan Python 3. Image resmi dipatok ke digest dari spek; contain
 `pantai-sample.json` merekam status, latensi tiap request, path/cursor, raw body dalam Base64, hash byte hasil capture, serta status cleanup. Capture tiap respons dibatasi 1 MiB dan ditandai `truncated` bila terpotong; capture terpotong bukan bukti pesan lengkap. `sensor.log` berisi keluaran container. Untuk membaca raw body: `base64.b64decode(sample["raw_base64"])`. Token tidak ditulis ke bukti.
 
 Hasil `SAMPLED` hanya berarti sampling selesai. Ini bukan PASS kriteria P5, benchmark, bukti semua perilaku sensor sudah ditemukan, atau bukti pengiriman alert kritis. Seed/speed tercatat untuk reproduksi fixture, tidak digunakan sebagai aturan ingestion.
+
+## Tes resiliensi adapter Sensor Pantai
+
+```sh
+make p5-resilience
+# Alternatif tanpa make/bash:
+python3 -B scripts/m2/pantai-resilience.py
+```
+
+Memerlukan Docker dan Python 3. Container Go 1.27.1 memakai source read-only dan `--network none`; server HTTP fixture berjalan di dalam container. Tes memakai race detector, clock terkontrol untuk backoff/breaker, dan HTTP timeout nyata. Skenario kontrak image resmi tidak dijalankan oleh command ini; gunakan sampling dan `TEST_PANTAI_URL` untuk itu.
+
+Hasil tersimpan di `artifacts/m2/runs/<waktu>-pantai-resilience-<acak>/`: `tests.jsonl` berisi event Go; `pantai-resilience.json` mencatat scope, commit dasar + `tested_source=WORKSPACE`, command, daftar tes PASS/skip, exit code dan cleanup. Tes gate wajib yang tidak PASS atau tes terpilih yang skip membuat hasil FAIL. `--output-dir <direktori-baru>` mengubah lokasi hasil. `p5_acceptance=false`: ini bukti mekanisme lokal, bukan integrasi runtime, validasi freshness profil ujian, benchmark cluster atau game day.

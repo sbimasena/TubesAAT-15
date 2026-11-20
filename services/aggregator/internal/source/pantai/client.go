@@ -4,6 +4,7 @@ package pantai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +16,8 @@ import (
 
 const responseLimit = 10 << 20
 const captureLimit = 32 << 20
+
+var ErrLeaseVerification = errors.New("pantai: leader verification failed")
 
 type Config struct {
 	BaseURL    string
@@ -72,7 +75,7 @@ func (e *HTTPError) Error() string { return fmt.Sprintf("pantai: upstream HTTP %
 func (c *Client) get(ctx context.Context, path string, query url.Values, correlationID string) (raw []byte, truncated bool, err error) {
 	if c.config.Verify != nil {
 		if err := c.config.Verify(ctx); err != nil {
-			return nil, false, err
+			return nil, false, fmt.Errorf("%w: %w", ErrLeaseVerification, err)
 		}
 	}
 	endpoint := c.config.BaseURL + path

@@ -104,3 +104,15 @@ go test ./internal/source/pantai
 ```
 
 Sampling image resmi yang terisolasi tersedia lewat `make p5-sample`; lihat [panduan skrip](../../scripts/README.md). Hasil sampling tidak membuktikan penerimaan P5.
+
+### Pembatas resiliensi Sensor Pantai
+
+`pantai.NewResilient` membungkus adapter dengan satu call aktif untuk kedua endpoint. Call tambahan ditolak cepat sebagai `GateError`, tanpa antrean goroutine di dalam wrapper. Setelah tiga call logis gagal berturut-turut, breaker `open` selama sepuluh detik; setelah itu hanya satu probe `half_open`. Probe berhasil menutup breaker; kegagalan membuka kembali. Pembatalan caller/kehilangan lease tidak dianggap bukti sumber pulih, dan permit tetap dilepas.
+
+Nilai tuning **sementara, belum final/terukur pada P5**: maksimal dua attempt per call; backoff eksponensial dengan equal jitter, awal 250 ms dan cap dua detik; budget dua retry per window sepuluh detik, dibagi antara endpoint station/observation. Attempt pertama tidak memakai budget retry. Retry hanya untuk error jaringan/timeout, HTTP 408/429/5xx; HTTP 401, pelanggaran kontrak dan kegagalan pemeriksaan data tidak di-retry langsung. Call gagal tetap dikenai backoff ketika budget habis. `Retry-After` detik maupun HTTP-date dihormati, termasuk saat lebih panjang daripada cooldown; penundaan di atas cap dikembalikan cepat untuk dijadwalkan worker, bukan ditunggu di request.
+
+`CheckPage` menerima kebijakan data-health dari worker, termasuk freshness virtual-time yang masih belum final. `HTTP 200` dengan data-health gagal dapat membuka breaker. Tanpa callback, wrapper tidak membuktikan data segar. Envelope invalid tetap dikembalikan bersama raw dan error untuk penyisihan durable; rekaman invalid dalam page tidak otomatis memblokir saudara validnya. Wrapper tidak memajukan cursor, menyimpan hazard/DLQ, atau melakukan fallback cache.
+
+`Status()` mengekspos state, call aktif, kegagalan berturut, jadwal retry, waktu sukses/gagal dan counter attempt/retry/penolakan. Counter attempt menghitung pemanggilan adapter, termasuk kegagalan verifikasi leader sebelum HTTP; bukan metrik pasti request yang mencapai sensor. Status ini belum dipasang pada status API atau Prometheus. Integrasi worker/runtime, cache/stale propagation dan bukti game day masih pending.
+
+`make p5-resilience` menjalankan tes adapter dan fault-injection dengan race detector dalam container terisolasi tanpa jaringan eksternal. Uji mencakup budget bersama, satu probe, `Retry-After`, timeout, pembatalan, penjagaan data-health serta penolakan berulang tanpa request storm; hasilnya tidak menggantikan pengujian sumber BMKG/PVMBG di cluster atau target latensi M1.

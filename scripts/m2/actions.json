@@ -1,5 +1,4 @@
 {
-  "_comment": "Action list for the cluster and acceptance targets in the Makefile.",
   "actions": [
     {"id": "dev-up", "group": "Umum", "label": "Buat/nyalakan cluster k3d", "make": "dev-up", "destructive": false},
     {"id": "dev-down", "group": "Umum", "label": "Hapus cluster k3d", "make": "dev-down", "destructive": true},

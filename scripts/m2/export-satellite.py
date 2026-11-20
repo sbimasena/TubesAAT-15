@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-"""Export all satellite events through the local Audit port-forward."""
-
 from http.client import HTTPConnection, HTTPException
 import json
 import os

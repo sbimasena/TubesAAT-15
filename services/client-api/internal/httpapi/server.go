@@ -44,7 +44,6 @@ func NewHandler(client hazardLister, validator accessValidator, enableProvisiona
 			projectionError(w, err)
 			return
 		}
-		// Reserve fetch capacity for this role after authentication.
 		release, ok := rolePools.acquire(info.Scope)
 		if !ok {
 			w.Header().Set("Retry-After", "1")

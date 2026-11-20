@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-"""Compare canonical satellite fires against a reference export."""
-
 import argparse
 import json
 from pathlib import Path
@@ -34,7 +31,7 @@ def read_fires(path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Compare canonical satellite fires against a reference export.")
     parser.add_argument("actual", type=Path)
     parser.add_argument("reference", type=Path)
     args = parser.parse_args()

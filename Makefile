@@ -1,4 +1,3 @@
-# Cluster operations and acceptance checks. Keep scripts/m2/actions.json in sync.
 # Variables: OVERLAY=dev|cluster, REGISTRY=docker.io/<user>, SKIP_BUILD=1, YES=1.
 
 # Recipes call bash explicitly so they work from PowerShell/cmd (Windows) as well as from

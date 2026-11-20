@@ -23,7 +23,6 @@ func limitRequests(permits chan struct{}, next http.HandlerFunc) http.HandlerFun
 	}
 }
 
-// PoolConfig holds the configurable fetch capacity reserved for each role.
 type PoolConfig struct {
 	Media       int
 	FieldTeam   int

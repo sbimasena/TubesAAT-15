@@ -67,7 +67,6 @@ spec:
           resources:
             requests: {memory: 256Mi}
             limits: {memory: 512Mi}
-          # /health stays ready while any store answers. Allow the 3-second store timeout.
           readinessProbe:
             httpGet: {path: /health, port: http}
             timeoutSeconds: 4

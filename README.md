@@ -23,7 +23,7 @@ Client API tersedia di `http://127.0.0.1:8080` (k3d) atau `http://<IP node>:3008
 | `node-b` (worker) | MacBook Intel (16 GB) | VirtualBox, Ubuntu 24.04, 6 GB / 2 vCPU | `192.168.18.202` |
 | `node-c` (worker) | PC Windows (VM kedua) | VirtualBox, Ubuntu 24.04, 8 GB / 4 vCPU | `192.168.18.203` |
 
-- k3s, satu router (bridged), IP statis. Node tersebar di dua host fisik. Semua node x86_64, karena image Tester Agent dan Sensor Pantai hanya amd64. Langkah perakitan: [docs/m2/setup-cluster.md](docs/m2/setup-cluster.md).
+- k3s, satu router (bridged), IP statis. Node tersebar di dua host fisik. Semua node x86_64, karena image Tester Agent dan Sensor Pantai hanya amd64.
 - **`node-a` bukan target `wipe-node` atau node mati.** Consumer (jurnal di volume local-path) dan stack observabilitas dipaku ke `node-a`. Gangguan node diarahkan ke `node-b`/`node-c`.
 - Data store berada di disk node tempat pod berjalan (`local-path`).
 
@@ -63,6 +63,7 @@ Setiap aksi tersedia sebagai target `make` dan tercatat di `scripts/m2/actions.j
 | Tester Agent | `make tester S=<skenario>` | `kill-store`, `kill-leader`, `partition`, `clock-skew`, `schema`, `wipe-node` (profil practice) |
 | P1 | `make p1-checksum`, `p1-distribution`, `p1-wipe-node`, `p1-amnesia S=store-N`, `p1-load FILE=...`, `p1-surge`, `p1-audit`, `p1-netpol`, `p1-dashboard` | Bandingkan checksum sebelum dan sesudah gangguan. Setelah pemulihan, total baris di ketiga unit semestinya dua kali jumlah event unik. Dashboard tersedia di `http://127.0.0.1:18083/dashboard` setelah `make p1-dashboard`. |
 | P2 | `make p2-status`, `p2-failover`, `p2-load` | Lihat bagian P2 di bawah |
+| P3 | `make p3-check` | Stack Compose terisolasi: DLQ byte-identik, replay/idempotensi, otorisasi Internal Ops, dan laporan 202 yang bertahan setelah penerima SIGKILL. Hasil di `artifacts/m2/runs/`; bukan bukti failover node Kubernetes. |
 | Broker | `make broker-status`, `make broker-recover S=rabbitmq-N` | Anggota cluster dan replika setiap queue; kosongkan disk member yang crash-loop agar bergabung ulang |
 | Pemulihan | `make reset` | Kembalikan manifest dan mode mock PVMBG ke normal |
 

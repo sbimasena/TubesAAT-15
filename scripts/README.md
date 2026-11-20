@@ -136,3 +136,21 @@ python3 -B -m unittest discover -s scripts -p 'test_*.py'
 ```
 
 Untuk pengujian modul Go dan integrasi storage/consumer, lihat [panduan pengujian](../tests/README.md).
+
+## P3 M2: DLQ, replay, dan laporan Tim Lapangan
+
+```sh
+make p3-check
+# Alternatif tanpa make/bash:
+python3 -B scripts/m2/p3-check.py
+```
+
+Memerlukan Docker Engine dengan Compose v2 dan Python 3. Checker membangun sembilan layanan pada project, port, volume, dan kredensial sementara; tidak memakai `.env` pribadi atau menghentikan stack yang sudah berjalan. Generator fixture diatur 3600 detik agar setiap laporan uji dibentuk melalui admin API; polling satu detik. Ini pengujian kebenaran, bukan benchmark dengan konfigurasi default.
+
+Tes race memakai PostgreSQL/RabbitMQ nyata, termasuk backoff, urutan replay per sumber, perlindungan versi, dan deduplikasi. Tes integrasi wajib yang terlewati menyebabkan hasil gagal. Pemeriksaan API mencakup tujuh mode PVMBG, kesamaan ukuran/hash payload DLQ, metadata tanpa raw, akses Internal Ops, serta pemrosesan laporan valid setelah pesan rusak tanpa restart.
+
+Untuk laporan Tim Lapangan, checker menjeda storage, mengirim lima laporan hingga menerima 202, lalu melakukan SIGKILL pada Aggregator sebelum storage dipulihkan. Setelah recovery, seluruh ID harus tersimpan tepat sekali. Broker mati harus menghasilkan 503, bukan 202; retry setelah broker pulih harus berhasil.
+
+`p3-check.json` menyimpan hasil, scope, konfigurasi, bukti per kasus, dan hasil cleanup; `run.log`, `build.log`, serta `*-tests.jsonl` menyimpan langkah dan hasil Go. Kegagalan menyimpan `diagnostics.log`. Resource fixture dibersihkan pada akhir run; volume stack lain tetap dipertahankan. Gunakan `--reports N` (1..50) dan `--output-dir <direktori-baru>` untuk variasi terukur.
+
+`physical_cluster_acceptance=false` berlaku meskipun hasil lokal PASS: pengujian ini tidak membuktikan kehilangan node fisik, quorum broker tiga node, atau failover Kubernetes. Bukti tersebut harus dikumpulkan terpisah pada cluster.

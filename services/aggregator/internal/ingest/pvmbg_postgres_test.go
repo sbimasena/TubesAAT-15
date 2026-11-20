@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/deadletter"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/source"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/store"
 )
@@ -199,5 +200,94 @@ func TestPVMBGPostgresCheckpointWaitsForDeadLetter(t *testing.T) {
 	}
 	if after, err := repo.LoadCursor(ctx, "PVMBG"); err != nil || after != cursor {
 		t.Fatalf("live write failure unexpectedly changed checkpoint: %v", err)
+	}
+}
+
+func TestPVMBGReplayKeepsSourceOrder(t *testing.T) {
+	dbURL := os.Getenv("TEST_DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("set TEST_DATABASE_URL for the PostgreSQL integration test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(context.Background())
+	schema := pgx.Identifier{fmt.Sprintf("replay_order_%d", time.Now().UnixNano())}.Sanitize()
+	exec := func(query string) {
+		t.Helper()
+		if _, err := conn.Exec(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec("CREATE SCHEMA " + schema)
+	defer conn.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
+	u, err := url.Parse(dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := u.Query()
+	params.Set("search_path", schema)
+	u.RawQuery = params.Encode()
+	repo, err := store.OpenRouter(u.String(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	repo.CheckUnits(ctx)
+	if err := repo.LoadMap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	const epoch = 4
+	if err := repo.Fence(ctx, epoch); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(nil, nil, repo, time.Second, nil)
+	if err := m.PrepareTerm(ctx, epoch, func(context.Context) error { return nil }, repo); err != nil {
+		t.Fatal(err)
+	}
+	first := []byte(`{"report_id":"ordered","volcano_id":"V-001","reported_at":"2026-11-19T00:00:00Z","status":"SIAGA"}`)
+	second := []byte(`{"report_id":"ordered","volcano_id":"V-001","reported_at":"2026-11-19T00:00:01Z","status":"AWAS"}`)
+	ids := make([]string, 0, 2)
+	for i, raw := range [][]byte{first, second} {
+		id := fmt.Sprintf("pvmbg:%x", sha256.Sum256(raw))
+		ids = append(ids, id)
+		msg := deadletter.Message{MessageID: id, Source: "PVMBG", SourceRefID: "ordered", Raw: raw,
+			Reason: deadletter.ReasonSchemaIncompatible, Attempts: 1, Status: deadletter.StatusParked,
+			ReceivedAt: time.Now().UTC().Add(time.Duration(i) * time.Second)}
+		if err := repo.RecordPVMBG(ctx, epoch, msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.QueuePVMBGReplay(ctx, epoch, ids); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, "UPDATE "+schema+".unprocessed_messages SET next_retry_at=CURRENT_TIMESTAMP+interval '1 hour' WHERE message_id=$1", ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := repo.PendingPVMBGReplay(ctx, time.Now()); err != nil || pending != nil {
+		t.Fatalf("newer revision bypassed the delayed head: pending=%v err=%v", pending, err)
+	}
+	exec("UPDATE " + schema + ".unprocessed_messages SET next_retry_at=CURRENT_TIMESTAMP")
+	for i, severity := range []string{"SIAGA", "AWAS"} {
+		if err := m.retryPVMBG(ctx, "ordered-replay"); err != nil {
+			t.Fatal(err)
+		}
+		var got string
+		if err := conn.QueryRow(ctx, "SELECT severity FROM "+schema+".hazard_events WHERE source_ref_id='ordered'").Scan(&got); err != nil || got != severity {
+			t.Fatalf("replay step %d: severity=%s want=%s err=%v", i, got, severity, err)
+		}
+	}
+	if err := repo.QueuePVMBGReplay(ctx, epoch, ids); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.retryPVMBG(ctx, "duplicate-replay"); err != nil {
+		t.Fatal(err)
+	}
+	var hazards, snapshots int
+	if err := conn.QueryRow(ctx, "SELECT (SELECT count(*) FROM "+schema+".hazard_events),(SELECT count(*) FROM "+schema+".hazard_outbox)").Scan(&hazards, &snapshots); err != nil || hazards != 1 || snapshots != 2 {
+		t.Fatalf("replay dedup: hazards=%d snapshots=%d err=%v", hazards, snapshots, err)
 	}
 }

@@ -94,6 +94,10 @@ p2-load: ## 10k VU + scale 3 to 5 to 2; requires TARGET_URL, optional ROLLOUT_IM
 p2-failover: ## Tester Agent kill-leader (asks for confirmation)
 	@$(SH) scripts/k8s/ops.sh tester kill-leader
 
+.PHONY: p3-check
+p3-check: ## Isolated P3 checks with real PostgreSQL/RabbitMQ; no existing stack is changed
+	@$(SH) scripts/m2/p3-check.sh
+
 .PHONY: p4-sample
 p4-sample: ## Capture 60 seconds of live SSE using SATELLITE_TOKEN from the environment or .env
 	bash -c 'source scripts/k8s/lib.sh; if [[ -z "$${SATELLITE_TOKEN:-}" ]]; then load_env; fi; exec python3 scripts/m2/satellite-sample.py'

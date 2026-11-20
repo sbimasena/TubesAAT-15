@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+// idleTimeout keeps a connection alive long enough to serve a burst but short
+// enough that Kubernetes Service balancing can move later requests to another
+// Aggregator replica. Long-lived keep-alive connections pin to one pod.
+const idleTimeout = 2 * time.Second
+
 // New retains a bounded idle pool for the default 64 admitted requests instead
 // of the standard transport's two idle connections per dependency. Auth still
 // validates every request; only TCP connections are reused.
@@ -13,6 +18,7 @@ func New(timeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns = 64
 	transport.MaxIdleConnsPerHost = 64
+	transport.IdleConnTimeout = idleTimeout
 	return &http.Client{
 		Transport: transport,
 		Timeout:   timeout,

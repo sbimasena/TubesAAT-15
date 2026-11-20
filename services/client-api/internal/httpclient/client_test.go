@@ -63,3 +63,23 @@ func TestConcurrentWavesReuseDependencyConnections(t *testing.T) {
 		}
 	}
 }
+
+func TestNewExpiresIdleConnectionsForRebalancing(t *testing.T) {
+	client := New(5 * time.Second)
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport type = %T", client.Transport)
+	}
+	if transport.IdleConnTimeout != 2*time.Second {
+		t.Fatalf("IdleConnTimeout = %s, want 2s", transport.IdleConnTimeout)
+	}
+	if transport.MaxIdleConns != 64 || transport.MaxIdleConnsPerHost != 64 {
+		t.Fatalf("idle pool = %d/%d, want 64/64", transport.MaxIdleConns, transport.MaxIdleConnsPerHost)
+	}
+	if client.Timeout != 5*time.Second {
+		t.Fatalf("Timeout = %s, want 5s", client.Timeout)
+	}
+	if err := client.CheckRedirect(nil, nil); err != http.ErrUseLastResponse {
+		t.Fatalf("CheckRedirect error = %v, want ErrUseLastResponse", err)
+	}
+}

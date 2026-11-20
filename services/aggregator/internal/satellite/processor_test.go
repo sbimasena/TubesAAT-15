@@ -109,6 +109,25 @@ func TestRestoreStopsBeforeReadingWhenTermIsLost(t *testing.T) {
 	}
 }
 
+func TestProcessorUsesConfiguredLateness(t *testing.T) {
+	processor, err := NewProcessor(&termRepository{}, 1, func(context.Context) error { return nil }, WithLateness(6*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := processor.Restore(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if processor.checkpoint.State.Lateness != 6*time.Hour {
+		t.Fatalf("lateness = %s, want 6h", processor.checkpoint.State.Lateness)
+	}
+}
+
+func TestProcessorRejectsInvalidLateness(t *testing.T) {
+	if _, err := NewProcessor(&termRepository{}, 1, func(context.Context) error { return nil }, WithLateness(0)); err == nil {
+		t.Fatal("non-positive lateness accepted")
+	}
+}
+
 func TestProcessorRecoversPendingEffectsFromPostgres(t *testing.T) {
 	router := postgresRouter(t)
 	ctx := context.Background()

@@ -12,8 +12,8 @@ import (
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/domain"
 )
 
-// DefaultLateness is provisional virtual/event time, not 24 hours of wall time.
-// All over-limit detections are retained and counted; observation may tune it.
+// DefaultLateness is a safe virtual/event-time default until the feed
+// distribution is measured. All over-limit detections are retained and counted.
 const DefaultLateness = 24 * time.Hour
 
 // Mutation represents one ordered change to the satellite checkpoint.
@@ -46,7 +46,14 @@ type Projection struct {
 }
 
 func NewState() *State {
-	return &State{Offset: -1, Lateness: DefaultLateness, Detections: map[string]Detection{}, Owners: map[string]string{}, Seen: map[string]bool{}, Events: map[string]domain.HazardEvent{}}
+	return NewStateWithLateness(DefaultLateness)
+}
+
+func NewStateWithLateness(lateness time.Duration) *State {
+	if lateness <= 0 {
+		lateness = DefaultLateness
+	}
+	return &State{Offset: -1, Lateness: lateness, Detections: map[string]Detection{}, Owners: map[string]string{}, Seen: map[string]bool{}, Events: map[string]domain.HazardEvent{}}
 }
 func (s *State) Watermark() time.Time {
 	if s.MaxEventTime.IsZero() {

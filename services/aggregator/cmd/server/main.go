@@ -142,6 +142,7 @@ func main() {
 		return 0
 	})
 	var satelliteClient *satellite.StreamClient
+	satelliteLateness := positiveSecondsFromEnv("SATELLITE_LATENESS_SECONDS", 86400)
 	if token := os.Getenv("SATELLITE_TOKEN"); token != "" {
 		satelliteClient, err = satellite.NewStreamClient(satellite.FeedURL, token)
 		if err != nil {
@@ -185,7 +186,7 @@ func main() {
 				// Satellite processing is a leader-only module: follower replicas
 				// never open the feed or write fire state.
 				workers.Go(func() {
-					if err := satellite.RunWorker(term, satelliteClient, repository, epoch, election.Verify, logger); err != nil && term.Err() == nil {
+					if err := satellite.RunWorker(term, satelliteClient, repository, epoch, election.Verify, logger, satellite.WithLateness(satelliteLateness)); err != nil && term.Err() == nil {
 						logger.Error("Satellite worker stopped", "error", err)
 					}
 				})

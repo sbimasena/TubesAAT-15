@@ -155,14 +155,19 @@ func main() {
 		defer close(leaderDone)
 		err := election.Run(ctx, func(term context.Context, epoch int64) {
 			term = store.WithWriteVerifier(term, election.Verify)
-			if err := repository.Fence(term, epoch); err != nil {
-				logger.Error("leader fence failed", "epoch", epoch, "error", err)
-				stop()
-				return
-			}
-			if err := manager.PrepareTerm(term, epoch, election.Verify, repository); err != nil {
-				logger.Error("leader checkpoint load failed", "error", err)
-				stop()
+			if err := prepareLeaderTerm(
+				term, leaderPrepareAttemptTimeout, leaderPrepareRetryInterval, election.Verify,
+				func(attempt context.Context) error {
+					if err := repository.Fence(attempt, epoch); err != nil {
+						return fmt.Errorf("storage fence: %w", err)
+					}
+					return manager.PrepareTerm(attempt, epoch, election.Verify, repository)
+				}, logger,
+			); err != nil {
+				if term.Err() == nil {
+					logger.Error("leader storage preparation failed", "error", err)
+					stop()
+				}
 				return
 			}
 			logger.Info("leader workers starting", "epoch", epoch, "pod", os.Getenv("POD_NAME"))

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ func page(items, next string) pantai.Batch {
 
 type fakeSource struct {
 	batch  pantai.Batch
+	fetch  func(string) (pantai.Batch, error)
 	cursor string
 	calls  int
 }
@@ -32,6 +34,9 @@ func (f *fakeSource) Stations(context.Context, string) ([]pantai.Station, error)
 func (f *fakeSource) Observations(_ context.Context, cursor string, _ int, _ string) (pantai.Batch, error) {
 	f.calls++
 	f.cursor = cursor
+	if f.fetch != nil {
+		return f.fetch(cursor)
+	}
 	return f.batch, nil
 }
 
@@ -206,6 +211,102 @@ func TestCoastalVirtualClockStallKeepsDataButMarksUnhealthy(t *testing.T) {
 	}
 	if p.state.GeneratedAt.Year() != 2026 {
 		t.Fatal("host clock replaced virtual timestamps")
+	}
+}
+
+func TestCoastalRecoversFromSensorRestart(t *testing.T) {
+	ctx := context.Background()
+	repo := newMemory()
+	source := &fakeSource{batch: page(normalRecord, `"reused"`)}
+	source.batch.GeneratedAt = source.batch.GeneratedAt.Add(72 * time.Hour)
+	oldGeneratedAt := source.batch.GeneratedAt
+	p := processor(t, source, repo)
+	if err := p.Poll(ctx, "initial"); err != nil {
+		t.Fatal(err)
+	}
+	source.batch = page("", `"old-offset"`)
+	source.batch.GeneratedAt = oldGeneratedAt
+	if err := p.Poll(ctx, "advance"); err != nil {
+		t.Fatal(err)
+	}
+	oldCheckpoint := repo.cursor
+
+	// A new leader can recover using only the old durable checkpoint. The
+	// old offset returns a regressed page whose records cannot be trusted.
+	p = processor(t, source, repo)
+	var requested []string
+	restarted := page(normalRecord+",null", `"reused"`)
+	source.fetch = func(cursor string) (pantai.Batch, error) {
+		requested = append(requested, cursor)
+		switch cursor {
+		case "old-offset":
+			return page(strings.Replace(normalRecord, "independent-ref", "skip-old-offset", 1), `null`), nil
+		case "":
+			return restarted, nil
+		case "reused":
+			return page(strings.Replace(normalRecord, "independent-ref", "next-record", 1), `"new-offset"`), nil
+		default:
+			t.Fatalf("unexpected cursor %q", cursor)
+			return pantai.Batch{}, nil
+		}
+	}
+	repo.fail = "checkpoint"
+	if err := p.Poll(ctx, "write-fails"); err == nil || repo.cursor != oldCheckpoint ||
+		p.state.Cursor != "old-offset" || !p.state.GeneratedAt.Equal(oldGeneratedAt) {
+		t.Fatal("failure replaced the old durable or in-memory checkpoint")
+	}
+	repo.fail = ""
+	if err := p.Poll(ctx, "recover"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(requested, []string{"old-offset", "", "old-offset", ""}) ||
+		!slices.Equal(p.state.CursorHistory, []string{cursorHash("reused")}) ||
+		!p.state.GeneratedAt.Equal(restarted.GeneratedAt) || !p.state.Status.Available ||
+		len(repo.events) != 1 || len(repo.dlq) != 1 || p.client.Status().State != "closed" {
+		t.Fatalf("recovery failed: requests=%v state=%+v events=%d dlq=%d", requested, p.state, len(repo.events), len(repo.dlq))
+	}
+	for _, msg := range repo.dlq {
+		if msg.Position != "" {
+			t.Fatal("replay DLQ item was attributed to the old cursor")
+		}
+	}
+	p = processor(t, source, repo)
+	if err := p.Poll(ctx, "resume"); err != nil || source.cursor != "reused" ||
+		p.state.Cursor != "new-offset" || len(repo.events) != 2 {
+		t.Fatalf("worker did not resume from replacement checkpoint: cursor=%q err=%v", source.cursor, err)
+	}
+}
+
+func TestCoastalDoesNotResetWithoutValidRegressedHead(t *testing.T) {
+	for _, scenario := range []string{"current", "malformed", "upstream error"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx := context.Background()
+			repo := newMemory()
+			source := &fakeSource{batch: page(normalRecord, `"old"`)}
+			source.batch.GeneratedAt = source.batch.GeneratedAt.Add(time.Hour)
+			p := processor(t, source, repo)
+			if err := p.Poll(ctx, "initial"); err != nil {
+				t.Fatal(err)
+			}
+			oldCheckpoint := repo.cursor
+			source.fetch = func(cursor string) (pantai.Batch, error) {
+				if cursor == "old" {
+					return page("", `null`), nil
+				}
+				switch scenario {
+				case "malformed":
+					return pantai.DecodeBatch([]byte(`{"broken":`)), nil
+				case "upstream error":
+					return pantai.Batch{}, &pantai.HTTPError{StatusCode: 401}
+				default:
+					return source.batch, nil
+				}
+			}
+			if err := p.Poll(ctx, "unconfirmed"); err == nil || repo.cursor != oldCheckpoint ||
+				p.state.Cursor != "old" || len(repo.events) != 1 {
+				t.Fatalf("unconfirmed restart changed ingest state: %v", err)
+			}
+		})
 	}
 }
 

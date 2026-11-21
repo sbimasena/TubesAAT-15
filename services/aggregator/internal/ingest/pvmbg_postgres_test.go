@@ -49,7 +49,7 @@ func TestPVMBGPostgresCheckpointWaitsForDeadLetter(t *testing.T) {
 	params := u.Query()
 	params.Set("search_path", schema)
 	u.RawQuery = params.Encode()
-	repo, err := store.OpenRouter(u.String(), nil)
+	repo, err := store.OpenRouterWithMemoryMap(u.String(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestPVMBGReplayKeepsSourceOrder(t *testing.T) {
 	params := u.Query()
 	params.Set("search_path", schema)
 	u.RawQuery = params.Encode()
-	repo, err := store.OpenRouter(u.String(), nil)
+	repo, err := store.OpenRouterWithMemoryMap(u.String(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

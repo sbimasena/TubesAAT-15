@@ -34,11 +34,16 @@ curl_auth() {
 # forward runs a background port-forward and waits until the local port answers.
 forward() {
   local target="$1" ports="$2"
+  if (exec 3<>"/dev/tcp/127.0.0.1/${ports%%:*}") 2>/dev/null; then
+    die "local port ${ports%%:*} is already in use"
+  fi
   echo "+ kubectl -n $NS port-forward $target $ports" >&2
   kubectl -n "$NS" port-forward "$target" "$ports" >/dev/null &
-  FORWARDS+=("$!")
+  local pid=$!
+  FORWARDS+=("$pid")
   for _ in $(seq 50); do
-    (exec 3<>"/dev/tcp/127.0.0.1/${ports%%:*}") 2>/dev/null && return 0
+    kill -0 "$pid" 2>/dev/null || break
+    (exec 3<>"/dev/tcp/127.0.0.1/${ports%%:*}") 2>/dev/null && kill -0 "$pid" 2>/dev/null && return 0
     sleep 0.2
   done
   die "port-forward to $target did not become ready"
@@ -130,6 +135,13 @@ case "${1:-}" in
     echo "Jaeger (trace per request, cari service aggregator): http://127.0.0.1:16686"
     echo "Press Ctrl+C to close the port-forwards."
     wait
+    ;;
+  p4-export)
+    need python3
+    token="$(secret_value audit-token token)"
+    [[ -n "$token" ]] || die "Audit token is empty"
+    forward svc/aggregator 18083:8083
+    AUDIT_TOKEN="$token" python3 "$ROOT/scripts/m2/export-satellite.py"
     ;;
   p1-checksum)
     # Audit API checksum per source and over all sources (kontrak-m2.md §7.3).

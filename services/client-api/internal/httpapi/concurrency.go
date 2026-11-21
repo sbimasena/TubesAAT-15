@@ -23,9 +23,6 @@ func limitRequests(permits chan struct{}, next http.HandlerFunc) http.HandlerFun
 	}
 }
 
-// PoolConfig holds per-role fetch capacities (P5.5 load shedding). DRAFT
-// (16 Nov 2026, keputusan pengguna): nilai default 40/20/4 belum final dan
-// akan ditinjau setelah load test P2/P5; kapasitas dapat di-override via env.
 type PoolConfig struct {
 	Media       int
 	FieldTeam   int

@@ -7,8 +7,8 @@ import (
 )
 
 // ParkReport retains the original bytes on EVERY current write target before
-// permitting ack. unprocessed_messages rows have no anti-entropy copy yet, so
-// accepting just one replica would falsely promise RF=2 durability.
+// permitting ack. Anti-entropy would copy a single dead letter later, but until
+// then accepting just one replica would falsely promise RF=2 durability.
 // Content-derived IDs make redelivery idempotent even for malformed JSON.
 func (r *Router) ParkReport(ctx context.Context, raw []byte, reason string, attempts int) error {
 	id := fmt.Sprintf("field-report:%x", sha256.Sum256(raw))

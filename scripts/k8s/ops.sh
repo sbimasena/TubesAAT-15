@@ -4,10 +4,32 @@ source "$(dirname "$0")/lib.sh"
 need kubectl
 
 FORWARDS=()
+AUTH_FILES=()
 cleanup() {
   for pid in "${FORWARDS[@]}"; do kill "$pid" 2>/dev/null || true; done
+  for file in "${AUTH_FILES[@]}"; do rm -f -- "$file"; done
 }
 trap cleanup EXIT
+
+# curl reads the header from a short-lived private file. Keep bearer credentials
+# out of curl argv and logs, including when a request fails.
+curl_auth() {
+  local token="$1"
+  shift
+  local header_file status
+  [[ "$token" != *$'\n'* && "$token" != *$'\r'* ]] || die "token contains an invalid header line break"
+  header_file="$(mktemp "${TMPDIR:-/tmp}/bnpb-curl-auth.XXXXXX")"
+  AUTH_FILES+=("$header_file")
+  chmod 600 "$header_file"
+  printf 'Authorization: Bearer %s\n' "$token" >"$header_file"
+  if curl --header "@$header_file" "$@"; then
+    status=0
+  else
+    status=$?
+  fi
+  rm -f -- "$header_file"
+  return "$status"
+}
 
 # forward runs a background port-forward and waits until the local port answers.
 forward() {
@@ -70,8 +92,8 @@ case "${1:-}" in
     forward svc/pvmbg 18082:8082
     for call in "schema-version {\"version\":1}" "outage {\"enabled\":false}"; do
       echo "+ curl -X POST http://127.0.0.1:18082/admin/${call%% *} -d '${call#* }'" >&2
-      curl -fsS -X POST "http://127.0.0.1:18082/admin/${call%% *}" \
-        -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d "${call#* }"
+      curl_auth "$token" -fsS -X POST "http://127.0.0.1:18082/admin/${call%% *}" \
+        -H "Content-Type: application/json" -d "${call#* }"
       echo
     done
     ;;
@@ -115,7 +137,7 @@ case "${1:-}" in
     forward svc/aggregator 18083:8083
     for source in BMKG PVMBG SATELIT SENSOR_PANTAI ""; do
       echo "+ curl http://127.0.0.1:18083/internal/audit/checksum?source=$source" >&2
-      curl -sS "http://127.0.0.1:18083/internal/audit/checksum?source=$source" -H "Authorization: Bearer $token"
+      curl_auth "$token" -sS "http://127.0.0.1:18083/internal/audit/checksum?source=$source"
     done
     ;;
   p1-distribution)
@@ -173,11 +195,11 @@ SQL
     # The other two Audit API endpoints (kontrak-m2.md §7): a cursor page, then where one event lives.
     token="$(secret_value audit-token token)"
     forward svc/aggregator 18083:8083
-    page="$(curl -fsS "http://127.0.0.1:18083/internal/audit/events?source=BMKG&limit=2" -H "Authorization: Bearer $token")"
+    page="$(curl_auth "$token" -fsS "http://127.0.0.1:18083/internal/audit/events?source=BMKG&limit=2")"
     echo "events: $page"
     id="$(grep -o '"hazard_id":"[^"]*"' <<<"$page" | head -1 | cut -d'"' -f4)"
     [[ -n "$id" ]] || die "tidak ada event BMKG untuk dicari lokasinya"
-    echo "location $id: $(curl -fsS "http://127.0.0.1:18083/internal/audit/location?hazard_id=$id" -H "Authorization: Bearer $token")"
+    echo "location $id: $(curl_auth "$token" -fsS "http://127.0.0.1:18083/internal/audit/location?hazard_id=$id")"
     echo "harapan: 2 lokasi (primary + replica) di node berbeda"
     ;;
   p1-load|p1-surge)
@@ -224,7 +246,7 @@ SQL
     echo "memuat $(wc -l <"$work/events") event dalam potongan ${CHUNK:-100}"
     started=$(date +%s)
     for chunk in "$work"/chunk.*; do
-      curl -fsS -X POST http://127.0.0.1:18083/internal/admin/load -H "Authorization: Bearer $token" \
+      curl_auth "$token" -fsS -X POST http://127.0.0.1:18083/internal/admin/load \
         -H "Content-Type: application/x-ndjson" --data-binary "@$chunk" -w " http_s=%{time_total}\n" \
         || die "potongan $chunk gagal; muat ulang aman (upsert idempoten per event_id)"
     done

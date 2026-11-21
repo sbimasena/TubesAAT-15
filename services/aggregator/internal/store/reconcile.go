@@ -213,7 +213,7 @@ func (r *Router) syncFromAny(ctx context.Context, epoch int64, p int, sources []
 }
 
 // antiEntropy compares (count, max ingested_at) between the replicas of every partition
-// and copies both ways when they differ: the replica that was down catches up.
+// and, when they differ, copies only the differing rows both ways: the replica that was down catches up.
 // shortcut: the digest misses an update that leaves count and max(ingested_at) equal;
 // hash the rows if that shows up.
 func (r *Router) antiEntropy(ctx context.Context, epoch int64, l *layout, dead func(*unit) bool) {
@@ -229,14 +229,80 @@ func (r *Router) antiEntropy(ctx context.Context, epoch int64, l *layout, dead f
 			if d.err != nil || digests[0].err != nil || d.value == digests[0].value {
 				continue
 			}
-			for _, pair := range [][2]*unit{{digests[0].unit, d.unit}, {d.unit, digests[0].unit}} {
-				if err := r.syncPartition(ctx, epoch, p, pair[0], pair[1]); err != nil {
-					r.log(slog.LevelWarn, "anti-entropy copy failed", "partition", p,
-						"from", pair[0].name, "to", pair[1].name, "error", err)
-				}
+			if err := r.syncDelta(ctx, epoch, p, digests[0].unit, d.unit); err != nil {
+				r.log(slog.LevelWarn, "anti-entropy copy failed", "partition", p,
+					"between", digests[0].unit.name+","+d.unit.name, "error", err)
 			}
 		}
 	}
+}
+
+// syncDelta diffs the row indexes of a and b and copies, each way, only the events the
+// other replica lacks or holds with an older ingested_at, and the missing field reports.
+func (r *Router) syncDelta(ctx context.Context, epoch int64, p int, a, b *unit) error {
+	ctx, cancel := context.WithTimeout(ctx, syncTimeout)
+	defer cancel()
+	idx := gather(ctx, []*unit{a, b}, syncTimeout, func(ctx context.Context, u *unit) (partitionIndex, error) {
+		return u.repo.index(ctx, p)
+	})
+	for _, x := range idx {
+		if x.err != nil {
+			return fmt.Errorf("index %s: %w", x.unit.name, x.err)
+		}
+	}
+	for _, pair := range [][2]result[partitionIndex]{{idx[0], idx[1]}, {idx[1], idx[0]}} {
+		if err := r.copyDelta(ctx, epoch, p, pair[0], pair[1]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// missingFrom lists what src holds that dst lacks: events absent or older on dst, and reports absent on dst.
+func missingFrom(src, dst partitionIndex) (eventIDs, reportIDs []string) {
+	for id, at := range src.events {
+		if have, ok := dst.events[id]; !ok || at > have {
+			eventIDs = append(eventIDs, id)
+		}
+	}
+	for id := range src.reports {
+		if !dst.reports[id] {
+			reportIDs = append(reportIDs, id)
+		}
+	}
+	return eventIDs, reportIDs
+}
+
+func (r *Router) copyDelta(ctx context.Context, epoch int64, p int, src, dst result[partitionIndex]) error {
+	eventIDs, reportIDs := missingFrom(src.value, dst.value)
+	if len(eventIDs) == 0 && len(reportIDs) == 0 {
+		return nil
+	}
+	if err := verifyWrite(ctx); err != nil {
+		return err
+	}
+	var copied, reportsCopied int64
+	if len(eventIDs) > 0 {
+		events, err := src.unit.repo.exportEvents(ctx, eventIDs)
+		if err != nil {
+			return fmt.Errorf("export from %s: %w", src.unit.name, err)
+		}
+		if copied, err = dst.unit.repo.importPartition(ctx, epoch, events); err != nil {
+			return fmt.Errorf("import into %s: %w", dst.unit.name, err)
+		}
+	}
+	if len(reportIDs) > 0 {
+		reports, err := src.unit.repo.exportReportsByID(ctx, reportIDs)
+		if err != nil {
+			return fmt.Errorf("export reports from %s: %w", src.unit.name, err)
+		}
+		if reportsCopied, err = dst.unit.repo.importReports(ctx, epoch, reports); err != nil {
+			return fmt.Errorf("import reports into %s: %w", dst.unit.name, err)
+		}
+	}
+	r.log(slog.LevelInfo, "partition rows copied", "partition", p, "from", src.unit.name, "to", dst.unit.name,
+		"rows", copied, "reports", reportsCopied)
+	return nil
 }
 
 // planMoves starts re-replication away from dead units and, when every unit is healthy,

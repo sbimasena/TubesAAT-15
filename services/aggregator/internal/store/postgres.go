@@ -460,6 +460,39 @@ func (r *PostgresRepository) digest(ctx context.Context, p int) (partitionDigest
 	return d, err
 }
 
+// partitionIndex is what anti-entropy diffs, so only differing rows cross the network.
+type partitionIndex struct {
+	events  map[string]int64 // hazard_id -> ingested_at unix micros
+	reports map[string]bool
+}
+
+func (r *PostgresRepository) index(ctx context.Context, p int) (partitionIndex, error) {
+	idx := partitionIndex{events: map[string]int64{}, reports: map[string]bool{}}
+	rows, err := r.pool.Query(ctx, `SELECT hazard_id, ingested_at FROM hazard_events WHERE partition_id = $1`, p)
+	if err != nil {
+		return idx, err
+	}
+	var id string
+	var at time.Time
+	if _, err := pgx.ForEachRow(rows, []any{&id, &at}, func() error { idx.events[id] = at.UnixMicro(); return nil }); err != nil {
+		return idx, err
+	}
+	rows, err = r.pool.Query(ctx, `SELECT report_id FROM field_reports WHERE partition_id = $1`, p)
+	if err != nil {
+		return idx, err
+	}
+	_, err = pgx.ForEachRow(rows, []any{&id}, func() error { idx.reports[id] = true; return nil })
+	return idx, err
+}
+
+func (r *PostgresRepository) exportEvents(ctx context.Context, ids []string) ([]domain.HazardEvent, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+eventColumns+` FROM hazard_events WHERE hazard_id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	return scanEvents(rows)
+}
+
 // exportPartition reads every row of partition p for a copy to another unit.
 // shortcut: loads the partition in memory (dataset / 24 rows); stream it if partitions grow past ~50k rows.
 func (r *PostgresRepository) exportPartition(ctx context.Context, p int) ([]domain.HazardEvent, error) {

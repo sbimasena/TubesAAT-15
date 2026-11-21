@@ -142,15 +142,7 @@ func (m *Manager) pollBMKG(ctx context.Context, correlationID string) {
 		}
 	}
 	m.pruneBMKGCacheLocked()
-	// A skewed upstream clock must not push cursors beyond local time, otherwise
-	// recent events fall outside the next polling window and disappear.
 	now := time.Now().UTC()
-	if eventCursor.After(now) {
-		eventCursor = now
-	}
-	if warningCursor.After(now) {
-		warningCursor = now
-	}
 	canonical := make([]domain.HazardEvent, 0, len(touched))
 	unresolvedWarning := false
 	for eventID := range touched {
@@ -175,6 +167,15 @@ func (m *Manager) pollBMKG(ctx context.Context, correlationID string) {
 			warningPtr = &warning
 		}
 		canonical = append(canonical, domain.MapSeismic(event, warningPtr, time.Now().UTC()))
+	}
+	// A skewed clock (upstream, or ours during a skew) must not leave cursors beyond
+	// local time, otherwise recent events fall outside the next polling window and
+	// disappear. Capped after the loop so the unresolved-warning fallback is capped too.
+	if eventCursor.After(now) {
+		eventCursor = now
+	}
+	if warningCursor.After(now) {
+		warningCursor = now
 	}
 	m.mu.Unlock()
 	if unresolvedWarning {

@@ -76,7 +76,7 @@ func (m *memoryRepo) SaveCursorReplicated(_ context.Context, _ int64, _, raw str
 
 func processor(t *testing.T, source *fakeSource, repo Repository) *Processor {
 	t.Helper()
-	p, err := NewProcessor(repo, source, 3, func(context.Context) error { return nil }, 10*time.Second, 100)
+	p, err := NewProcessor(repo, source, 3, func(context.Context) error { return nil }, 10*time.Second, 100, pantai.DefaultResilienceConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestCoastalLeaseLossPreventsAllEffects(t *testing.T) {
 func TestCoastalCheckpointRejectsCorruption(t *testing.T) {
 	repo := newMemory()
 	repo.cursor = `{"cursor":123}`
-	p, err := NewProcessor(repo, &fakeSource{}, 1, func(context.Context) error { return nil }, time.Second, 10)
+	p, err := NewProcessor(repo, &fakeSource{}, 1, func(context.Context) error { return nil }, time.Second, 10, pantai.DefaultResilienceConfig())
 	if err != nil {
 		t.Fatal(err)
 	}

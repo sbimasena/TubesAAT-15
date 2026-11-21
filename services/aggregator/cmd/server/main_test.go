@@ -26,6 +26,38 @@ func TestCoastalEnvironmentConfiguration(t *testing.T) {
 	}
 }
 
+func TestCoastalResilienceEnvironment(t *testing.T) {
+	t.Setenv("PANTAI_BREAKER_FAILURE_THRESHOLD", "4")
+	t.Setenv("PANTAI_BREAKER_OPEN_MS", "12000")
+	t.Setenv("PANTAI_MAX_ATTEMPTS", "3")
+	t.Setenv("PANTAI_RETRY_WINDOW_MS", "15000")
+	t.Setenv("PANTAI_RETRIES_PER_WINDOW", "0")
+	config, err := coastalConfigFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := config.Resilience
+	if got.FailureThreshold != 4 || got.OpenFor != 12*time.Second || got.MaxAttempts != 3 ||
+		got.RetryWindow != 15*time.Second || got.RetriesPerWindow != 0 ||
+		got.RetryBase != 250*time.Millisecond || got.RetryMax != 2*time.Second {
+		t.Fatal("unexpected Pantai resilience settings")
+	}
+	for name, invalid := range map[string]string{
+		"PANTAI_BREAKER_FAILURE_THRESHOLD": "0",
+		"PANTAI_BREAKER_OPEN_MS":           "9223372036854775807",
+		"PANTAI_MAX_ATTEMPTS":              "11",
+		"PANTAI_RETRY_WINDOW_MS":           "0",
+		"PANTAI_RETRIES_PER_WINDOW":        "-1",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, invalid)
+			if _, err := coastalConfigFromEnv(); err == nil || !strings.Contains(err.Error(), name) {
+				t.Fatalf("invalid %s: expected a named configuration error, got %v", name, err)
+			}
+		})
+	}
+}
+
 func TestInspectLocalAPI(t *testing.T) {
 	status, correlation := http.StatusOK, "inspect-test"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

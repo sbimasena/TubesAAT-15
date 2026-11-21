@@ -76,10 +76,21 @@ type Resilient struct {
 	jitter    func(time.Duration) time.Duration
 }
 
+// Validate checks the resilience settings before a leader starts its worker.
+func (c ResilienceConfig) Validate() error {
+	if c.FailureThreshold < 1 || c.OpenFor <= 0 || c.MaxAttempts < 1 || c.MaxAttempts > 10 ||
+		c.RetryBase <= 0 || c.RetryMax < c.RetryBase || c.RetryWindow <= 0 || c.RetriesPerWindow < 0 {
+		return fmt.Errorf("pantai: invalid resilience configuration")
+	}
+	return nil
+}
+
 func NewResilient(upstream Upstream, config ResilienceConfig) (*Resilient, error) {
-	if upstream == nil || config.FailureThreshold < 1 || config.OpenFor <= 0 || config.MaxAttempts < 1 || config.MaxAttempts > 10 ||
-		config.RetryBase <= 0 || config.RetryMax < config.RetryBase || config.RetryWindow <= 0 || config.RetriesPerWindow < 0 {
-		return nil, fmt.Errorf("pantai: invalid resilience configuration")
+	if upstream == nil {
+		return nil, fmt.Errorf("pantai: missing upstream")
+	}
+	if err := config.Validate(); err != nil {
+		return nil, err
 	}
 	return &Resilient{upstream: upstream, config: config, status: ResilienceStatus{State: "closed"},
 		now: time.Now, wait: waitContext, jitter: func(delay time.Duration) time.Duration {

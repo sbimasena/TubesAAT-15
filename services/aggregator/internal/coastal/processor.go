@@ -49,12 +49,11 @@ type Processor struct {
 	now        func() time.Time
 }
 
-func NewProcessor(repo Repository, upstream pantai.Upstream, epoch int64, verify func(context.Context) error, staleAfter time.Duration, limit int) (*Processor, error) {
+func NewProcessor(repo Repository, upstream pantai.Upstream, epoch int64, verify func(context.Context) error, staleAfter time.Duration, limit int, config pantai.ResilienceConfig) (*Processor, error) {
 	if repo == nil || verify == nil || staleAfter <= 0 || limit < 1 || limit > 1000 {
 		return nil, fmt.Errorf("invalid coastal processor configuration")
 	}
 	p := &Processor{repo: repo, epoch: epoch, verify: verify, staleAfter: staleAfter, limit: limit, now: time.Now}
-	config := pantai.DefaultResilienceConfig()
 	config.CheckPage = p.checkPage
 	var err error
 	p.client, err = pantai.NewResilient(upstream, config)

@@ -27,10 +27,12 @@ type Config struct {
 	PollInterval time.Duration
 	StaleAfter   time.Duration
 	PageLimit    int
+	Resilience   pantai.ResilienceConfig
 }
 
 func DefaultConfig() Config {
-	return Config{Timeout: 2 * time.Second, PollInterval: 500 * time.Millisecond, StaleAfter: 10 * time.Second, PageLimit: 100}
+	return Config{Timeout: 2 * time.Second, PollInterval: 500 * time.Millisecond, StaleAfter: 10 * time.Second,
+		PageLimit: 100, Resilience: pantai.DefaultResilienceConfig()}
 }
 
 type Runtime struct {
@@ -48,6 +50,9 @@ type Runtime struct {
 func NewRuntime(config Config, repo Repository, verify func(context.Context) error, logger *slog.Logger) (*Runtime, error) {
 	if repo == nil || verify == nil || config.Timeout <= 0 || config.PollInterval <= 0 || config.StaleAfter <= 0 || config.PageLimit < 1 || config.PageLimit > 1000 {
 		return nil, fmt.Errorf("invalid coastal runtime configuration")
+	}
+	if err := config.Resilience.Validate(); err != nil {
+		return nil, err
 	}
 	client, err := pantai.New(pantai.Config{BaseURL: config.BaseURL, Token: config.Token, Timeout: config.Timeout,
 		InstanceID: config.InstanceID, Verify: verify, Logger: logger,
@@ -104,7 +109,7 @@ func (r *Runtime) Detail() any {
 }
 
 func (r *Runtime) Run(ctx context.Context, epoch int64) error {
-	p, err := NewProcessor(r.repo, r.client, epoch, r.verify, r.config.StaleAfter, r.config.PageLimit)
+	p, err := NewProcessor(r.repo, r.client, epoch, r.verify, r.config.StaleAfter, r.config.PageLimit, r.config.Resilience)
 	if err != nil {
 		return err
 	}

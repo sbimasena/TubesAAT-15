@@ -31,7 +31,7 @@ class SloCheckTest(unittest.TestCase):
             result = run(path, "--expected", "100")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("RESULT: PASS", result.stdout)
-            self.assertIn("lost: 0 of 100", result.stdout)
+            self.assertIn("count-only shortfall: 0 of 100", result.stdout)
 
     def test_slow_tail_and_loss_fail(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -40,7 +40,7 @@ class SloCheckTest(unittest.TestCase):
             result = run(self.journal(directory, records), "--expected", "102")
             self.assertEqual(result.returncode, 1)
             self.assertIn("RESULT: FAIL", result.stdout)
-            self.assertIn("lost: 1 of 102", result.stdout)
+            self.assertIn("count-only shortfall: 1 of 102", result.stdout)
 
     def test_missing_age_is_excluded_and_duplicates_count_once(self):
         with tempfile.TemporaryDirectory() as directory:

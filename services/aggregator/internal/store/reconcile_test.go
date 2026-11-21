@@ -334,6 +334,61 @@ func TestReconcileReReplicatesAndRebalances(t *testing.T) {
 	}
 }
 
+func TestReconcileInitializesUnrecordedUnitsBeforeCursorRead(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	names := []string{"store-0", "store-1", "store-2"}
+	repos := make([]*PostgresRepository, len(names))
+	for i := range names {
+		databaseURL, _ := testSchema(t, ctx)
+		repo, err := OpenPostgres(ctx, databaseURL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(repo.Close)
+		repos[i] = repo
+	}
+	r, err := newRouter(names, repos, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.CheckUnits(ctx)
+
+	// Model a durable map created while all stores were temporarily unreachable.
+	// The cursor is present on the stores, but none is trusted until reconciliation.
+	if _, err := r.maps.save(ctx, defaultMap(names), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.LoadMap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Fence(ctx, 1); err != nil {
+		t.Fatalf("Fence() error = %v", err)
+	}
+	if err := r.SaveCursor(ctx, 1, "BMKG", "cursor-after-restart"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.LoadCursor(ctx, "BMKG"); err == nil {
+		t.Fatal("cursor read must not trust units absent from the durable incarnation map")
+	}
+
+	leaderCtx := WithWriteVerifier(ctx, func(context.Context) error { return nil })
+	if err := r.ReconcileIncarnations(leaderCtx, 1, time.Minute); err != nil {
+		t.Fatalf("ReconcileIncarnations() error = %v", err)
+	}
+	if got := r.current().m.Incarnations; len(got) != len(names) {
+		t.Fatalf("reconciliation did not record every live unit incarnation: %v", got)
+	}
+	cursor, err := r.LoadCursor(ctx, "BMKG")
+	if err != nil {
+		t.Fatalf("LoadCursor() after reconciliation: %v", err)
+	}
+	if cursor != "cursor-after-restart" {
+		t.Fatalf("cursor = %q; want cursor-after-restart", cursor)
+	}
+}
+
 func sortedLoad(load map[string]int) []string {
 	var out []string
 	for name, n := range load {

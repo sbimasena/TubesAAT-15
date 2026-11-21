@@ -155,11 +155,15 @@ func main() {
 		defer close(leaderDone)
 		err := election.Run(ctx, func(term context.Context, epoch int64) {
 			term = store.WithWriteVerifier(term, election.Verify)
+			deadAfter := positiveSecondsFromEnv("REREPLICATE_AFTER_SECONDS", 60)
 			if err := prepareLeaderTerm(
 				term, leaderPrepareAttemptTimeout, leaderPrepareRetryInterval, election.Verify,
 				func(attempt context.Context) error {
 					if err := repository.Fence(attempt, epoch); err != nil {
 						return fmt.Errorf("storage fence: %w", err)
+					}
+					if err := repository.ReconcileIncarnations(attempt, epoch, deadAfter); err != nil {
+						return fmt.Errorf("initial storage incarnation recovery: %w", err)
 					}
 					return manager.PrepareTerm(attempt, epoch, election.Verify, repository)
 				}, logger,
@@ -176,7 +180,7 @@ func main() {
 			go func() { defer workers.Done(); manager.Run(term) }()
 			go func() {
 				defer workers.Done()
-				repository.Reconcile(term, epoch, 10*time.Second, positiveSecondsFromEnv("REREPLICATE_AFTER_SECONDS", 60))
+				repository.Reconcile(term, epoch, 10*time.Second, deadAfter)
 			}()
 			go func() { defer workers.Done(); messaging.Run(term, repository, brokerURL, "hazard.events", logger) }()
 			if coast != nil {

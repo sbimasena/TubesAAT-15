@@ -82,35 +82,53 @@ func (r *Router) Reconcile(ctx context.Context, epoch int64, interval, deadAfter
 	}
 }
 
-func (r *Router) reconcileOnce(ctx context.Context, epoch int64, deadAfter time.Duration) error {
+// ReconcileIncarnations repairs read eligibility before leader startup reads
+// checkpoints. Placement moves, anti-entropy and sweep stay in the background.
+func (r *Router) ReconcileIncarnations(ctx context.Context, epoch int64, deadAfter time.Duration) error {
 	r.mapMu.Lock()
 	defer r.mapMu.Unlock()
+	return r.reconcileIncarnationsLocked(ctx, epoch, unitDeadCheck(deadAfter))
+}
+
+func unitDeadCheck(deadAfter time.Duration) func(*unit) bool {
+	now := time.Now()
+	return func(u *unit) bool { return now.Sub(time.Unix(0, u.lastSeen.Load())) >= deadAfter }
+}
+
+func (r *Router) reconcileIncarnationsLocked(ctx context.Context, epoch int64, dead func(*unit) bool) error {
 	if err := verifyWrite(ctx); err != nil {
 		return err
 	}
 	if err := r.loadMapLocked(ctx); err != nil {
 		return err
 	}
-	now := time.Now()
-	dead := func(u *unit) bool { return now.Sub(time.Unix(0, u.lastSeen.Load())) >= deadAfter }
 	l := r.current()
 	m := l.m.clone()
-
 	r.recoverAmnesia(ctx, epoch, l, m, dead)
-	if err := r.commitLocked(ctx, m); err != nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return r.commitLocked(ctx, m)
+}
+
+func (r *Router) reconcileOnce(ctx context.Context, epoch int64, deadAfter time.Duration) error {
+	r.mapMu.Lock()
+	defer r.mapMu.Unlock()
+	dead := unitDeadCheck(deadAfter)
+	if err := r.reconcileIncarnationsLocked(ctx, epoch, dead); err != nil {
 		return err
 	}
 	// After amnesia: a refilled unit copied from one source, which may itself have lagged.
 	r.antiEntropy(ctx, epoch, r.current(), dead)
 
 	// Start moves and publish them first, so writes reach the new replica during the copy.
-	m = r.current().m.clone()
+	m := r.current().m.clone()
 	if planMoves(m, r.units, dead, r.current().serves) {
 		if err := r.commitLocked(ctx, m); err != nil {
 			return err
 		}
 	}
-	l = r.current()
+	l := r.current()
 	m = l.m.clone()
 	r.finishMoves(ctx, epoch, l, m, dead)
 	if err := r.commitLocked(ctx, m); err != nil {

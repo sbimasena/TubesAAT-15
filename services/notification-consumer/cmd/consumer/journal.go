@@ -37,6 +37,18 @@ type record struct {
 	Payload       json.RawMessage `json:"payload"`
 	Result        string          `json:"result"`
 	ReceivedAt    time.Time       `json:"received_at"`
+	// IngestedAt and EventAgeMS measure the SLI from Aggregator ingestion to
+	// the durable journal write. A negative age means the payload omitted it.
+	IngestedAt time.Time `json:"ingested_at"`
+	EventAgeMS float64   `json:"event_age_ms"`
+}
+
+// eventAgeMilliseconds is the event-time age at the durable append boundary.
+func (r record) eventAgeMilliseconds(now time.Time) float64 {
+	if r.IngestedAt.IsZero() {
+		return -1
+	}
+	return float64(now.Sub(r.IngestedAt).Microseconds()) / 1000
 }
 
 type journal struct {
@@ -79,6 +91,7 @@ func decode(delivery amqp.Delivery) (record, error) {
 		return r, errors.New("invalid severity")
 	}
 	r.HazardID = body.HazardID
+	r.IngestedAt = body.IngestedAt
 	if body.Source == "SATELIT" && body.Attributes.Retracted {
 		r.Result = "notification_withdrawn"
 	}

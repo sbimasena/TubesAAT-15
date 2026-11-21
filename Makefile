@@ -83,7 +83,7 @@ p1-surge: ## Lonjakan gempa satu wilayah + ukur tulis per unit: make p1-surge N=
 reset: ## Kembalikan manifest (replika, image) dan mode mock PVMBG ke normal
 	@$(SH) scripts/k8s/ops.sh reset
 
-.PHONY: p2-status p2-load p2-failover
+.PHONY: p2-status p2-load p2-failover p2-slo
 p2-status: ## Leader lease and Aggregator pod placement
 	kubectl -n sistem-informasi-kebencanaan-bnpb get lease aggregator-leader -o yaml
 	kubectl -n sistem-informasi-kebencanaan-bnpb get pods -l app=aggregator -o wide
@@ -93,6 +93,9 @@ p2-load: ## 10k VU + scale 3 to 5 to 2; requires TARGET_URL, optional ROLLOUT_IM
 
 p2-failover: ## Tester Agent kill-leader (asks for confirmation)
 	@$(SH) scripts/k8s/ops.sh tester kill-leader
+
+p2-slo: ## Event-to-durable-ack SLI from a notification journal: make p2-slo JOURNAL=path [EXPECTED=n]
+	@$(SH) scripts/m2/slo-check.sh $(if $(JOURNAL),--journal "$(JOURNAL)",) $(if $(EXPECTED),--expected "$(EXPECTED)",)
 
 .PHONY: p3-check
 p3-check: ## Isolated P3 checks with real PostgreSQL/RabbitMQ; no existing stack is changed

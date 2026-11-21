@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -184,6 +186,37 @@ func TestJournalAndAcknowledgement(t *testing.T) {
 		t.Fatal("newline-terminated journal corruption must fail explicitly")
 	}
 	t.Log("PASS: durable result before ack, single writer, new-ID update, restart dedup after lost ack, torn-tail recovery, invalid-message rejection, IO failure without ack, explicit corruption failure")
+}
+
+func TestJournalRecordsEventAge(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "age.jsonl")
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	j, err := openJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.file.Close()
+	ingested := time.Now().UTC().Add(-6 * time.Second).Format(time.RFC3339Nano)
+	delivery := message("age-1", 2, &acknowledgement{})
+	delivery.Body = []byte(fmt.Sprintf(`{"hazard_id":"haz-check","source":"BMKG","hazard_type":"SEISMIC","severity":"SIAGA","area_name":"Check area","ingested_at":%q,"attributes":{}}`, ingested))
+	if err := handle(delivery, j, logger); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved record
+	if err := json.Unmarshal(bytes.TrimSpace(data), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.IngestedAt.IsZero() || saved.EventAgeMS < 5500 || saved.EventAgeMS > 15000 {
+		t.Fatalf("ingested_at=%s event_age_ms=%v, want about 6000", saved.IngestedAt, saved.EventAgeMS)
+	}
+	// A payload without ingested_at must not fabricate an age.
+	if age := (record{}).eventAgeMilliseconds(time.Now()); age != -1 {
+		t.Fatalf("missing ingested_at age = %v, want -1", age)
+	}
 }
 
 func TestSatelliteWithdrawalSurvivesReplay(t *testing.T) {

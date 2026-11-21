@@ -173,6 +173,8 @@ func handle(delivery amqp.Delivery, j *journal, logger *slog.Logger) error {
 		logger.Error("invalid event rejected", "message_id", delivery.MessageId, "correlation_id", delivery.CorrelationId, "error", err, "requeue", false)
 		return delivery.Reject(false) // No DLQ for M1; malformed payload is discarded for this subscription.
 	}
+	// Measure at the append boundary: the journal sync below is the durable ack.
+	r.EventAgeMS = r.eventAgeMilliseconds(time.Now())
 	result, err := j.save(r)
 	if err != nil {
 		logger.Error("journal write failed; event unacknowledged", "message_id", r.MessageID, "correlation_id", r.CorrelationID, "error", err)
@@ -183,6 +185,7 @@ func handle(delivery amqp.Delivery, j *journal, logger *slog.Logger) error {
 	}
 	logger.Info("event handled", "message_id", r.MessageID, "hazard_id", r.HazardID, "hazard_revision", r.Revision,
 		"correlation_id", r.CorrelationID, "result", result, "redelivered", delivery.Redelivered,
-		"latency_ms", float64(time.Since(started).Microseconds())/1000)
+		"latency_ms", float64(time.Since(started).Microseconds())/1000,
+		"ingested_at", r.IngestedAt, "event_age_ms", r.EventAgeMS)
 	return nil
 }

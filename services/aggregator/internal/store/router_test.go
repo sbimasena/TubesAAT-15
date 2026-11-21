@@ -75,7 +75,7 @@ func TestPlanPartialOnlyWhenPartitionHasNoReplica(t *testing.T) {
 }
 
 func TestOpenRouterNamesUnitsByHost(t *testing.T) {
-	r, err := OpenRouter("postgres://u:p@store-0.store:5432/db, postgres://u:p@store-1.store:5432/db", nil)
+	r, err := OpenRouterWithMemoryMap("postgres://u:p@store-0.store:5432/db, postgres://u:p@store-1.store:5432/db", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

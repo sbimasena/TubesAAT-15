@@ -79,7 +79,7 @@ func postgresRouter(t *testing.T) *store.Router {
 		}
 		urls += u.String()
 	}
-	router, err := store.OpenRouter(urls, nil)
+	router, err := store.OpenRouterWithMemoryMap(urls, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

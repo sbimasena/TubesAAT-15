@@ -174,7 +174,8 @@ func (m *Manager) pollBMKG(ctx context.Context, correlationID string) {
 	if eventErr == nil && warningErr == nil && !unresolvedWarning {
 		m.setIngested("BMKG")
 	}
-	if err := m.saveCheckpoint(ctx, "BMKG", checkpoint{EventCursor: eventCursor, WarningCursor: warningCursor, Events: m.eventsByID, Warnings: m.warningsByEvent}); err != nil {
+	recentEvents, recentWarnings := recentCorrelation(m.eventsByID, m.warningsByEvent, time.Now().UTC())
+	if err := m.saveCheckpoint(ctx, "BMKG", checkpoint{EventCursor: eventCursor, WarningCursor: warningCursor, Events: recentEvents, Warnings: recentWarnings}); err != nil {
 		m.setIngestionFailure("BMKG", correlationID, err)
 		return
 	}
@@ -299,6 +300,34 @@ func (m *Manager) pruneBMKGCacheLocked() {
 			delete(m.warningsByEvent, id)
 		}
 	}
+}
+
+// checkpointWindow bounds the correlation state written every poll and read by every
+// follower. The full cache stays in memory on the leader.
+// shortcut: assumes a warning follows its event within an hour (mock BMKG: 1–2 min); widen if real feeds send later updates.
+const checkpointWindow = time.Hour
+
+// recentCorrelation keeps events from the last checkpointWindow with their warnings,
+// plus warnings whose event is not cached yet, so they stay retryable after failover.
+func recentCorrelation(events map[string]domain.SeismicEvent, warnings map[string]domain.TsunamiWarning, now time.Time) (map[string]domain.SeismicEvent, map[string]domain.TsunamiWarning) {
+	cutoff := now.Add(-checkpointWindow)
+	keptEvents := make(map[string]domain.SeismicEvent)
+	keptWarnings := make(map[string]domain.TsunamiWarning)
+	for id, event := range events {
+		if event.OccurredAt.Before(cutoff) {
+			continue
+		}
+		keptEvents[id] = event
+		if warning, ok := warnings[id]; ok {
+			keptWarnings[id] = warning
+		}
+	}
+	for id, warning := range warnings {
+		if _, cached := events[id]; !cached {
+			keptWarnings[id] = warning
+		}
+	}
+	return keptEvents, keptWarnings
 }
 
 func overlap(cursor time.Time) time.Time {

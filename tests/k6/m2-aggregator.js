@@ -7,12 +7,14 @@ const failed = new Rate('failed_responses');
 const served = new Counter('responses_200');
 const thresholds = { uncontrolled_errors: ['rate<0.01'], responses_200: ['count>0'] };
 if (__ENV.REQUIRE_ZERO_FAILURES === '1') thresholds.failed_responses = ['rate==0'];
+// TARGET_URL may list several comma-separated base URLs; VUs are spread over them.
+const targets = (__ENV.TARGET_URL || '').split(',');
 export const options = {
   vus: Number(__ENV.VUS || 10000), duration: __ENV.DURATION || '120s',
   thresholds,
 };
 export default function () {
-  const response = http.get(`${__ENV.TARGET_URL}/internal/v1/hazards?source=BMKG&limit=100`, {
+  const response = http.get(`${targets[__VU % targets.length]}/internal/v1/hazards?source=BMKG&limit=100`, {
     timeout: '10s', headers: { 'X-Correlation-ID': `m2-p2-${__VU}-${__ITER}` },
   });
   let body;

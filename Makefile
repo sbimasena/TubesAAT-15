@@ -92,7 +92,7 @@ p2-status: ## Leader lease and Aggregator pod placement
 p2-load: ## 10k VU + scale 3 to 5 to 2; requires TARGET_URL, optional ROLLOUT_IMAGE
 	@$(SH) scripts/m2/p2-load.sh
 
-p2-throughput: ## Measure successful request throughput at 1 and 3 replicas; requires TARGET_URL
+p2-throughput: ## Throughput at 1 vs 3 replicas with a per-replica CPU bound (CPU_LIMIT=100m, VUS=100, DURATION=60s)
 	@$(SH) scripts/m2/p2-load.sh throughput
 
 p2-failover: ## Tester Agent kill-leader (asks for confirmation)

@@ -12,7 +12,9 @@ if [[ "${1:-}" == throughput ]]; then
   for replicas in 1 3; do
     run kubectl -n "$NS" scale deployment aggregator --replicas="$replicas"
     run kubectl -n "$NS" rollout status deployment/aggregator --timeout=120s
-    REQUIRE_ZERO_FAILURES=0 run k6 run --summary-export "$out-$replicas.json" "$ROOT/tests/k6/m2-aggregator.js"
+    # A failed k6 threshold (for example a slow one-replica baseline) must not
+    # abort the comparison; the summary is still exported for the ratio below.
+    REQUIRE_ZERO_FAILURES=0 k6 run --summary-export "$out-$replicas.json" "$ROOT/tests/k6/m2-aggregator.js" || true
   done
   python3 - "$out" <<'PY'
 import json

@@ -264,3 +264,77 @@ func TestCheckpointClearFailureDoesNotDuplicateOutbox(t *testing.T) {
 		t.Fatalf("offset=%d err=%v", offset, err)
 	}
 }
+
+// memoryRepository keeps the newest cursor per source, like LoadCursor across units.
+type memoryRepository struct {
+	cursors map[string]string
+	writes  map[string]int
+}
+
+func (r *memoryRepository) LoadCursor(_ context.Context, source string) (string, error) {
+	return r.cursors[source], nil
+}
+func (r *memoryRepository) SaveCursorReplicated(_ context.Context, _ int64, source, value string) error {
+	r.cursors[source] = value
+	r.writes[source]++
+	return nil
+}
+func (r *memoryRepository) UpsertReplicated(_ context.Context, _ int64, events []domain.HazardEvent, _ string) ([]domain.HazardEvent, error) {
+	return events, nil
+}
+
+func TestCheckpointDeltaRestoresExactStateAndIgnoresForeignBase(t *testing.T) {
+	ctx := context.Background()
+	verify := func(context.Context) error { return nil }
+	repo := &memoryRepository{cursors: map[string]string{}, writes: map[string]int{}}
+	p, err := NewProcessor(repo, 1, verify)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	// A large first batch makes the base big enough for later batches to be deltas.
+	var batch []Mutation
+	for i := range 400 {
+		batch = append(batch, mutate(int64(i), detection("N20", fmt.Sprintf("%02d%02d", i/60%24, i%60), fmt.Sprintf("%.5f", 100+float64(i)*.1))))
+	}
+	if err := p.Process(ctx, batch, now); err != nil {
+		t.Fatal(err)
+	}
+	baseWrites := repo.writes["SATELIT"]
+	a, b := detection("N21", "5", "140.00000"), detection("N21", "6", "140.00100")
+	steps := []Mutation{mutate(400, a), mutate(401, b), {Offset: 402, Kind: "retract", Key: batch[7].Detection.Key()}}
+	for i, m := range steps {
+		if err := p.Process(ctx, []Mutation{m}, now.Add(time.Duration(i+1)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if repo.writes["SATELIT"] != baseWrites || repo.writes[deltaSource] == 0 {
+		t.Fatalf("small batches rewrote the base: base=%d->%d delta=%d", baseWrites, repo.writes["SATELIT"], repo.writes[deltaSource])
+	}
+
+	restored, err := NewProcessor(repo, 2, verify)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restored.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := json.Marshal(p.checkpoint.State)
+	got, _ := json.Marshal(restored.checkpoint.State)
+	if string(want) != string(got) {
+		t.Fatal("base+delta restore differs from the in-memory state")
+	}
+
+	// A delta written for another base must not be applied.
+	repo.cursors[deltaSource] = `{"BaseID":"foreign","State":{"Offset":999}}`
+	again, _ := NewProcessor(repo, 3, verify)
+	if err := again.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if offset, err := again.Offset(); err != nil || offset != 402 {
+		t.Fatalf("foreign delta applied: offset=%d err=%v", offset, err)
+	}
+}

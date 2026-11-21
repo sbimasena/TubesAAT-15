@@ -1,7 +1,5 @@
 package satellite
 
-import "time"
-
 type detectionGrid struct {
 	points map[string]point
 	cells  map[[4]int64]map[string]point
@@ -34,7 +32,7 @@ func (g detectionGrid) neighbors(key string, p point, visit func(string)) {
 				for t := c[3] - 1; t <= c[3]+1; t++ {
 					for otherKey, other := range g.cells[[4]int64{x, y, z, t}] {
 						dt := p.at.Sub(other.at)
-						if otherKey != key && dt >= -6*time.Hour && dt <= 6*time.Hour && distance(p, other) <= 1 {
+						if otherKey != key && dt >= -clusterWindow && dt <= clusterWindow && distance(p, other) <= 1 {
 							visit(otherKey)
 						}
 					}

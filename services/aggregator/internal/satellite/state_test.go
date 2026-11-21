@@ -111,16 +111,74 @@ func TestStateRetainsAndCountsLateDetectionsOnce(t *testing.T) {
 	now := time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC)
 	fresh := detection("N20", "0", "113.80000")
 	fresh.AcqDate = "2026-11-15"
-	old := detection("N20", "0", "114.00000")
-	s, _, err := NewState().Next([]Mutation{mutate(1, fresh), mutate(2, old), mutate(3, old)}, now)
-	if err != nil || s.LateDetections != 1 || len(s.Detections) != 2 {
+	// Watermark is 11-14 00:00; 11-13 20:00 is late but can still join a fire.
+	old := detection("N20", "2000", "114.00000")
+	old.AcqDate = "2026-11-13"
+	// Older than one cluster window past the watermark: counted, not retained.
+	ancient := detection("N20", "0", "114.50000")
+	s, _, err := NewState().Next([]Mutation{mutate(1, fresh), mutate(2, old), mutate(3, old), mutate(4, ancient)}, now)
+	if err != nil || s.LateDetections != 2 || len(s.Detections) != 2 {
 		t.Fatalf("late=%d detections=%d err=%v", s.LateDetections, len(s.Detections), err)
 	}
-	if _, _, err := s.Next([]Mutation{mutate(5, old)}, now); err == nil || s.Offset != 3 {
+	if _, _, err := s.Next([]Mutation{{Offset: 5, Kind: "update", Key: ancient.Key(), Changes: &detectionChanges{}}}, now); err != nil {
+		t.Fatal("patch for a detection beyond the horizon must be counted, not a protocol error", err)
+	}
+	if _, _, err := s.Next([]Mutation{mutate(6, old)}, now); err == nil || s.Offset != 4 {
 		t.Fatal("gap advanced committed state")
 	}
-	if _, _, err := s.Next([]Mutation{{Offset: 4, Kind: "update"}}, now); err == nil || s.Offset != 3 {
+	if _, _, err := s.Next([]Mutation{{Offset: 5, Kind: "update"}}, now); err == nil || s.Offset != 4 {
 		t.Fatal("invalid payload advanced state")
+	}
+}
+
+func TestPruningFreezesFinishedFiresDeterministically(t *testing.T) {
+	now := time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)
+	a, b := detection("N20", "0", "113.80000"), detection("N21", "1", "113.80100")
+	later := func(clock, lon string) Detection {
+		d := detection("N20", clock, lon)
+		d.AcqDate = "2026-11-13"
+		return d
+	}
+	// With 1 h lateness, an event at 11-13 20:00 prunes fires finished before 07:00.
+	batch := []Mutation{mutate(1, a), mutate(2, b), mutate(3, later("1000", "120.00000")), mutate(4, later("1001", "120.00100")), mutate(5, later("2000", "125.00000"))}
+	together, projection, err := NewStateWithLateness(time.Hour).Next(batch, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(together.Events) != 1 || len(projection.Retracted) != 0 || len(projection.Upserts) != 2 {
+		t.Fatalf("events=%d upserts=%d retracted=%d", len(together.Events), len(projection.Upserts), len(projection.Retracted))
+	}
+	for _, key := range []string{a.Key(), b.Key()} {
+		if _, ok := together.Detections[key]; ok || together.Seen[key] || together.Owners[key] != "" {
+			t.Fatal("finished fire was not pruned", key)
+		}
+	}
+	if len(together.Detections) != 3 || together.Singles != 1 || !together.PrunedBefore.Equal(time.Date(2026, 11, 13, 7, 0, 0, 0, time.UTC)) {
+		t.Fatalf("detections=%d singles=%d prunedBefore=%s", len(together.Detections), together.Singles, together.PrunedBefore)
+	}
+
+	separately := NewStateWithLateness(time.Hour)
+	for _, m := range batch {
+		if separately, _, err = separately.Next([]Mutation{m}, now); err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := json.Marshal(separately)
+		var restored State
+		if err := json.Unmarshal(raw, &restored); err != nil {
+			t.Fatal(err)
+		}
+		separately = &restored
+	}
+	x, _ := json.Marshal(together)
+	y, _ := json.Marshal(separately)
+	if string(x) != string(y) {
+		t.Fatal("pruning depends on batch boundaries")
+	}
+
+	// A redelivered detection of the frozen fire is counted, never revived.
+	again, projection, err := together.Next([]Mutation{mutate(6, a)}, now)
+	if err != nil || len(again.Events) != 1 || len(projection.Upserts) != 0 || again.LateDetections != together.LateDetections+1 {
+		t.Fatalf("revived pruned fire: events=%d upserts=%d err=%v", len(again.Events), len(projection.Upserts), err)
 	}
 }
 

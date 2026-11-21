@@ -24,7 +24,9 @@ func readBatches(ctx, stream context.Context, body io.Reader, offset int64, appl
 			}
 		})
 	}()
-	const maxFrames, maxBytes = 128, 2 << 20
+	// Each batch costs two replicated checkpoint writes: large batches let catch-up
+	// amortize them, and the 1 s window bounds live writes to about two per second.
+	const maxFrames, maxBytes, window = 4096, 2 << 20, time.Second
 	batch := make([]Frame, 0, maxFrames)
 	size := 0
 	var timer *time.Timer
@@ -71,9 +73,9 @@ func readBatches(ctx, stream context.Context, body io.Reader, offset int64, appl
 			}
 			if len(batch) == 0 {
 				if timer == nil {
-					timer = time.NewTimer(200 * time.Millisecond)
+					timer = time.NewTimer(window)
 				} else {
-					timer.Reset(200 * time.Millisecond)
+					timer.Reset(window)
 				}
 				deadline = timer.C
 			}

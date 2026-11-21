@@ -54,9 +54,7 @@ func (p *Processor) reportMetrics() {
 
 // StoredStatus exposes persisted progress even from a follower without opening
 // another SSE connection. It never includes raw detections or credentials.
-func StoredStatus(ctx context.Context, repo interface {
-	LoadCursor(context.Context, string) (string, error)
-}) any {
+func StoredStatus(ctx context.Context, repo cursorLoader) any {
 	raw, err := repo.LoadCursor(ctx, "SATELIT")
 	if err != nil {
 		return map[string]any{"state": "checkpoint_unavailable"}
@@ -67,6 +65,9 @@ func StoredStatus(ctx context.Context, repo interface {
 	var checkpoint recoveryCheckpoint
 	if len(raw) > 16<<20 || json.Unmarshal([]byte(raw), &checkpoint) != nil || checkpoint.Version != 1 || checkpoint.State == nil {
 		return map[string]any{"state": "invalid_checkpoint"}
+	}
+	if applyDelta(ctx, repo, &checkpoint) != nil {
+		return map[string]any{"state": "checkpoint_unavailable"}
 	}
 	pending := len(checkpoint.Pending.Upserts) + len(checkpoint.Pending.Retracted)
 	var processed *int64

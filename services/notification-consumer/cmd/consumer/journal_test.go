@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -244,6 +245,86 @@ func TestHandleRecordsAcknowledgedMetric(t *testing.T) {
 	metricsHandler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
 	if recorder.Code != 200 || !strings.Contains(recorder.Body.String(), "notification_event_age_seconds") {
 		t.Fatalf("metrics endpoint code=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCriticalPantaiMetrics(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "critical.jsonl")
+	j, err := openJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { j.file.Close() }()
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	sampleCount := func() uint64 {
+		t.Helper()
+		var metric dto.Metric
+		if err := coastalCriticalAge.Write(&metric); err != nil {
+			t.Fatal(err)
+		}
+		return metric.GetHistogram().GetSampleCount()
+	}
+	initialCount := testutil.ToFloat64(coastalCriticalAcknowledged)
+	initialSamples := sampleCount()
+	for _, test := range []struct {
+		name, id, source, kind, critical, timestamp string
+		failACK                                     bool
+		wantCount, wantSamples                      int
+	}{
+		{"critical", "one", "SENSOR_PANTAI", "COASTAL", "true", "past", false, 1, 1},
+		{"duplicate", "one", "SENSOR_PANTAI", "COASTAL", "true", "past", false, 1, 1},
+		{"not critical", "two", "SENSOR_PANTAI", "COASTAL", "false", "past", false, 1, 1},
+		{"string flag", "three", "SENSOR_PANTAI", "COASTAL", `"true"`, "past", false, 1, 1},
+		{"other source", "four", "BMKG", "SEISMIC", "true", "past", false, 1, 1},
+		{"missing timestamp", "five", "SENSOR_PANTAI", "COASTAL", "true", "", false, 2, 1},
+		{"future timestamp", "six", "SENSOR_PANTAI", "COASTAL", "true", "future", false, 3, 1},
+		{"failed ACK", "seven", "SENSOR_PANTAI", "COASTAL", "true", "past", true, 3, 1},
+		{"failed retry", "seven", "SENSOR_PANTAI", "COASTAL", "true", "past", true, 3, 1},
+		{"ACK recovered after reconnect", "seven", "SENSOR_PANTAI", "COASTAL", "true", "", false, 4, 2},
+		{"duplicate after recovery", "seven", "SENSOR_PANTAI", "COASTAL", "true", "past", false, 4, 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.name == "failed retry" {
+				pending := j.pendingCriticalACKs
+				if err := j.file.Close(); err != nil {
+					t.Fatal(err)
+				}
+				reopened, err := openJournal(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				reopened.pendingCriticalACKs = pending
+				j = reopened
+			}
+			ack := &acknowledgement{}
+			if test.failACK {
+				ack.beforeAck = func() error { return errors.New("ACK failed") }
+			}
+			delivery := message(test.id, 1, ack)
+			delivery.Redelivered = test.name == "failed retry" || test.name == "ACK recovered after reconnect" || test.name == "duplicate after recovery"
+			var timestamp string
+			switch test.timestamp {
+			case "past":
+				timestamp = fmt.Sprintf(`,"ingested_at":%q`, time.Now().UTC().Add(-time.Second).Format(time.RFC3339Nano))
+			case "future":
+				timestamp = fmt.Sprintf(`,"ingested_at":%q`, time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano))
+			}
+			delivery.Body = []byte(fmt.Sprintf(
+				`{"hazard_id":"h","source":%q,"hazard_type":%q,"severity":"AWAS","area_name":"Test","attributes":{"critical":%s}%s}`,
+				test.source, test.kind, test.critical, timestamp))
+			if err := handle(delivery, j, logger); (err != nil) != test.failACK {
+				t.Fatalf("handle returned %v", err)
+			}
+			if got := testutil.ToFloat64(coastalCriticalAcknowledged) - initialCount; got != float64(test.wantCount) {
+				t.Fatalf("critical ACKs = %v, want %d", got, test.wantCount)
+			}
+			if got := sampleCount() - initialSamples; got != uint64(test.wantSamples) {
+				t.Fatalf("critical samples = %v, want %d", got, test.wantSamples)
+			}
+		})
+	}
+	if len(j.pendingCriticalACKs) != 0 {
+		t.Fatal("recovered ACK still pending")
 	}
 }
 

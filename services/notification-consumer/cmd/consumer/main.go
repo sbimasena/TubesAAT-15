@@ -70,8 +70,9 @@ func main() {
 }
 
 func run(ctx context.Context, brokerURL, path string, healthy *atomic.Bool, logger *slog.Logger) {
+	pendingCriticalACKs := make(map[string]time.Time)
 	for ctx.Err() == nil {
-		err := session(ctx, brokerURL, path, healthy, logger)
+		err := session(ctx, brokerURL, path, healthy, logger, pendingCriticalACKs)
 		healthy.Store(false)
 		if ctx.Err() != nil {
 			return
@@ -86,13 +87,14 @@ func run(ctx context.Context, brokerURL, path string, healthy *atomic.Bool, logg
 	}
 }
 
-func session(ctx context.Context, brokerURL, path string, healthy *atomic.Bool, logger *slog.Logger) error {
+func session(ctx context.Context, brokerURL, path string, healthy *atomic.Bool, logger *slog.Logger, pendingCriticalACKs map[string]time.Time) error {
 	healthy.Store(false)
 	j, err := openJournal(path)
 	if err != nil {
 		return fmt.Errorf("journal unavailable: %w", err)
 	}
 	defer j.file.Close()
+	j.pendingCriticalACKs = pendingCriticalACKs
 	logger.Info("journal restored", "processed_ids", len(j.seen))
 	var socket net.Conn
 	connection, err := amqp.DialConfig(brokerURL, amqp.Config{Heartbeat: 5 * time.Second,
@@ -172,7 +174,7 @@ func handle(delivery amqp.Delivery, j *journal, logger *slog.Logger) error {
 		logger.Error("invalid event rejected", "message_id", delivery.MessageId, "correlation_id", delivery.CorrelationId, "error", err, "requeue", false)
 		return delivery.Reject(false) // No DLQ for M1; malformed payload is discarded for this subscription.
 	}
-	// Measure at the append boundary: the journal sync below is the durable ack.
+	// The journal stores the pre-append age; the histograms include sync and the ACK call.
 	r.EventAgeMS = r.eventAgeMilliseconds(time.Now())
 	result, err := j.save(r)
 	if err != nil {
@@ -180,12 +182,29 @@ func handle(delivery amqp.Delivery, j *journal, logger *slog.Logger) error {
 		return err
 	}
 	if err := delivery.Ack(false); err != nil {
+		if result != "duplicate" && r.coastalCritical {
+			j.pendingCriticalACKs[r.MessageID] = r.IngestedAt
+		}
 		return err
 	}
-	// The histogram records the SLI only after the broker ack, not just the
-	// journal sync. Duplicates were already measured on their first delivery.
-	if result != "duplicate" && !r.IngestedAt.IsZero() {
-		eventAge.Observe(time.Since(r.IngestedAt).Seconds())
+	// ACK success is local to the consumer; AMQP does not confirm consumer ACKs.
+	ackedAt := time.Now()
+	if result != "duplicate" {
+		if age := ackedAt.Sub(r.IngestedAt); !r.IngestedAt.IsZero() && age >= 0 {
+			eventAge.Observe(age.Seconds())
+		}
+	}
+	ingestedAt, recovering := j.pendingCriticalACKs[r.MessageID]
+	if recovering {
+		delete(j.pendingCriticalACKs, r.MessageID)
+	} else {
+		ingestedAt = r.IngestedAt
+	}
+	if recovering || (result != "duplicate" && r.coastalCritical) {
+		coastalCriticalAcknowledged.Inc()
+		if age := ackedAt.Sub(ingestedAt); !ingestedAt.IsZero() && age >= 0 {
+			coastalCriticalAge.Observe(age.Seconds())
+		}
 	}
 	handledEvents.WithLabelValues(result).Inc()
 	logger.Info("event handled", "message_id", r.MessageID, "hazard_id", r.HazardID, "hazard_revision", r.Revision,

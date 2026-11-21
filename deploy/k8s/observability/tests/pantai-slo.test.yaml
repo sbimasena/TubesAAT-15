@@ -1,0 +1,54 @@
+# Run with promtool test rules pantai-slo.test.yaml.
+# expr entries mirror panels 12–14 in dashboards/overview.json.
+evaluation_interval: 1m
+tests:
+  - name: mixed latencies and fewer timing samples than ACKs
+    interval: 1m
+    input_series:
+      - series: 'notification_pantai_critical_acknowledged_total{pod="consumer"}'
+        values: '0+3x5'
+      - series: 'notification_pantai_critical_age_seconds_count{pod="consumer"}'
+        values: '0+2x5'
+      - series: 'notification_pantai_critical_age_seconds_bucket{pod="consumer",le="5"}'
+        values: '0+1x5'
+      - series: 'notification_pantai_critical_age_seconds_bucket{pod="consumer",le="10"}'
+        values: '0+2x5'
+      - series: 'notification_pantai_critical_age_seconds_bucket{pod="consumer",le="+Inf"}'
+        values: '0+2x5'
+    promql_expr_test:
+      - expr: 'sum(increase(notification_pantai_critical_acknowledged_total[5m]))'
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 15}]
+      - expr: 'sum(increase(notification_pantai_critical_age_seconds_count[5m]))'
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 10}]
+      - expr: 'sum(rate(notification_pantai_critical_age_seconds_bucket{le="5"}[5m])) / (sum(rate(notification_pantai_critical_age_seconds_count[5m])) > 0)'
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 0.5}]
+      - expr: 'histogram_quantile(0.95, sum by (le) (rate(notification_pantai_critical_age_seconds_bucket[5m]))) and (sum(rate(notification_pantai_critical_age_seconds_count[5m])) > 0)'
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 9.5}]
+  - name: ACKs without timing observations
+    interval: 1m
+    input_series:
+      - series: 'notification_pantai_critical_acknowledged_total{pod="consumer"}'
+        values: '0+1x5'
+      - series: 'notification_pantai_critical_age_seconds_count{pod="consumer"}'
+        values: '0+0x5'
+      - series: 'notification_pantai_critical_age_seconds_bucket{pod="consumer",le="5"}'
+        values: '0+0x5'
+      - series: 'notification_pantai_critical_age_seconds_bucket{pod="consumer",le="+Inf"}'
+        values: '0+0x5'
+    promql_expr_test:
+      - expr: 'sum(increase(notification_pantai_critical_acknowledged_total[5m]))'
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 5}]
+      - expr: 'sum(increase(notification_pantai_critical_age_seconds_count[5m]))'
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: 'sum(rate(notification_pantai_critical_age_seconds_bucket{le="5"}[5m])) / (sum(rate(notification_pantai_critical_age_seconds_count[5m])) > 0)'
+        eval_time: 5m
+        exp_samples: []
+      - expr: 'histogram_quantile(0.95, sum by (le) (rate(notification_pantai_critical_age_seconds_bucket[5m]))) and (sum(rate(notification_pantai_critical_age_seconds_count[5m])) > 0)'
+        eval_time: 5m
+        exp_samples: []

@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import json
 from email.message import Message
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -32,8 +33,86 @@ class SatelliteSampleTest(unittest.TestCase):
             self.assertEqual((result["first_id"], result["last_id"]), ("7", "8"))
             for args in call.call_args_list:
                 self.assertEqual(args.args[0].get_header("Authorization"), "Bearer secret")
+                self.assertEqual(args.args[0].get_header("User-agent"), "bnpb-satellite-sample/1.0")
             self.assertEqual(call.call_args_list[1].args[0].full_url, "https://example.test/v1/stream?from=7")
             self.assertNotIn("secret", (Path(directory) / "summary.json").read_text())
+
+    def test_latest_offset_uses_live_edge_from_session(self):
+        raw = b"event: heartbeat\nid: 42\ndata: {}\n\n"
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(
+                sample,
+                "open_feed",
+                side_effect=[
+                    Response(b'{"latest_offset":41}'),
+                    Response(raw, "text/event-stream"),
+                ],
+            ) as call:
+                result = sample.capture(
+                    "https://example.test", "secret", Path(directory), 1, "latest"
+                )
+
+        self.assertEqual(result["requested_from"], "latest")
+        self.assertEqual(result["resolved_from"], 41)
+        self.assertEqual(
+            call.call_args_list[1].args[0].full_url,
+            "https://example.test/v1/stream?from=41",
+        )
+
+    def test_eof_reconnect_resumes_without_counting_duplicate_offsets(self):
+        first = json.dumps({"detection": {
+            "satellite": "N20", "acq_date": "2026-11-12", "acq_time": 0,
+            "latitude": -4.1, "longitude": 137.9, "confidence": "n",
+        }}, separators=(",", ":")).encode()
+        second = json.dumps({"detection": {
+            "satellite": "N20", "acq_date": "2026-11-12", "acq_time": 1,
+            "latitude": -4.2, "longitude": 137.9, "confidence": "n",
+        }}, separators=(",", ":")).encode()
+        raw_first = b"event: detection\nid: 7\ndata: " + first + b"\n\n"
+        raw_second = (
+            raw_first
+            + b"event: detection\nid: 8\ndata: "
+            + second
+            + b"\n\n"
+        )
+        capture_done = False
+
+        class StopResponse(Response):
+            def readline(self, *args, **kwargs):
+                nonlocal capture_done
+                line = super().readline(*args, **kwargs)
+                if not line:
+                    capture_done = True
+                return line
+
+        def monotonic():
+            return 2 if capture_done else 0
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(
+                sample,
+                "open_feed",
+                side_effect=[
+                    Response(b'{"latest_offset":7}'),
+                    Response(raw_first, "text/event-stream"),
+                    StopResponse(raw_second, "text/event-stream"),
+                ],
+            ) as call, patch.object(sample.time, "monotonic", side_effect=monotonic), \
+                    patch.object(sample.time, "sleep"):
+                result = sample.capture(
+                    "https://example.test", "secret", Path(directory), 1, "latest"
+                )
+
+        self.assertEqual(result["events"], {"detection": 2})
+        self.assertEqual((result["first_id"], result["last_id"]), ("7", "8"))
+        self.assertEqual(result["duplicate_offsets"], 1)
+        self.assertEqual(result["offset_gaps"], 0)
+        self.assertEqual(result["connections"], 2)
+        self.assertEqual(result["reconnects"], 1)
+        self.assertEqual(
+            call.call_args_list[2].args[0].full_url,
+            "https://example.test/v1/stream?from=7",
+        )
 
     def test_existing_capture_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as directory:

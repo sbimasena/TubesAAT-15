@@ -4,6 +4,7 @@
     {"id": "dev-down", "group": "Umum", "label": "Hapus cluster k3d", "make": "dev-down", "destructive": true},
     {"id": "deploy", "group": "Umum", "label": "Deploy seluruh sistem", "make": "deploy", "destructive": false},
     {"id": "status", "group": "Umum", "label": "Status node dan pod", "make": "status", "destructive": false},
+    {"id": "prepull", "group": "Umum", "label": "Tarik semua image workload di setiap node (sebelum demo)", "make": "prepull", "params": ["NODES"], "destructive": false},
     {"id": "logs", "group": "Umum", "label": "Log satu service", "make": "logs", "params": ["S"], "destructive": false},
     {"id": "tester-list", "group": "Umum", "label": "Daftar skenario Tester Agent", "make": "tester-list", "destructive": false},
     {"id": "tester", "group": "Umum", "label": "Jalankan skenario latihan Tester Agent", "make": "tester", "params": ["S"], "destructive": true},

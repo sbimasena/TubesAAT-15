@@ -10,7 +10,7 @@ endif
 SH = "$(BASH)"
 
 .DEFAULT_GOAL := help
-.PHONY: help dev-up dev-down deploy status logs tester-list tester open reset p1-checksum p1-distribution p1-load p1-surge p1-wipe-node p1-dashboard p1-amnesia p1-audit p1-netpol obs-open system-status broker-status broker-recover
+.PHONY: help dev-up dev-down deploy status prepull logs tester-list tester open reset p1-checksum p1-distribution p1-load p1-surge p1-wipe-node p1-dashboard p1-amnesia p1-audit p1-netpol obs-open system-status broker-status broker-recover
 
 help: ## Daftar target
 	@$(SH) scripts/k8s/help.sh Makefile
@@ -26,6 +26,9 @@ deploy: ## Deploy seluruh sistem ke cluster aktif (OVERLAY=dev|cluster, REGISTRY
 
 status: ## Node, pod per node (role), Tester Agent
 	@$(SH) scripts/k8s/ops.sh status
+
+prepull: ## Tarik semua image workload di setiap node sebelum demo: make prepull [NODES="node-b node-c"]
+	@$(SH) scripts/k8s/ops.sh prepull "$(NODES)"
 
 logs: ## Ikuti log satu service: make logs S=aggregator
 	@$(SH) scripts/k8s/ops.sh logs $(S)

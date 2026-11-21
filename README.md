@@ -59,7 +59,7 @@ Setiap aksi tersedia sebagai target `make` dan tercatat di `scripts/m2/actions.j
 
 | Problem | Target | Isi |
 |---|---|---|
-| Umum | `make status`, `make system-status`, `make obs-open`, `make open` | Pod per node, status Aggregator (storage, sumber, leader, DLQ), Grafana + Jaeger, RabbitMQ UI |
+| Umum | `make status`, `make system-status`, `make obs-open`, `make open`, `make prepull` | Pod per node, status Aggregator (storage, sumber, leader, DLQ), Grafana + Jaeger, RabbitMQ UI. `prepull` menarik semua image workload di setiap node sebelum demo agar pod yang dijadwal ulang tidak menunggu Docker Hub; pastikan ruang disk node cukup. |
 | Tester Agent | `make tester S=<skenario>` | `kill-store`, `kill-leader`, `partition`, `clock-skew`, `schema`, `wipe-node` (profil practice) |
 | P1 | `make p1-checksum`, `p1-distribution`, `p1-wipe-node`, `p1-amnesia S=store-N`, `p1-load FILE=...`, `p1-surge`, `p1-audit`, `p1-netpol`, `p1-dashboard` | Bandingkan checksum sebelum dan sesudah gangguan. Setelah pemulihan, total baris di ketiga unit semestinya dua kali jumlah event unik. Dashboard tersedia di `http://127.0.0.1:18083/dashboard` setelah `make p1-dashboard`. |
 | P2 | `make p2-status`, `p2-failover`, `p2-load`, `p2-throughput` | Lihat bagian P2 di bawah |

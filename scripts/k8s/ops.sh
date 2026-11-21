@@ -269,6 +269,47 @@ SQL
     echo "log: $log"
     rm -rf "$work"
     ;;
+  # Pull every workload image on each node before a demo, so a rescheduled pod does not wait
+  # on Docker Hub. A privileged pod per node runs that node's own crictl through the host root.
+  prepull)
+    mapfile -t images < <(kubectl get deployment,statefulset,daemonset -A -o jsonpath='{range .items[*]}{range .spec.template.spec.initContainers[*]}{.image}{"\n"}{end}{range .spec.template.spec.containers[*]}{.image}{"\n"}{end}{end}' | sort -u)
+    [[ ${#images[@]} -gt 0 ]] || die "no workload images found"
+    image_args=""
+    for image in "${images[@]}"; do
+      [[ "$image" =~ ^[A-Za-z0-9./:@_-]+$ ]] || die "unexpected image reference: $image"
+      image_args+=",\"$image\""
+    done
+    read -r -a nodes <<<"${2:-$(kubectl get nodes -o jsonpath='{.items[*].metadata.name}')}"
+    for node in "${nodes[@]}"; do
+      [[ "$node" =~ ^[a-z0-9.-]+$ ]] || die "invalid node name: $node"
+      kubectl -n "$NS" delete pod "prepull-$node" --ignore-not-found --wait >/dev/null
+      echo "+ prepull ${#images[@]} images on $node" >&2
+      kubectl apply -f - >/dev/null <<EOF
+{"apiVersion": "v1", "kind": "Pod",
+ "metadata": {"name": "prepull-$node", "namespace": "$NS", "labels": {"app": "prepull"}},
+ "spec": {"nodeName": "$node", "restartPolicy": "Never", "automountServiceAccountToken": false,
+  "tolerations": [{"operator": "Exists"}],
+  "containers": [{"name": "pull", "image": "busybox:1.36", "securityContext": {"privileged": true},
+   "command": ["chroot", "/host", "sh", "-c", "failed=0; for image in \"\$@\"; do if k3s crictl pull \"\$image\" >/dev/null; then echo \"ok     \$image\"; else echo \"FAILED \$image\"; failed=1; fi; done; exit \$failed", "prepull"$image_args],
+   "volumeMounts": [{"name": "host", "mountPath": "/host"}]}],
+  "volumes": [{"name": "host", "hostPath": {"path": "/"}}]}}
+EOF
+    done
+    failed=0
+    for node in "${nodes[@]}"; do
+      phase=""
+      for _ in $(seq 1 180); do
+        phase="$(kubectl -n "$NS" get pod "prepull-$node" -o jsonpath='{.status.phase}')"
+        [[ "$phase" == Succeeded || "$phase" == Failed ]] && break
+        sleep 5
+      done
+      echo "== $node ($phase)"
+      kubectl -n "$NS" logs "prepull-$node" 2>/dev/null || true
+      [[ "$phase" == Succeeded ]] || failed=1
+      kubectl -n "$NS" delete pod "prepull-$node" --wait=false >/dev/null
+    done
+    [[ "$failed" == 0 ]] || die "some images were not pulled; see above"
+    ;;
   *)
     die "unknown command '${1:-}'; see make help"
     ;;

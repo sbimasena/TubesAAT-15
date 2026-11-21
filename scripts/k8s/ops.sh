@@ -183,7 +183,7 @@ SQL
     confirm "Kosongkan data $2 (simulasi disk kosong) di $(kubectl config current-context)?"
     run kubectl -n "$NS" exec -i "pod/$2" -c postgres -- \
       sh -c 'psql -v ON_ERROR_STOP=1 -qAt -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
-TRUNCATE hazard_events, hazard_outbox;
+TRUNCATE hazard_events, hazard_outbox, field_reports, unprocessed_messages;
 UPDATE unit_meta SET incarnation = gen_random_uuid() RETURNING 'incarnation baru: ' || incarnation;
 SQL
     echo "Lihat log: make logs S=aggregator ('lost its data' lalu 'refilled'), lalu make p1-checksum dan make p1-distribution."

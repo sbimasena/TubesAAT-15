@@ -23,7 +23,7 @@ Client API tersedia di `http://127.0.0.1:8080` (k3d) atau `http://<IP node>:3008
 | `node-b` (worker) | MacBook Intel (16 GB) | VirtualBox, Ubuntu 24.04, 6 GB / 2 vCPU | `192.168.18.202` |
 | `node-c` (worker) | PC Windows (VM kedua) | VirtualBox, Ubuntu 24.04, 8 GB / 4 vCPU | `192.168.18.203` |
 
-- k3s, satu router (bridged), IP statis. Node tersebar di dua host fisik. Semua node x86_64, karena image Tester Agent dan Sensor Pantai hanya amd64. Langkah perakitan: [docs/m2/setup-cluster.md](docs/m2/setup-cluster.md).
+- k3s, satu router (bridged), IP statis. Node tersebar di dua host fisik. Semua node x86_64, karena image Tester Agent dan Sensor Pantai hanya amd64.
 - **`node-a` bukan target `wipe-node` atau node mati.** Consumer (jurnal di volume local-path) dan stack observabilitas dipaku ke `node-a`. Gangguan node diarahkan ke `node-b`/`node-c`.
 - Data store berada di disk node tempat pod berjalan (`local-path`).
 
@@ -59,10 +59,12 @@ Setiap aksi tersedia sebagai target `make` dan tercatat di `scripts/m2/actions.j
 
 | Problem | Target | Isi |
 |---|---|---|
-| Umum | `make status`, `make system-status`, `make obs-open`, `make open` | Pod per node, status Aggregator (storage, sumber, leader, DLQ), Grafana + Jaeger, RabbitMQ UI |
+| Umum | `make status`, `make system-status`, `make obs-open`, `make open`, `make prepull` | Pod per node, status Aggregator (storage, sumber, leader, DLQ), Grafana + Jaeger, RabbitMQ UI. `prepull` menarik semua image workload di setiap node sebelum demo agar pod yang dijadwal ulang tidak menunggu Docker Hub; pastikan ruang disk node cukup. |
 | Tester Agent | `make tester S=<skenario>` | `kill-store`, `kill-leader`, `partition`, `clock-skew`, `schema`, `wipe-node` (profil practice) |
 | P1 | `make p1-checksum`, `p1-distribution`, `p1-wipe-node`, `p1-amnesia S=store-N`, `p1-load FILE=...`, `p1-surge`, `p1-audit`, `p1-netpol`, `p1-dashboard` | Bandingkan checksum sebelum dan sesudah gangguan. Setelah pemulihan, total baris di ketiga unit semestinya dua kali jumlah event unik. Dashboard tersedia di `http://127.0.0.1:18083/dashboard` setelah `make p1-dashboard`. |
-| P2 | `make p2-status`, `p2-failover`, `p2-load` | Lihat bagian P2 di bawah |
+| P2 | `make p2-status`, `p2-failover`, `p2-load`, `p2-throughput` | Lihat bagian P2 di bawah |
+| P3 | `make p3-check` | Stack Compose terisolasi: DLQ byte-identik, replay/idempotensi, otorisasi Internal Ops, dan laporan 202 yang bertahan setelah penerima SIGKILL. Hasil di `artifacts/m2/runs/`; bukan bukti failover node Kubernetes. |
+| P4 | `make p4-sample`, `p4-check`, `p4-export`, `p4-compare` | Sampling, pemulihan, dan perbandingan dengan referensi |
 | Broker | `make broker-status`, `make broker-recover S=rabbitmq-N` | Anggota cluster dan replika setiap queue; kosongkan disk member yang crash-loop agar bergabung ulang |
 | Pemulihan | `make reset` | Kembalikan manifest dan mode mock PVMBG ke normal |
 
@@ -299,10 +301,10 @@ Hasil checker baru disimpan terpisah dari bukti laporan lama. Cara menampilkan h
 
 Kubernetes runs three Aggregator replicas; a Lease holder runs ingestion/reconciliation/publishing with a fencing epoch. Hazard reads use a one-second per-instance cache; Audit reads remain uncached. Compose remains single-instance. No new runtime configuration is required: Kubernetes supplies `KUBERNETES_SERVICE_HOST`, `KUBERNETES_SERVICE_PORT`, service-account files and `POD_NAME`.
 
-Use `make p2-status`, `make p2-failover` and `TARGET_URL=http://<aggregator-load-balancer> make p2-load`. The optional `ROLLOUT_IMAGE=<registry>/aggregator:<sha>` changes version during load. Run load tests outside the cluster against the load balancer, not a pod port-forward. Evidence is saved under `artifacts/m2/runs/`. Compare successful-response throughput for one and three replicas with the same data and configuration; check request failures separately during rollout.
+Use `make p2-status`, `make p2-failover` and `TARGET_URL=http://<aggregator-load-balancer> make p2-load`. Set `ROLLOUT_IMAGE=<registry>/bnpb-aggregator:<sha>` to roll out a distinct image and require zero failed requests. Run load tests outside the cluster against the load balancer, not a pod port-forward. Evidence is saved under `artifacts/m2/runs/`. Run `TARGET_URL=$AGGREGATOR_LB make p2-throughput` against the same dataset and load configuration to check the required 2× throughput ratio. For clock skew run `make tester S=clock-skew`. For a VM freeze, suspend the leader's worker VM for more than 15 seconds and verify stale writes are rejected after takeover.
 
 ### M2 P4: satellite processing
 
 Set `SATELLITE_TOKEN` in the ignored `.env` to enable the P4 worker in Compose or through the Kubernetes deployment script. The elected Aggregator connects to the feed, restores its replicated checkpoint, and materializes WILDFIRE events. To inspect the wire format first, run `make p4-sample` before starting the worker. The course feed allows one connection per group.
 
-Use `make p4-check` for offline and recovery tests. Set `TEST_DATABASE_URL` to a disposable PostgreSQL instance to enable integration tests. Evidence is saved under ignored `artifacts/m2/runs/`. Check progress via `GET /internal/v1/status` and the Audit API with `source=SATELIT`. For cluster validation, compare the final checksum and fire membership before and after a worker interruption. The province reference data retains its [MIT license and attribution](docs/m2/data/province-centres-LICENSE.txt).
+Use `make p4-check` for offline and recovery tests. Set `TEST_DATABASE_URL` to a disposable PostgreSQL instance to enable integration tests. Evidence is saved under ignored `artifacts/m2/runs/`. Check progress via `GET /internal/v1/status` and the Audit API with `source=SATELIT`. During a 60× run capture peak offset lag, p95 ingest latency, and seconds from burst end to zero lag (target ≤60 seconds). For cluster validation, compare the final checksum and fire membership after uninterrupted and interrupted runs over identical input. To compare with the course reference, wait for the feed to catch up, run `make p4-export > actual.json`, and then run `make p4-compare ACTUAL=actual.json REFERENCE=reference.json`. The province reference data retains its [MIT license and attribution](docs/m2/data/province-centres-LICENSE.txt).

@@ -23,6 +23,8 @@ spec:
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels: {app: aggregator}
+          # Count only this revision's pods, so a rolling update does not skew around old ones.
+          matchLabelKeys: [pod-template-hash]
       containers:
         - name: aggregator
           image: bnpb/aggregator
@@ -39,6 +41,8 @@ spec:
               valueFrom: {secretKeyRef: {name: source-credentials, key: BMKG_API_KEY}}
             - name: PVMBG_TOKEN
               valueFrom: {secretKeyRef: {name: source-credentials, key: PVMBG_TOKEN}}
+            - name: PANTAI_AUTH_TOKEN
+              valueFrom: {secretKeyRef: {name: pantai-token, key: token}}
             - name: SATELLITE_TOKEN
               valueFrom: {secretKeyRef: {name: satellite-token, key: token, optional: true}}
             - name: AUDIT_TOKEN
@@ -67,10 +71,9 @@ spec:
           resources:
             requests: {memory: 256Mi}
             limits: {memory: 512Mi}
-          # Not /health: it fails while any store is down, and the API must still answer
-          # (partial: true) during kill-store instead of losing every endpoint.
           readinessProbe:
-            tcpSocket: {port: http}
+            httpGet: {path: /health, port: http}
+            timeoutSeconds: 4
             periodSeconds: 5
           livenessProbe:
             tcpSocket: {port: http}

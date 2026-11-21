@@ -136,3 +136,61 @@ python3 -B -m unittest discover -s scripts -p 'test_*.py'
 ```
 
 Untuk pengujian modul Go dan integrasi storage/consumer, lihat [panduan pengujian](../tests/README.md).
+
+## P3 M2: DLQ, replay, dan laporan Tim Lapangan
+
+```sh
+make p3-check
+# Alternatif tanpa make/bash:
+python3 -B scripts/m2/p3-check.py
+```
+
+Memerlukan Docker Engine dengan Compose v2 dan Python 3. Checker membangun sembilan layanan pada project, port, volume, dan kredensial sementara; tidak memakai `.env` pribadi atau menghentikan stack yang sudah berjalan. Generator fixture diatur 3600 detik agar setiap laporan uji dibentuk melalui admin API; polling satu detik. Ini pengujian kebenaran, bukan benchmark dengan konfigurasi default.
+
+Tes race memakai PostgreSQL/RabbitMQ nyata, termasuk backoff, urutan replay per sumber, perlindungan versi, dan deduplikasi. Tes integrasi wajib yang terlewati menyebabkan hasil gagal. Pemeriksaan API mencakup tujuh mode PVMBG, kesamaan ukuran/hash payload DLQ, metadata tanpa raw, akses Internal Ops, serta pemrosesan laporan valid setelah pesan rusak tanpa restart.
+
+Untuk laporan Tim Lapangan, checker menjeda storage, mengirim lima laporan hingga menerima 202, lalu melakukan SIGKILL pada Aggregator sebelum storage dipulihkan. Setelah recovery, seluruh ID harus tersimpan tepat sekali. Broker mati harus menghasilkan 503, bukan 202; retry setelah broker pulih harus berhasil.
+
+`p3-check.json` menyimpan hasil, scope, konfigurasi, bukti per kasus, dan hasil cleanup; `run.log`, `build.log`, serta `*-tests.jsonl` menyimpan langkah dan hasil Go. Kegagalan menyimpan `diagnostics.log`. Resource fixture dibersihkan pada akhir run; volume stack lain tetap dipertahankan. Gunakan `--reports N` (1..50) dan `--output-dir <direktori-baru>` untuk variasi terukur.
+
+`physical_cluster_acceptance=false` berlaku meskipun hasil lokal PASS: pengujian ini tidak membuktikan kehilangan node fisik, quorum broker tiga node, atau failover Kubernetes. Bukti tersebut harus dikumpulkan terpisah pada cluster.
+
+## Sampel HTTP Sensor Pantai M2
+
+```sh
+make p5-sample
+# Alternatif tanpa make/bash, dengan window yang eksplisit:
+python3 -B scripts/m2/pantai-sample.py --seconds 30 --speed 60
+```
+
+Memerlukan Docker dan Python 3. Image resmi dipatok ke digest dari spek; container practice memakai port localhost dan token sementara lalu dihapus. Stack yang sudah berjalan dan `.env` pribadi tidak dipakai. `--output-dir` harus menunjuk direktori baru; default `artifacts/m2/runs/<waktu>-pantai-<acak>/`.
+
+`pantai-sample.json` merekam status, latensi tiap request, path/cursor, raw body dalam Base64, hash byte hasil capture, serta status cleanup. Capture tiap respons dibatasi 1 MiB dan ditandai `truncated` bila terpotong; capture terpotong bukan bukti pesan lengkap. `sensor.log` berisi keluaran container. Untuk membaca raw body: `base64.b64decode(sample["raw_base64"])`. Token tidak ditulis ke bukti.
+
+Hasil `SAMPLED` hanya berarti sampling selesai. Ini bukan PASS kriteria P5, benchmark, bukti semua perilaku sensor sudah ditemukan, atau bukti pengiriman alert kritis. Seed/speed tercatat untuk reproduksi fixture, tidak digunakan sebagai aturan ingestion.
+
+## Tes resiliensi adapter Sensor Pantai
+
+```sh
+make p5-resilience
+# Alternatif tanpa make/bash:
+python3 -B scripts/m2/pantai-resilience.py
+```
+
+Memerlukan Docker dan Python 3. Container Go 1.27.1 memakai source read-only dan `--network none`; server HTTP fixture berjalan di dalam container. Tes memakai race detector, clock terkontrol untuk backoff/breaker, dan HTTP timeout nyata. Skenario kontrak image resmi tidak dijalankan oleh command ini; gunakan sampling dan `TEST_PANTAI_URL` untuk itu.
+
+Hasil tersimpan di `artifacts/m2/runs/<waktu>-pantai-resilience-<acak>/`: `tests.jsonl` berisi event Go; `pantai-resilience.json` mencatat scope, commit dasar + `tested_source=WORKSPACE`, command, daftar tes PASS/skip, exit code dan cleanup. Tes gate wajib yang tidak PASS atau tes terpilih yang skip membuat hasil FAIL. `--output-dir <direktori-baru>` mengubah lokasi hasil. `p5_acceptance=false`: ini bukti mekanisme lokal, bukan integrasi runtime, validasi freshness profil ujian, benchmark cluster atau game day.
+
+## Integrasi ingestion Pantai
+
+```sh
+make p5-ingestion
+# Alternatif tanpa make/bash:
+python3 -B scripts/m2/pantai-ingestion.py
+```
+
+Checker memakai helper fixture P3, lalu menambah image resmi Sensor Pantai pada project Compose baru. Kredensial/port/volume sementara dan bootstrap broker LF tidak mengubah stack yang sudah ada. Uji live mencakup mapping sampai API terproteksi, proyeksi Media, restart Aggregator tanpa duplikasi ID sampel, pause/unpause sensor, data tersimpan yang tetap dapat dibaca dengan metadata stale, serta pemulihan otomatis. Sampel latensi beberapa read disimpan apa adanya; ini bukan sustained load atau bukti p95 M1.
+
+Tes race memakai PostgreSQL nyata: kegagalan checkpoint setelah efek commit, replay idempoten, retensi byte asli, barrier RF2 DLQ dan penolakan epoch lama. Uji kontrak mandiri `TestOfficialSensorContract` dikecualikan dari suite Go di jaringan storage; image resmi diuji melalui stack live. Tes lain yang skip atau gate wajib yang tidak PASS menyebabkan FAIL.
+
+Hasil ada di `artifacts/m2/runs/<waktu>-coastal-<acak>/pantai-ingestion.json`, beserta `build.log`, `*-tests.jsonl`, dan log cleanup/diagnostik. `physical_cluster_acceptance=false` dan `p5_acceptance=false`: jalur notifikasi kritis, zero loss, p95 ≤5 detik, failover node fisik, dan game day memerlukan bukti terpisah. Base Compose tetap tidak menjalankan sensor kecuali URL dikonfigurasi; checker menambahkan sensor lewat override privatnya.

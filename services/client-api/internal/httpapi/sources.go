@@ -17,9 +17,8 @@ type sourceResponse struct {
 }
 
 func projectSources(sources map[string]aggregator.SourceStatus) map[string]sourceResponse {
-	result := make(map[string]sourceResponse, 2)
-	for _, name := range []string{"BMKG", "PVMBG"} {
-		status := sources[name]
+	result := make(map[string]sourceResponse, len(sources))
+	for name, status := range sources {
 		result[name] = sourceResponse{Available: status.Available, LastIngested: status.LastIngested,
 			Stale: status.Stale, StaleSince: status.StaleSince, StaleAfterSeconds: status.StaleAfterSeconds}
 	}

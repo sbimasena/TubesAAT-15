@@ -5,7 +5,7 @@
     "bnpb"
   ],
   "schemaVersion": 39,
-  "version": 1,
+  "version": 3,
   "editable": false,
   "refresh": "10s",
   "time": {
@@ -368,6 +368,52 @@
         "defaults": {
           "unit": "reqps"
         },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Alert kritis Pantai: ACK lokal dan sampel latensi",
+      "description": "Estimasi 5 menit: ACK lokal tercatat (termasuk pemulihan ACK dalam proses yang sama) dan sampel latensi bertimestamp valid. Sampel latensi adalah penyebut rasio. Bukan jumlah alert dari sumber.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 0, "y": 40, "w": 8, "h": 8},
+      "targets": [
+        {"refId": "A", "expr": "sum(increase(notification_pantai_critical_acknowledged_total[5m]))", "legendFormat": "ACK lokal / 5m"},
+        {"refId": "B", "expr": "sum(increase(notification_pantai_critical_age_seconds_count[5m]))", "legendFormat": "Sampel latensi / 5m"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {}
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Alert kritis Pantai: rasio ≤5 s",
+      "description": "Target 99% berlaku untuk sampel dengan ingested_at valid, bukan seluruh alert kritis. Window 5 menit; tidak ada nilai jika tidak ada sampel. Tidak mengukur kehilangan alert.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 8, "y": 40, "w": 8, "h": 8},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(notification_pantai_critical_age_seconds_bucket{le=\"5\"}[5m])) / (sum(rate(notification_pantai_critical_age_seconds_count[5m])) > 0)", "legendFormat": "≤5 s"}
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "percentunit", "min": 0, "max": 1, "custom": {"thresholdsStyle": {"mode": "line"}}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0.99}]}},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Alert kritis Pantai: p95 ingestion → ACK",
+      "description": "Dari ingested_at sampai ACK lokal berhasil, setelah journal sync. Window 5 menit; bukan latensi dari waktu observasi sensor.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"x": 16, "y": 40, "w": 8, "h": 8},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(notification_pantai_critical_age_seconds_bucket[5m]))) and (sum(rate(notification_pantai_critical_age_seconds_count[5m])) > 0)", "legendFormat": "p95"}
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "s", "custom": {"thresholdsStyle": {"mode": "line"}}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 5}]}},
         "overrides": []
       },
       "options": {}

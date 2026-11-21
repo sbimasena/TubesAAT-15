@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"slices"
 	"testing"
 	"time"
@@ -312,5 +313,41 @@ func TestRouterReplication(t *testing.T) {
 	}
 	if _, err := r.Upsert(ctx, 3, []domain.HazardEvent{lost}, "router-lost"); err == nil {
 		t.Fatal("a write with no live replica must fail so the cursor does not advance")
+	}
+}
+
+func TestPingGivesUpOnHungUnitsWithinReadTimeout(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close() // accept and never answer, like a store behind a dead node
+		}
+	}()
+	url := "postgres://u:p@" + listener.Addr().String() + "/db?sslmode=disable"
+	repos := make([]*PostgresRepository, 2)
+	for i := range repos {
+		if repos[i], err = newUnit(url, nil); err != nil {
+			t.Fatal(err)
+		}
+		defer repos[i].Close()
+	}
+	r, err := newRouter([]string{"store-0", "store-1"}, repos, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	if r.Ping(context.Background()) == nil {
+		t.Fatal("Ping must fail when no unit answers")
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("Ping took %v; /health must answer within the 4 s readiness timeout", elapsed)
 	}
 }

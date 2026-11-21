@@ -3,14 +3,16 @@
 #   namespace -> Secrets from .env -> build + distribute images tagged with the git SHA
 #   -> kubectl apply -k -> Tester Agent -> wait for every rollout.
 #
-#   OVERLAY=dev      (default) k3d cluster, images loaded with `k3d image import`
+#   OVERLAY=dev      (default) full k3d cluster, images loaded with `k3d image import`
+#   OVERLAY=dev-practice
+#                    local k3d practice without Sensor Pantai; not P5 acceptance
 #   OVERLAY=cluster  demo cluster, images pushed to $REGISTRY (e.g. docker.io/<user>)
 #   SKIP_BUILD=1     reuse the images of the current tag (no build, import or push)
 source "$(dirname "$0")/lib.sh"
 
 OVERLAY="${OVERLAY:-dev}"
 case "$OVERLAY" in
-  dev) IMAGE_MODE="${IMAGE_MODE:-import}" ;;
+  dev | dev-practice) IMAGE_MODE="${IMAGE_MODE:-import}" ;;
   cluster) IMAGE_MODE="${IMAGE_MODE:-push}" ;;
   *) die "OVERLAY must be dev or cluster" ;;
 esac
@@ -38,7 +40,12 @@ fi
 load_env
 REQUIRED=(BMKG_API_KEY PVMBG_TOKEN POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD
   RABBITMQ_DEFAULT_USER RABBITMQ_DEFAULT_PASS AUTH_INTERNAL_SECRET JWT_SIGNING_SECRET
-  MEDIA_CLIENT_PASSWORD FIELD_TEAM_CLIENT_PASSWORD INTERNAL_OPS_CLIENT_PASSWORD PANTAI_AUTH_TOKEN AUDIT_TOKEN)
+  MEDIA_CLIENT_PASSWORD FIELD_TEAM_CLIENT_PASSWORD INTERNAL_OPS_CLIENT_PASSWORD AUDIT_TOKEN)
+if [[ "$OVERLAY" == dev-practice ]]; then
+  echo "PANTAI disabled by dev-practice overlay; this deployment cannot prove P5." >&2
+else
+  REQUIRED+=(PANTAI_AUTH_TOKEN)
+fi
 for key in "${REQUIRED[@]}"; do
   [[ -n "${!key:-}" ]] || die "$key is empty in .env"
 done
@@ -49,38 +56,65 @@ done
 
 run kubectl apply -f "$ROOT/deploy/k8s/base/namespace.yaml"
 
-# Secret values are never echoed.
+# Keep secret values out of kubectl argv. kubectl reads the values from
+# short-lived files in the user's temp directory; the files are removed at exit.
+SECRET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/bnpb-deploy-secrets.XXXXXX")"
+cleanup_secrets() {
+  [[ -n "${SECRET_DIR:-}" && -d "$SECRET_DIR" ]] || return 0
+  rm -f -- "$SECRET_DIR"/*
+  rmdir -- "$SECRET_DIR"
+}
+trap cleanup_secrets EXIT
+chmod 700 "$SECRET_DIR"
+
+declare -A SECRET_DATA=()
 apply_secret() {
   local name="$1"
   shift
+  local entry key variable file value
+  local -a files=()
+  for entry in "$@"; do
+    key="${entry%%=*}"
+    variable="${entry#*=}"
+    [[ "$key" =~ ^[A-Za-z0-9._-]+$ && "$variable" =~ ^[A-Z0-9_]+$ ]] ||
+      die "invalid Secret key or environment variable"
+    file="$SECRET_DIR/$name-$key"
+    if declare -p "$variable" >/dev/null 2>&1; then
+      value="${!variable}"
+    else
+      value=""
+    fi
+    printf '%s' "$value" >"$file"
+    chmod 600 "$file"
+    SECRET_DATA[$name]+="$key=$value"$'\n'
+    files+=(--from-file="$key=$file")
+  done
   echo "+ secret $name (from .env)" >&2
-  kubectl -n "$NS" create secret generic "$name" "$@" --dry-run=client -o yaml | kubectl apply -f -
+  kubectl -n "$NS" create secret generic "$name" "${files[@]}" \
+    --dry-run=client -o yaml | kubectl apply -f -
 }
 apply_secret source-credentials \
-  --from-literal=BMKG_API_KEY="$BMKG_API_KEY" --from-literal=PVMBG_TOKEN="$PVMBG_TOKEN"
+  BMKG_API_KEY=BMKG_API_KEY PVMBG_TOKEN=PVMBG_TOKEN
 apply_secret store-credentials \
-  --from-literal=POSTGRES_DB="$POSTGRES_DB" --from-literal=POSTGRES_USER="$POSTGRES_USER" \
-  --from-literal=POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+  POSTGRES_DB=POSTGRES_DB POSTGRES_USER=POSTGRES_USER POSTGRES_PASSWORD=POSTGRES_PASSWORD
 apply_secret broker-credentials \
-  --from-literal=RABBITMQ_DEFAULT_USER="$RABBITMQ_DEFAULT_USER" \
-  --from-literal=RABBITMQ_DEFAULT_PASS="$RABBITMQ_DEFAULT_PASS"
+  RABBITMQ_DEFAULT_USER=RABBITMQ_DEFAULT_USER RABBITMQ_DEFAULT_PASS=RABBITMQ_DEFAULT_PASS
 apply_secret auth-credentials \
-  --from-literal=AUTH_INTERNAL_SECRET="$AUTH_INTERNAL_SECRET" \
-  --from-literal=JWT_SIGNING_SECRET="$JWT_SIGNING_SECRET" \
-  --from-literal=MEDIA_CLIENT_PASSWORD="$MEDIA_CLIENT_PASSWORD" \
-  --from-literal=FIELD_TEAM_CLIENT_PASSWORD="$FIELD_TEAM_CLIENT_PASSWORD" \
-  --from-literal=INTERNAL_OPS_CLIENT_PASSWORD="$INTERNAL_OPS_CLIENT_PASSWORD"
-apply_secret pantai-token --from-literal=token="$PANTAI_AUTH_TOKEN"
-apply_secret audit-token --from-literal=token="$AUDIT_TOKEN"
-# Pass the optional token through stdin to keep it out of process arguments.
-printf '%s' "${SATELLITE_TOKEN:-}" | apply_secret satellite-token --from-file=token=/dev/stdin
-# Pods restart when a credential changes: the hash goes into a pod template annotation.
-SECRETS_HASH="$(
-  {
-    for key in "${REQUIRED[@]}"; do printf '%s=%s\n' "$key" "${!key}"; done
-    printf 'SATELLITE_TOKEN=%s\n' "${SATELLITE_TOKEN:-}"
-  } | sha256 | cut -c1-16
-)"
+  AUTH_INTERNAL_SECRET=AUTH_INTERNAL_SECRET JWT_SIGNING_SECRET=JWT_SIGNING_SECRET \
+  MEDIA_CLIENT_PASSWORD=MEDIA_CLIENT_PASSWORD FIELD_TEAM_CLIENT_PASSWORD=FIELD_TEAM_CLIENT_PASSWORD \
+  INTERNAL_OPS_CLIENT_PASSWORD=INTERNAL_OPS_CLIENT_PASSWORD
+apply_secret pantai-token token=PANTAI_AUTH_TOKEN
+apply_secret audit-token token=AUDIT_TOKEN
+apply_secret satellite-token token=SATELLITE_TOKEN
+# Pods restart only when a Secret they reference changes: a hash of those Secrets goes into
+# their pod template annotation.
+secret_hash() {
+  local name
+  for name in "$@"; do printf '%s\n%s' "$name" "${SECRET_DATA[$name]:-}"; done | sha256 | cut -c1-16
+}
+mapfile -t SECRET_REFS < <(kubectl kustomize "$ROOT/deploy/k8s/overlays/$OVERLAY" |
+  kubectl create --dry-run=client -o go-template-file="$ROOT/scripts/k8s/secret-refs.gotmpl" -f - | awk NF)
+[[ ${#SECRET_REFS[@]} -gt 0 ]] || die "found no Deployment or StatefulSet in overlay '$OVERLAY'"
 
 image_ref() {
   if [[ "$IMAGE_MODE" == push ]]; then echo "$REGISTRY/bnpb-$1:$TAG"; else echo "bnpb/$1:$TAG"; fi
@@ -112,9 +146,12 @@ mkdir -p "$GENERATED"
   echo "kind: Kustomization"
   echo "resources: [../overlays/$OVERLAY]"
   echo "patches:"
-  for kind in Deployment StatefulSet; do
-    echo "  - target: {kind: $kind, labelSelector: app.kubernetes.io/part-of=bnpb}"
-    echo "    patch: '[{\"op\": \"add\", \"path\": \"/spec/template/metadata/annotations\", \"value\": {\"bnpb/secrets-hash\": \"$SECRETS_HASH\"}}]'"
+  for line in "${SECRET_REFS[@]}"; do
+    read -r workload refs <<<"$line"
+    # shellcheck disable=SC2046 # refs are Secret names: no spaces or globs
+    digest="$(secret_hash $(tr ' ' '\n' <<<"$refs" | sort -u))"
+    echo "  - target: {kind: ${workload%%/*}, name: ${workload#*/}}"
+    echo "    patch: '[{\"op\": \"add\", \"path\": \"/spec/template/metadata/annotations\", \"value\": {\"bnpb/secrets-hash\": \"$digest\"}}]'"
   done
   echo "images:"
   for service in "${SERVICES[@]}"; do

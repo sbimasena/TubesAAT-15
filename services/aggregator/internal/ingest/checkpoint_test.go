@@ -78,3 +78,23 @@ func TestFollowersReadDurableFreshnessWithoutPolling(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckpointKeepsOnlyRecentCorrelation(t *testing.T) {
+	now := time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)
+	events := map[string]domain.SeismicEvent{
+		"recent": {EventID: "recent", OccurredAt: now.Add(-time.Minute)},
+		"old":    {EventID: "old", OccurredAt: now.Add(-2 * checkpointWindow)},
+	}
+	warnings := map[string]domain.TsunamiWarning{
+		"recent":   {EventID: "recent"},
+		"old":      {EventID: "old"},
+		"unmapped": {EventID: "unmapped"},
+	}
+	keptEvents, keptWarnings := recentCorrelation(events, warnings, now)
+	if len(keptEvents) != 1 || keptEvents["recent"].EventID != "recent" {
+		t.Fatalf("events: %v", keptEvents)
+	}
+	if _, ok := keptWarnings["old"]; ok || len(keptWarnings) != 2 || keptWarnings["unmapped"].EventID != "unmapped" {
+		t.Fatalf("warnings: %v", keptWarnings)
+	}
+}

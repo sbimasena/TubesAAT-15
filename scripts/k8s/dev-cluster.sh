@@ -31,5 +31,16 @@ else
 fi
 
 run kubectl config use-context "k3d-$CLUSTER"
+
+# k3d on Windows writes the API endpoint as host.docker.internal, which resolves
+# to the host's LAN address and is often unreachable from the host itself.
+# Repoint the cluster at the loopback port Docker actually published.
+case "$(uname -s)" in
+  MINGW* | MSYS*)
+    api_port="$(docker port "k3d-$CLUSTER-serverlb" 6443/tcp | head -n1 | sed 's/.*://')"
+    run kubectl config set-cluster "k3d-$CLUSTER" --server="https://127.0.0.1:$api_port"
+    ;;
+esac
+
 run kubectl wait --for=condition=Ready nodes --all --timeout=120s
 run kubectl get nodes -o wide

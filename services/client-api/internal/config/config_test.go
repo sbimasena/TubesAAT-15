@@ -16,8 +16,38 @@ func TestLoadClientConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Port != "8080" || cfg.AggregatorRequestTimeout != 1500*time.Millisecond || !cfg.EnableProvisionalHazards || cfg.MaxConcurrentRequests != 64 {
+	if cfg.Port != "8080" || cfg.AggregatorRequestTimeout != 1500*time.Millisecond || !cfg.EnableProvisionalHazards || cfg.MaxConcurrentRequests != 64 || cfg.AuthIntrospectionCacheTTL != 0 {
 		t.Fatalf("unexpected config: %+v", cfg)
+	}
+}
+
+func TestLoadAuthIntrospectionCacheTTL(t *testing.T) {
+	for _, test := range []struct {
+		value   string
+		want    time.Duration
+		invalid bool
+	}{
+		{value: "", want: 0},
+		{value: "0", want: 0},
+		{value: "2000", want: 2 * time.Second},
+		{value: "-1", invalid: true},
+		{value: "not-a-number", invalid: true},
+	} {
+		values := map[string]string{
+			"AGGREGATOR_BASE_URL":             "http://aggregator:8083",
+			"AGGREGATOR_REQUEST_TIMEOUT_MS":   "5000",
+			"AUTH_INTROSPECTION_CACHE_TTL_MS": test.value,
+		}
+		cfg, err := loadForTest(func(key string) string { return values[key] })
+		if test.invalid {
+			if err == nil || !strings.Contains(err.Error(), "AUTH_INTROSPECTION_CACHE_TTL_MS") {
+				t.Fatalf("invalid TTL %q accepted", test.value)
+			}
+			continue
+		}
+		if err != nil || cfg.AuthIntrospectionCacheTTL != test.want {
+			t.Fatalf("TTL %q = %s, %v; want %s", test.value, cfg.AuthIntrospectionCacheTTL, err, test.want)
+		}
 	}
 }
 

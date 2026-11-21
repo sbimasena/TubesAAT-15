@@ -25,7 +25,8 @@ type hazard struct {
 	AreaName   string    `json:"area_name"`
 	IngestedAt time.Time `json:"ingested_at"`
 	Attributes struct {
-		Retracted bool `json:"retracted"`
+		Retracted bool            `json:"retracted"`
+		Critical  json.RawMessage `json:"critical"`
 	} `json:"attributes"`
 }
 
@@ -37,12 +38,27 @@ type record struct {
 	Payload       json.RawMessage `json:"payload"`
 	Result        string          `json:"result"`
 	ReceivedAt    time.Time       `json:"received_at"`
+	// IngestedAt and EventAgeMS measure the SLI from Aggregator ingestion to
+	// the start of the journal write. A negative age means missing or future ingestion time.
+	IngestedAt      time.Time `json:"ingested_at"`
+	EventAgeMS      float64   `json:"event_age_ms"`
+	coastalCritical bool
+}
+
+// eventAgeMilliseconds is the ingestion age before the durable append.
+func (r record) eventAgeMilliseconds(now time.Time) float64 {
+	if r.IngestedAt.IsZero() {
+		return -1
+	}
+	return float64(now.Sub(r.IngestedAt).Microseconds()) / 1000
 }
 
 type journal struct {
 	file *os.File
 	seen map[string]bool
 	// ponytail: in-memory ID index grows with the JSONL journal; compact/use a consumer DB beyond M1.
+	// Shared across broker sessions, not persisted. Only explicit local ACK failures are tracked.
+	pendingCriticalACKs map[string]time.Time
 }
 
 func integer(value any) int64 {
@@ -79,6 +95,8 @@ func decode(delivery amqp.Delivery) (record, error) {
 		return r, errors.New("invalid severity")
 	}
 	r.HazardID = body.HazardID
+	r.IngestedAt = body.IngestedAt
+	r.coastalCritical = body.Source == "SENSOR_PANTAI" && bytes.Equal(body.Attributes.Critical, []byte("true"))
 	if body.Source == "SATELIT" && body.Attributes.Retracted {
 		r.Result = "notification_withdrawn"
 	}
@@ -93,7 +111,7 @@ func openJournal(path string) (*journal, error) {
 	if err != nil {
 		return nil, err
 	}
-	j := &journal{file: file, seen: make(map[string]bool)}
+	j := &journal{file: file, seen: make(map[string]bool), pendingCriticalACKs: make(map[string]time.Time)}
 	fail := func(err error) (*journal, error) { file.Close(); return nil, err }
 	// One writer per volume, including accidental additional container replicas.
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {

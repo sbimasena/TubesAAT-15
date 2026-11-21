@@ -1,10 +1,10 @@
 {
-  "_comment": "Single action list shared by the Makefile, the Control Console and the runbook (context-m2.md §8.2). Add an entry together with every new make target.",
   "actions": [
     {"id": "dev-up", "group": "Umum", "label": "Buat/nyalakan cluster k3d", "make": "dev-up", "destructive": false},
     {"id": "dev-down", "group": "Umum", "label": "Hapus cluster k3d", "make": "dev-down", "destructive": true},
     {"id": "deploy", "group": "Umum", "label": "Deploy seluruh sistem", "make": "deploy", "destructive": false},
     {"id": "status", "group": "Umum", "label": "Status node dan pod", "make": "status", "destructive": false},
+    {"id": "prepull", "group": "Umum", "label": "Tarik semua image workload di setiap node (sebelum demo)", "make": "prepull", "params": ["NODES"], "destructive": false},
     {"id": "logs", "group": "Umum", "label": "Log satu service", "make": "logs", "params": ["S"], "destructive": false},
     {"id": "tester-list", "group": "Umum", "label": "Daftar skenario Tester Agent", "make": "tester-list", "destructive": false},
     {"id": "tester", "group": "Umum", "label": "Jalankan skenario latihan Tester Agent", "make": "tester", "params": ["S"], "destructive": true},
@@ -25,8 +25,16 @@
     {"id": "reset", "group": "Reset", "label": "Kembalikan sistem ke normal", "make": "reset", "destructive": false},
     {"id": "p2-status", "group": "P2", "label": "Leader Lease + pod placement", "make": "p2-status", "destructive": false},
     {"id": "p2-load", "group": "P2", "label": "10k VU + scale 3 to 5 to 2", "make": "p2-load", "destructive": true},
+    {"id": "p2-throughput", "group": "P2", "label": "Compare throughput at one and three replicas", "make": "p2-throughput", "destructive": true},
     {"id": "p2-failover", "group": "P2", "label": "Tester Agent kill-leader", "make": "p2-failover", "destructive": true},
+    {"id": "p2-slo", "group": "P2", "label": "Event-to-durable-ack SLO from notification journal", "make": "p2-slo", "params": ["JOURNAL", "EXPECTED"], "destructive": false},
+    {"id": "p3-check", "group": "P3", "label": "Isolated DLQ, replay and field-report acceptance", "make": "p3-check", "destructive": false},
     {"id": "p4-sample", "group": "P4", "label": "Capture authenticated satellite feed sample", "make": "p4-sample", "destructive": false},
-    {"id": "p4-check", "group": "P4", "label": "Satellite replay and recovery checks", "make": "p4-check", "destructive": false}
+    {"id": "p4-check", "group": "P4", "label": "Satellite replay and recovery checks", "make": "p4-check", "destructive": false},
+    {"id": "p4-export", "group": "P4", "label": "Export satellite Audit events", "make": "p4-export", "destructive": false},
+    {"id": "p4-compare", "group": "P4", "label": "Compare satellite fires with the reference", "make": "p4-compare", "params": ["ACTUAL", "REFERENCE"], "destructive": false},
+    {"id": "p5-sample", "group": "P5", "label": "Isolated official Sensor Pantai HTTP sample", "make": "p5-sample", "destructive": false},
+    {"id": "p5-resilience", "group": "P5", "label": "Isolated Pantai adapter and resilience fault tests", "make": "p5-resilience", "destructive": false},
+    {"id": "p5-ingestion", "group": "P5", "label": "Isolated coastal ingestion, restart and outage checks", "make": "p5-ingestion", "destructive": false}
   ]
 }

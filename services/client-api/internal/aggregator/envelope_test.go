@@ -5,6 +5,25 @@ import (
 	"testing"
 )
 
+func TestDecodeEnvelopePreservesOptionalCoastalStatus(t *testing.T) {
+	var wire map[string]any
+	if err := json.Unmarshal([]byte(validResponse), &wire); err != nil {
+		t.Fatal(err)
+	}
+	sources := wire["sources"].(map[string]any)
+	sources["SENSOR_PANTAI"] = map[string]any{"available": false, "stale": true, "stale_after_seconds": 10, "last_error": "private diagnostic"}
+	raw, _ := json.Marshal(wire)
+	envelope, err := DecodeEnvelope(raw)
+	if err != nil || len(envelope.Sources) != 3 || !envelope.Sources["SENSOR_PANTAI"].Stale || envelope.Sources["SENSOR_PANTAI"].Available {
+		t.Fatalf("coastal metadata dropped: %+v %v", envelope, err)
+	}
+	sources["SENSOR_PANTAI"] = nil
+	raw, _ = json.Marshal(wire)
+	if _, err := DecodeEnvelope(raw); err == nil {
+		t.Fatal("present but malformed M2 metadata accepted")
+	}
+}
+
 func TestDecodeEnvelopeSeparatesReachabilityFromCommittedIngestion(t *testing.T) {
 	const payload = `{"data":[],"count":0,"sources":{
 		"BMKG":{"available":true,"last_success_at":"2026-10-06T00:00:03Z","last_ingested_at":"2026-10-06T00:00:01Z","ingestion_error":"mapping failed","stale":true,"stale_since":"2026-10-06T00:00:02Z","stale_after_seconds":15,"future_field":true},

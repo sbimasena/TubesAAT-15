@@ -49,7 +49,7 @@ Skrip memakai broker nyata/konfigurasi `.env`: producer serta dashboard tetap be
 
 `check-stage-3.py` memeriksa fanout/reconnect consumer; `check-stage-2.py` menyiapkan kondisi consumer offline sendiri untuk memeriksa durability backlog broker.
 
-## Demo independensi container, storage, dan fanout event (P4/P5)
+## Regresi independensi container, storage, dan fanout event
 
 ```sh
 python3 scripts/check-p4.py
@@ -57,9 +57,9 @@ python3 scripts/check-stage-3.py --output /tmp/fanout-downtime.json
 python3 scripts/check-p5-third.py
 ```
 
-Sembilan layanan fungsional harus sudah berjalan. P4 melakukan rebuild PVMBG saja, mencocokkan JSONB v1/v2 dengan respons Client API ketiga peran sebelum/sesudah restart Aggregator/DB, memeriksa restart mandiri Auth/API dan trace HTTP, serta memakai `tests/compose-probes.yml` untuk probe jaringan dengan image PostgreSQL tanpa password database. Probe merupakan container operator dengan jaringan setara peran layanan; request Client API yang nyata diperiksa terpisah dari probe.
+Sembilan layanan fungsional harus sudah berjalan. `check-p4.py` melakukan rebuild PVMBG saja, mencocokkan JSONB v1/v2 dengan respons Client API ketiga peran sebelum/sesudah restart Aggregator/DB, memeriksa restart mandiri Auth/API dan trace HTTP, serta memakai `tests/compose-probes.yml` untuk probe jaringan dengan image PostgreSQL tanpa password database. Probe merupakan container operator dengan jaringan setara peran layanan; request Client API yang nyata diperiksa terpisah dari probe.
 
-P5 memakai program `services/dashboard-consumer/cmd/review` pada container tersendiri/queue baru melalui `tests/compose-review.yml`. Producer dan kedua consumer dasar tidak dibuild/restart pada demo subscriber ketiga. Queue sementara exclusive/non-durable dibersihkan setelah selesai. Program memakai client AMQP yang sudah terpasang pada modul dashboard; tidak memanggil handler/logic dashboard. Build/testing demo ini tidak memerlukan modul aplikasi tambahan.
+`check-p5-third.py` memakai program `services/dashboard-consumer/cmd/review` pada container tersendiri/queue baru melalui `tests/compose-review.yml`. Producer dan kedua consumer dasar tidak dibuild/restart pada demo subscriber ketiga. Queue sementara exclusive/non-durable dibersihkan setelah selesai. Program memakai client AMQP yang sudah terpasang pada modul dashboard; tidak memanggil handler/logic dashboard. Build/testing demo ini tidak memerlukan modul aplikasi tambahan.
 
 Skrip fanout/recovery `check-stage-3.py` memakai helper `demo_support.py` dan argumen `--output` untuk menyimpan rekaman demo terpisah dari hasil pemeriksaan sebelumnya.
 
@@ -75,7 +75,7 @@ Checker deployment workspace memeriksa source aplikasi pada checkout commit: sem
 
 Cleanup hanya project clone dengan `down --volumes --remove-orphans`; ID/StartedAt container Compose yang sudah ada harus tetap. Build cache/image lokal dapat digunakan, sehingga ini bukan tes download internet tanpa cache. Hasil mencatat SHA aplikasi yang diuji. Perubahan workspace belum ikut checkout commit; jalankan ulang setelah perubahan aplikasi/config yang relevan di-commit.
 
-## P2 melalui Client API
+## Regresi load testing Client API
 
 ```sh
 python3 scripts/check-client-p2.py

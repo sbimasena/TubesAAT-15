@@ -84,3 +84,51 @@ python3 scripts/check-ingestion.py
 Jalankan dari root repository. Skrip mengembalikan PVMBG ke skema v1 dan outage=false; laporan yang sudah dibuat tetap ada. Lihat [README utama](../../README.md) untuk prasyarat dan efek pemeriksaan.
 
 Konfigurasi wajib: `BMKG_BASE_URL`, `PVMBG_BASE_URL`, `BMKG_API_KEY`, `PVMBG_TOKEN`, `DATABASE_URL`, dan `BROKER_URL`. Kredensial kedua sumber harus berbeda. Nilai contoh Compose hanya untuk pengembangan lokal.
+
+## Adapter Sensor Pantai M2
+
+`internal/source/pantai` menyediakan klien `GET /v1/stations` dan `GET /v1/observations`, autentikasi Bearer, correlation/instance ID, verifikasi leader sebelum request, dan pool HTTP terpisah. Timeout default dua detik membatasi header dan body. Redirect ditolak; respons non-200 dikembalikan sebagai `HTTPError` dengan status/`Retry-After`, tanpa retry tersembunyi atau body error di log. Cursor diperlakukan sebagai string buram dan tidak disimpan oleh adapter.
+
+Validasi struktural memeriksa field wajib beserta tipe/null, waktu RFC3339, identitas tidak kosong, koordinat station, UTF-8, field duplikat dan kedalaman JSON. Field tambahan diterima tanpa boleh menimpa field kanonis melalui perbedaan kapitalisasi. Rekaman invalid dan valid dipisah; raw record tetap utuh untuk calon penulisan DLQ. Error menyediakan alasan `contract_violation:<detail>`. Adapter belum menulis DLQ atau HazardEvent.
+
+Batas defensif awal: respons untuk decoding 10 MiB, capture arsip maksimal 32 MiB, rekaman 1 MiB, kedalaman 128, dan permintaan 1–1000 item. Nilai ini kebijakan lokal sementara, bukan batas yang dijanjikan vendor. Bila capture melebihi 32 MiB, `Truncated=true` dan raw dikosongkan; worker tidak boleh menganggap payload lengkap atau memajukan checkpoint. Kegagalan transport/body juga tidak menghasilkan page yang boleh di-commit.
+
+**Aturan mapping sementara yang disetujui:** `critical=true` menjadi `AWAS`, selain itu `NORMAL`; `area_name` memakai `province` dari station. Ini asumsi proyek sementara, bukan aturan eksplisit spek. Worker `internal/coastal` menerapkannya pada rekaman valid.
+
+**Validasi sementara yang disetujui:** `quality` harus `ok`, tinggi gelombang tidak negatif, pengukuran finite, station dikenal, dan `observed_at` tidak melewati `generated_at`. Batas atas numerik dan kebijakan kualitas yang lebih lengkap belum ditentukan. `generated_at` dan `observed_at` dipertahankan; tanggal virtual sensor tidak dibandingkan langsung dengan wall clock host.
+
+```sh
+cd services/aggregator
+go test ./internal/source/pantai
+# Tambahkan TEST_PANTAI_URL/TEST_PANTAI_TOKEN untuk uji kontrak image resmi.
+```
+
+Sampling image resmi yang terisolasi tersedia lewat `make p5-sample`; lihat [panduan skrip](../../scripts/README.md). Hasil sampling tidak membuktikan penerimaan P5.
+
+### Pembatas resiliensi Sensor Pantai
+
+`pantai.NewResilient` membungkus adapter dengan satu call aktif untuk kedua endpoint. Call tambahan ditolak cepat sebagai `GateError`, tanpa antrean goroutine di dalam wrapper. Setelah tiga call logis gagal berturut-turut, breaker `open` selama sepuluh detik; setelah itu hanya satu probe `half_open`. Probe berhasil menutup breaker; kegagalan membuka kembali. Pembatalan caller/kehilangan lease tidak dianggap bukti sumber pulih, dan permit tetap dilepas.
+
+Nilai tuning **sementara, belum final/terukur pada P5**: maksimal dua attempt per call; backoff eksponensial dengan equal jitter, awal 250 ms dan cap dua detik; budget dua retry per window sepuluh detik, dibagi antara endpoint station/observation. Attempt pertama tidak memakai budget retry. Retry hanya untuk error jaringan/timeout, HTTP 408/429/5xx; HTTP 401, pelanggaran kontrak dan kegagalan pemeriksaan data tidak di-retry langsung. Call gagal tetap dikenai backoff ketika budget habis. `Retry-After` detik maupun HTTP-date dihormati, termasuk saat lebih panjang daripada cooldown; penundaan di atas cap dikembalikan cepat untuk dijadwalkan worker, bukan ditunggu di request.
+
+`CheckPage` menerima kebijakan data-health dari worker, termasuk freshness virtual-time yang masih belum final. `HTTP 200` dengan data-health gagal dapat membuka breaker. Tanpa callback, wrapper tidak membuktikan data segar. Envelope invalid tetap dikembalikan bersama raw dan error untuk penyisihan durable; rekaman invalid dalam page tidak otomatis memblokir saudara validnya. Wrapper tidak memajukan cursor, menyimpan hazard/DLQ, atau melakukan fallback cache.
+
+`Status()` mengekspos state, call aktif, kegagalan berturut, jadwal retry, waktu sukses/gagal dan counter attempt/retry/penolakan. Counter attempt menghitung pemanggilan adapter, termasuk kegagalan verifikasi leader sebelum HTTP; bukan metrik pasti request yang mencapai sensor. Status worker aktif tersedia pada `GET /internal/v1/status` bagian `coastal`; follower menampilkan status sumber durable tanpa berpura-pura memiliki breaker leader. Metrik khusus Prometheus dan bukti game day masih pending.
+
+`make p5-resilience` menjalankan tes adapter dan fault-injection dengan race detector dalam container terisolasi tanpa jaringan eksternal. Uji mencakup budget bersama, satu probe, `Retry-After`, timeout, pembatalan, penjagaan data-health serta penolakan berulang tanpa request storm; hasilnya tidak menggantikan pengujian sumber BMKG/PVMBG di cluster atau target latensi M1.
+
+### Worker ingestion Pantai
+
+`PANTAI_BASE_URL` yang tidak kosong mengaktifkan worker di dalam term leader, sesudah fence barrier. Setiap request sumber dan setiap tahap tulis memeriksa lease; semua I/O dibatalkan ketika term berhenti. Pool sumber mandiri mendukung wrapper tracing tanpa bergantung pada tipe global `http.DefaultTransport`.
+
+Urutan commit: rekaman invalid disimpan byte-identik melalui `store.RecordUnprocessed`, hazard valid + outbox memakai `UpsertReplicated`, lalu checkpoint `SENSOR_PANTAI` memakai `SaveCursorReplicated`. Cursor memori berubah setelah checkpoint berhasil. Tidak ada transaksi lintas seluruh unit; kegagalan di tengah halaman menyebabkan replay dengan ID hazard dan ID DLQ deterministik. Replay dengan isi kanonis yang sama tidak membuat hazard atau snapshot outbox tambahan. Replikasi/perbaikan DLQ setelah perpindahan/kehilangan node masih merupakan dependency terpisah.
+
+Dalam satu page, observasi valid mengikuti urutan `observed_at`, lalu `observation_id`. Duplikat identik diproses sekali; ID yang memiliki isi bertentangan dalam page disisihkan beserta kedua payload, dan rekaman di luar urutan disisihkan. Rekaman invalid secara semantik tidak boleh merusak saudara valid melalui deteksi konflik. Ini tidak menjamin deteksi seluruh konflik ID antar-page; penyimpanan kanonis tetap memakai identitas deterministik dan mekanisme revisi yang sudah ada.
+
+Cursor adalah string buram. `next_cursor=null` mempertahankan posisi terakhir, bukan mengulang dari awal. Worker menyimpan 64 hash cursor terakhir untuk mendeteksi loop pendek; batas cursor 4096 byte. Loop, cursor terlalu besar dan regresi `generated_at` disisihkan sebagai envelope utuh, tanpa mengikuti posisinya. Envelope rusak juga tidak dapat merilis cursor; capture terpotong tidak ditulis sebagai pesan lengkap. Ini perlindungan sementara, bukan pendeteksi semua pola cursor anomali.
+
+Freshness sementara: `generated_at` yang tidak maju selama sepuluh detik waktu nyata dianggap tidak sehat; riwayat observasi lama tetap boleh diproses ketika mengejar backlog. Ini mendeteksi clock sensor macet/regresi, bukan semua gray failure: `generated_at` yang terus maju sambil menyajikan data lama belum tentu terdeteksi. Source metadata tetap stale pada kegagalan validasi/penyimpanan. Follower hanya membaca checkpoint; snapshot freshness kedaluwarsa lokal bila worker berhenti.
+
+API baca mengambil data kanonis, tidak menunggu sensor. Saat sensor gagal, data tersimpan tetap dapat menghasilkan 200 disertai `sources.SENSOR_PANTAI.available=false`/`stale=true`. Client API memproyeksikan lima field metadata yang sama dan tetap membatasi field Media. Ini fallback terhadap outage sumber; bukan jaminan cache data dapat melayani outage seluruh storage.
+
+Konfigurasi awal: `PANTAI_REQUEST_TIMEOUT_MS=2000`, `PANTAI_POLL_INTERVAL_MS=500`, `PANTAI_PROGRESS_TIMEOUT_MS=10000`, `PANTAI_PAGE_LIMIT=100`. Catalog station di-refresh setiap menit. Base Compose menonaktifkan worker melalui URL kosong; Kubernetes memakai Service `sensor-pantai:8080` dan Secret `pantai-token`. Tuning, breaker state lintas failover, jalur alert kritis segera/p95 ≤5 detik, serta penerimaan cluster fisik belum dibuktikan oleh integrasi ini.

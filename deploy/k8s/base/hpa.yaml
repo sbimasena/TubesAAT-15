@@ -1,0 +1,21 @@
+# Horizontal scaling for the only stateless public tier (D-BONUS). Aggregator,
+# Auth, stores and consumers keep fixed replicas: leader election, in-memory
+# sessions and single-writer journals make autoscaling them unsafe.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: client-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: client-api
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

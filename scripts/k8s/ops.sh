@@ -4,19 +4,46 @@ source "$(dirname "$0")/lib.sh"
 need kubectl
 
 FORWARDS=()
+AUTH_FILES=()
 cleanup() {
   for pid in "${FORWARDS[@]}"; do kill "$pid" 2>/dev/null || true; done
+  for file in "${AUTH_FILES[@]}"; do rm -f -- "$file"; done
 }
 trap cleanup EXIT
+
+# curl reads the header from a short-lived private file. Keep bearer credentials
+# out of curl argv and logs, including when a request fails.
+curl_auth() {
+  local token="$1"
+  shift
+  local header_file status
+  [[ "$token" != *$'\n'* && "$token" != *$'\r'* ]] || die "token contains an invalid header line break"
+  header_file="$(mktemp "${TMPDIR:-/tmp}/bnpb-curl-auth.XXXXXX")"
+  AUTH_FILES+=("$header_file")
+  chmod 600 "$header_file"
+  printf 'Authorization: Bearer %s\n' "$token" >"$header_file"
+  if curl --header "@$header_file" "$@"; then
+    status=0
+  else
+    status=$?
+  fi
+  rm -f -- "$header_file"
+  return "$status"
+}
 
 # forward runs a background port-forward and waits until the local port answers.
 forward() {
   local target="$1" ports="$2"
+  if (exec 3<>"/dev/tcp/127.0.0.1/${ports%%:*}") 2>/dev/null; then
+    die "local port ${ports%%:*} is already in use"
+  fi
   echo "+ kubectl -n $NS port-forward $target $ports" >&2
   kubectl -n "$NS" port-forward "$target" "$ports" >/dev/null &
-  FORWARDS+=("$!")
+  local pid=$!
+  FORWARDS+=("$pid")
   for _ in $(seq 50); do
-    (exec 3<>"/dev/tcp/127.0.0.1/${ports%%:*}") 2>/dev/null && return 0
+    kill -0 "$pid" 2>/dev/null || break
+    (exec 3<>"/dev/tcp/127.0.0.1/${ports%%:*}") 2>/dev/null && kill -0 "$pid" 2>/dev/null && return 0
     sleep 0.2
   done
   die "port-forward to $target did not become ready"
@@ -70,8 +97,8 @@ case "${1:-}" in
     forward svc/pvmbg 18082:8082
     for call in "schema-version {\"version\":1}" "outage {\"enabled\":false}"; do
       echo "+ curl -X POST http://127.0.0.1:18082/admin/${call%% *} -d '${call#* }'" >&2
-      curl -fsS -X POST "http://127.0.0.1:18082/admin/${call%% *}" \
-        -H "Authorization: Bearer $token" -H "Content-Type: application/json" -d "${call#* }"
+      curl_auth "$token" -fsS -X POST "http://127.0.0.1:18082/admin/${call%% *}" \
+        -H "Content-Type: application/json" -d "${call#* }"
       echo
     done
     ;;
@@ -109,13 +136,20 @@ case "${1:-}" in
     echo "Press Ctrl+C to close the port-forwards."
     wait
     ;;
+  p4-export)
+    need python3
+    token="$(secret_value audit-token token)"
+    [[ -n "$token" ]] || die "Audit token is empty"
+    forward svc/aggregator 18083:8083
+    AUDIT_TOKEN="$token" python3 "$ROOT/scripts/m2/export-satellite.py"
+    ;;
   p1-checksum)
     # Audit API checksum per source and over all sources (kontrak-m2.md §7.3).
     token="$(secret_value audit-token token)"
     forward svc/aggregator 18083:8083
     for source in BMKG PVMBG SATELIT SENSOR_PANTAI ""; do
       echo "+ curl http://127.0.0.1:18083/internal/audit/checksum?source=$source" >&2
-      curl -sS "http://127.0.0.1:18083/internal/audit/checksum?source=$source" -H "Authorization: Bearer $token"
+      curl_auth "$token" -fsS "http://127.0.0.1:18083/internal/audit/checksum?source=$source"
     done
     ;;
   p1-distribution)
@@ -149,7 +183,7 @@ SQL
     confirm "Kosongkan data $2 (simulasi disk kosong) di $(kubectl config current-context)?"
     run kubectl -n "$NS" exec -i "pod/$2" -c postgres -- \
       sh -c 'psql -v ON_ERROR_STOP=1 -qAt -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
-TRUNCATE hazard_events, hazard_outbox;
+TRUNCATE hazard_events, hazard_outbox, field_reports, unprocessed_messages;
 UPDATE unit_meta SET incarnation = gen_random_uuid() RETURNING 'incarnation baru: ' || incarnation;
 SQL
     echo "Lihat log: make logs S=aggregator ('lost its data' lalu 'refilled'), lalu make p1-checksum dan make p1-distribution."
@@ -173,11 +207,11 @@ SQL
     # The other two Audit API endpoints (kontrak-m2.md §7): a cursor page, then where one event lives.
     token="$(secret_value audit-token token)"
     forward svc/aggregator 18083:8083
-    page="$(curl -fsS "http://127.0.0.1:18083/internal/audit/events?source=BMKG&limit=2" -H "Authorization: Bearer $token")"
+    page="$(curl_auth "$token" -fsS "http://127.0.0.1:18083/internal/audit/events?source=BMKG&limit=2")"
     echo "events: $page"
     id="$(grep -o '"hazard_id":"[^"]*"' <<<"$page" | head -1 | cut -d'"' -f4)"
     [[ -n "$id" ]] || die "tidak ada event BMKG untuk dicari lokasinya"
-    echo "location $id: $(curl -fsS "http://127.0.0.1:18083/internal/audit/location?hazard_id=$id" -H "Authorization: Bearer $token")"
+    echo "location $id: $(curl_auth "$token" -fsS "http://127.0.0.1:18083/internal/audit/location?hazard_id=$id")"
     echo "harapan: 2 lokasi (primary + replica) di node berbeda"
     ;;
   p1-load|p1-surge)
@@ -224,7 +258,7 @@ SQL
     echo "memuat $(wc -l <"$work/events") event dalam potongan ${CHUNK:-100}"
     started=$(date +%s)
     for chunk in "$work"/chunk.*; do
-      curl -fsS -X POST http://127.0.0.1:18083/internal/admin/load -H "Authorization: Bearer $token" \
+      curl_auth "$token" -fsS -X POST http://127.0.0.1:18083/internal/admin/load \
         -H "Content-Type: application/x-ndjson" --data-binary "@$chunk" -w " http_s=%{time_total}\n" \
         || die "potongan $chunk gagal; muat ulang aman (upsert idempoten per event_id)"
     done
@@ -234,6 +268,47 @@ SQL
     join -t'|' "$work/before" "$work/after" | awk -F'|' '{ printf "%s | %s | %d | %d\n", $1, $5, $6 - $3, $7 }'
     echo "log: $log"
     rm -rf "$work"
+    ;;
+  # Pull every workload image on each node before a demo, so a rescheduled pod does not wait
+  # on Docker Hub. A privileged pod per node runs that node's own crictl through the host root.
+  prepull)
+    mapfile -t images < <(kubectl get deployment,statefulset,daemonset -A -o jsonpath='{range .items[*]}{range .spec.template.spec.initContainers[*]}{.image}{"\n"}{end}{range .spec.template.spec.containers[*]}{.image}{"\n"}{end}{end}' | sort -u)
+    [[ ${#images[@]} -gt 0 ]] || die "no workload images found"
+    image_args=""
+    for image in "${images[@]}"; do
+      [[ "$image" =~ ^[A-Za-z0-9./:@_-]+$ ]] || die "unexpected image reference: $image"
+      image_args+=",\"$image\""
+    done
+    read -r -a nodes <<<"${2:-$(kubectl get nodes -o jsonpath='{.items[*].metadata.name}')}"
+    for node in "${nodes[@]}"; do
+      [[ "$node" =~ ^[a-z0-9.-]+$ ]] || die "invalid node name: $node"
+      kubectl -n "$NS" delete pod "prepull-$node" --ignore-not-found --wait >/dev/null
+      echo "+ prepull ${#images[@]} images on $node" >&2
+      kubectl apply -f - >/dev/null <<EOF
+{"apiVersion": "v1", "kind": "Pod",
+ "metadata": {"name": "prepull-$node", "namespace": "$NS", "labels": {"app": "prepull"}},
+ "spec": {"nodeName": "$node", "restartPolicy": "Never", "automountServiceAccountToken": false,
+  "tolerations": [{"operator": "Exists"}],
+  "containers": [{"name": "pull", "image": "busybox:1.36", "securityContext": {"privileged": true},
+   "command": ["chroot", "/host", "sh", "-c", "failed=0; for image in \"\$@\"; do if k3s crictl pull \"\$image\" >/dev/null; then echo \"ok     \$image\"; else echo \"FAILED \$image\"; failed=1; fi; done; exit \$failed", "prepull"$image_args],
+   "volumeMounts": [{"name": "host", "mountPath": "/host"}]}],
+  "volumes": [{"name": "host", "hostPath": {"path": "/"}}]}}
+EOF
+    done
+    failed=0
+    for node in "${nodes[@]}"; do
+      phase=""
+      for _ in $(seq 1 180); do
+        phase="$(kubectl -n "$NS" get pod "prepull-$node" -o jsonpath='{.status.phase}')"
+        [[ "$phase" == Succeeded || "$phase" == Failed ]] && break
+        sleep 5
+      done
+      echo "== $node ($phase)"
+      kubectl -n "$NS" logs "prepull-$node" 2>/dev/null || true
+      [[ "$phase" == Succeeded ]] || failed=1
+      kubectl -n "$NS" delete pod "prepull-$node" --wait=false >/dev/null
+    done
+    [[ "$failed" == 0 ]] || die "some images were not pulled; see above"
     ;;
   *)
     die "unknown command '${1:-}'; see make help"

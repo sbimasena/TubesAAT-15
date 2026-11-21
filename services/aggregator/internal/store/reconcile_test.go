@@ -334,6 +334,61 @@ func TestReconcileReReplicatesAndRebalances(t *testing.T) {
 	}
 }
 
+func TestReconcileInitializesUnrecordedUnitsBeforeCursorRead(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	names := []string{"store-0", "store-1", "store-2"}
+	repos := make([]*PostgresRepository, len(names))
+	for i := range names {
+		databaseURL, _ := testSchema(t, ctx)
+		repo, err := OpenPostgres(ctx, databaseURL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(repo.Close)
+		repos[i] = repo
+	}
+	r, err := newRouter(names, repos, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.CheckUnits(ctx)
+
+	// Model a durable map created while all stores were temporarily unreachable.
+	// The cursor is present on the stores, but none is trusted until reconciliation.
+	if _, err := r.maps.save(ctx, defaultMap(names), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.LoadMap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Fence(ctx, 1); err != nil {
+		t.Fatalf("Fence() error = %v", err)
+	}
+	if err := r.SaveCursor(ctx, 1, "BMKG", "cursor-after-restart"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.LoadCursor(ctx, "BMKG"); err == nil {
+		t.Fatal("cursor read must not trust units absent from the durable incarnation map")
+	}
+
+	leaderCtx := WithWriteVerifier(ctx, func(context.Context) error { return nil })
+	if err := r.ReconcileIncarnations(leaderCtx, 1, time.Minute); err != nil {
+		t.Fatalf("ReconcileIncarnations() error = %v", err)
+	}
+	if got := r.current().m.Incarnations; len(got) != len(names) {
+		t.Fatalf("reconciliation did not record every live unit incarnation: %v", got)
+	}
+	cursor, err := r.LoadCursor(ctx, "BMKG")
+	if err != nil {
+		t.Fatalf("LoadCursor() after reconciliation: %v", err)
+	}
+	if cursor != "cursor-after-restart" {
+		t.Fatalf("cursor = %q; want cursor-after-restart", cursor)
+	}
+}
+
 func sortedLoad(load map[string]int) []string {
 	var out []string
 	for name, n := range load {
@@ -351,5 +406,140 @@ func TestStorageStatusCountsUnderReplicatedPartitions(t *testing.T) {
 	r.units[2].lastSeen.Store(0) // store-2 silent: every partition it holds is down to one copy
 	if s := r.StorageStatus(); s.UnderReplicated != 16 || s.Units[2].Up {
 		t.Fatalf("store-2 unreachable: %+v", s)
+	}
+}
+
+func TestMissingFromListsOnlyAbsentOrOlderRows(t *testing.T) {
+	src := partitionIndex{events: map[string]int64{"same": 1, "newer": 5, "absent": 1, "older": 1}, reports: map[string]bool{"r-same": true, "r-absent": true}}
+	dst := partitionIndex{events: map[string]int64{"same": 1, "newer": 4, "older": 2}, reports: map[string]bool{"r-same": true}}
+	events, reports := missingFrom(src, dst)
+	slices.Sort(events)
+	if !slices.Equal(events, []string{"absent", "newer"}) || !slices.Equal(reports, []string{"r-absent"}) {
+		t.Fatalf("events=%v reports=%v", events, reports)
+	}
+}
+
+func TestAntiEntropyCopiesOnlyDifferingRows(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	names := []string{"store-0", "store-1"}
+	repos := make([]*PostgresRepository, len(names))
+	for i := range names {
+		databaseURL, _ := testSchema(t, ctx)
+		repo, err := OpenPostgres(ctx, databaseURL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(repo.Close)
+		repos[i] = repo
+	}
+	r, err := newRouter(names, repos, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.CheckUnits(ctx)
+	if err := r.LoadMap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
+	var events []domain.HazardEvent
+	for i := range 30 {
+		events = append(events, m2Event("BMKG", "SEISMIC", fmt.Sprintf("ae-%02d", i), base.Add(time.Duration(i)*time.Second)))
+	}
+	if _, err := r.Upsert(ctx, 0, events, "ae-seed"); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 4 {
+		report := FieldReport{ReportID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i), Note: "uji", Reporter: "field-team", ReceivedAt: base}
+		if _, err := r.SaveReport(ctx, report, "ae-seed"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec := func(repo *PostgresRepository, sql string, args ...any) {
+		t.Helper()
+		if _, err := repo.pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// store-1 missed one write, store-0 missed a later revision of another and a report.
+	lost, stale := events[3].HazardID, events[7].HazardID
+	exec(repos[1], "DELETE FROM hazard_outbox WHERE hazard_id = $1", lost)
+	exec(repos[1], "DELETE FROM hazard_events WHERE hazard_id = $1", lost)
+	exec(repos[1], "UPDATE hazard_events SET area_name = 'Revisi', ingested_at = ingested_at + interval '1 hour' WHERE hazard_id = $1", stale)
+	exec(repos[0], "DELETE FROM field_reports WHERE report_id = $1", "00000000-0000-4000-8000-000000000002")
+
+	r.antiEntropy(ctx, 0, r.current(), func(*unit) bool { return false })
+
+	snapshot := func(repo *PostgresRepository) string {
+		t.Helper()
+		var s string
+		if err := repo.pool.QueryRow(ctx, `SELECT
+			(SELECT string_agg(hazard_id || '|' || area_name || '|' || ingested_at::text, ',' ORDER BY hazard_id) FROM hazard_events) ||
+			(SELECT string_agg(report_id, ',' ORDER BY report_id) FROM field_reports)`).Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	a, b := snapshot(repos[0]), snapshot(repos[1])
+	if a != b {
+		t.Fatalf("replicas differ after anti-entropy:\nstore-0 %s\nstore-1 %s", a, b)
+	}
+	var area string
+	var count int
+	if err := repos[0].pool.QueryRow(ctx, "SELECT area_name, (SELECT count(*) FROM hazard_events) FROM hazard_events WHERE hazard_id = $1", stale).Scan(&area, &count); err != nil {
+		t.Fatal(err)
+	}
+	if area != "Revisi" || count != len(events) {
+		t.Fatalf("newer revision must win and the lost event return: area=%q count=%d", area, count)
+	}
+}
+
+func TestSyncPartitionCopiesDeadLettersVerbatim(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	names := []string{"store-0", "store-1"}
+	repos := make([]*PostgresRepository, len(names))
+	for i := range names {
+		databaseURL, _ := testSchema(t, ctx)
+		repo, err := OpenPostgres(ctx, databaseURL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(repo.Close)
+		repos[i] = repo
+	}
+	r, err := newRouter(names, repos, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.CheckUnits(ctx)
+	if err := r.LoadMap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	id := "dlq-copy-1"
+	p := PartitionOf(id)
+	raw := []byte{0xff, '{', 0xfe}
+	retryAt := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	if _, err := repos[0].pool.Exec(ctx, `INSERT INTO unprocessed_messages
+		(message_id, partition_id, source, raw, reason, attempts, status, next_retry_at, received_at)
+		VALUES ($1, $2, 'PVMBG', $3, 'invalid', 2, 'retrying', $4, $4)`, id, p, raw, retryAt); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := r.syncPartition(ctx, 0, p, r.units[0], r.units[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var gotRaw []byte
+	var status string
+	var attempts, copies int
+	var gotRetry time.Time
+	if err := repos[1].pool.QueryRow(ctx, `SELECT raw, status, attempts, next_retry_at,
+		(SELECT count(*) FROM unprocessed_messages) FROM unprocessed_messages WHERE message_id = $1`, id).
+		Scan(&gotRaw, &status, &attempts, &gotRetry, &copies); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(gotRaw, raw) || status != "retrying" || attempts != 2 || !gotRetry.Equal(retryAt) || copies != 1 {
+		t.Fatalf("copy differs: raw=%x status=%s attempts=%d retry=%v rows=%d", gotRaw, status, attempts, gotRetry, copies)
 	}
 }

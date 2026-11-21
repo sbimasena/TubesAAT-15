@@ -18,6 +18,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/coastal"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/domain"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/httpapi"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/ingest"
@@ -104,6 +105,28 @@ func main() {
 	bmkg := source.NewBMKGClient(bmkgBaseURL, bmkgKey, logger)
 	pvmbg := source.NewPVMBGClient(pvmbgBaseURL, pvmbgToken, logger)
 	manager := ingest.NewManager(bmkg, pvmbg, replicatedIngestStore{repository}, interval, logger)
+	coastalConfig, err := coastalConfigFromEnv()
+	if err != nil {
+		logger.Error("invalid coastal configuration", "error", err)
+		os.Exit(1)
+	}
+	var coast *coastal.Runtime
+	coastalStatusDone := make(chan struct{})
+	if coastalConfig.BaseURL != "" {
+		coast, err = coastal.NewRuntime(coastalConfig, repository, election.Verify, logger)
+		if err != nil {
+			logger.Error("coastal initialization failed", "error", err)
+			os.Exit(1)
+		}
+		defer coast.Close()
+		manager.AddSourceStatus(coastal.Source, coast.Status)
+		go func() {
+			defer close(coastalStatusDone)
+			coast.RefreshStatus(ctx, func() bool { _, active := election.Current(); return active })
+		}()
+	} else {
+		close(coastalStatusDone)
+	}
 	statusDone := make(chan struct{})
 	go func() {
 		defer close(statusDone)
@@ -119,6 +142,7 @@ func main() {
 		return 0
 	})
 	var satelliteClient *satellite.StreamClient
+	satelliteLateness := positiveSecondsFromEnv("SATELLITE_LATENESS_SECONDS", 86400)
 	if token := os.Getenv("SATELLITE_TOKEN"); token != "" {
 		satelliteClient, err = satellite.NewStreamClient(satellite.FeedURL, token)
 		if err != nil {
@@ -131,14 +155,23 @@ func main() {
 		defer close(leaderDone)
 		err := election.Run(ctx, func(term context.Context, epoch int64) {
 			term = store.WithWriteVerifier(term, election.Verify)
-			if err := repository.Fence(term, epoch); err != nil {
-				logger.Error("leader fence failed", "epoch", epoch, "error", err)
-				stop()
-				return
-			}
-			if err := manager.PrepareTerm(term, epoch, election.Verify, repository); err != nil {
-				logger.Error("leader checkpoint load failed", "error", err)
-				stop()
+			deadAfter := positiveSecondsFromEnv("REREPLICATE_AFTER_SECONDS", 60)
+			if err := prepareLeaderTerm(
+				term, leaderPrepareAttemptTimeout, leaderPrepareRetryInterval, election.Verify,
+				func(attempt context.Context) error {
+					if err := repository.Fence(attempt, epoch); err != nil {
+						return fmt.Errorf("storage fence: %w", err)
+					}
+					if err := repository.ReconcileIncarnations(attempt, epoch, deadAfter); err != nil {
+						return fmt.Errorf("initial storage incarnation recovery: %w", err)
+					}
+					return manager.PrepareTerm(attempt, epoch, election.Verify, repository)
+				}, logger,
+			); err != nil {
+				if term.Err() == nil {
+					logger.Error("leader storage preparation failed", "error", err)
+					stop()
+				}
 				return
 			}
 			logger.Info("leader workers starting", "epoch", epoch, "pod", os.Getenv("POD_NAME"))
@@ -147,12 +180,22 @@ func main() {
 			go func() { defer workers.Done(); manager.Run(term) }()
 			go func() {
 				defer workers.Done()
-				repository.Reconcile(term, epoch, 10*time.Second, positiveSecondsFromEnv("REREPLICATE_AFTER_SECONDS", 60))
+				repository.Reconcile(term, epoch, 10*time.Second, deadAfter)
 			}()
 			go func() { defer workers.Done(); messaging.Run(term, repository, brokerURL, "hazard.events", logger) }()
-			if satelliteClient != nil {
+			if coast != nil {
 				workers.Go(func() {
-					if err := satellite.RunWorker(term, satelliteClient, repository, epoch, election.Verify, logger); err != nil && term.Err() == nil {
+					if err := coast.Run(term, epoch); err != nil && term.Err() == nil {
+						logger.Error("coastal worker stopped", "error_type", fmt.Sprintf("%T", err))
+						stop()
+					}
+				})
+			}
+			if satelliteClient != nil {
+				// Satellite processing is a leader-only module: follower replicas
+				// never open the feed or write fire state.
+				workers.Go(func() {
+					if err := satellite.RunWorker(term, satelliteClient, repository, epoch, election.Verify, logger, satellite.WithLateness(satelliteLateness)); err != nil && term.Err() == nil {
 						logger.Error("Satellite worker stopped", "error", err)
 					}
 				})
@@ -182,7 +225,16 @@ func main() {
 		epoch, _ := election.Current()
 		return epoch, nil
 	})
-	api.EnableReadCache()
+	cacheTTL := time.Second
+	if raw := strings.TrimSpace(os.Getenv("AGGREGATOR_READ_CACHE_TTL_MS")); raw != "" {
+		ms, err := strconv.Atoi(raw)
+		if err != nil || ms < 0 {
+			logger.Error("Invalid read cache TTL", "variable", "AGGREGATOR_READ_CACHE_TTL_MS", "value", raw)
+			os.Exit(1)
+		}
+		cacheTTL = time.Duration(ms) * time.Millisecond
+	}
+	api.EnableReadCache(cacheTTL)
 	api.EnableAudit(repository, auditToken)
 	api.EnableAnalytics(repository)
 	// Register component status providers before mounting the handler.
@@ -190,9 +242,13 @@ func main() {
 		epoch, active := election.Current()
 		return map[string]any{"epoch": epoch, "is_me": active}
 	})
+	api.AddStatus("cache", func(context.Context) any { return api.CacheStatus() })
 	api.AddStatus("satellite", func(ctx context.Context) any { return satellite.StoredStatus(ctx, repository) })
 	api.AddStatus("storage", func(context.Context) any { return repository.StorageStatus() })
 	api.AddStatus("sources", func(context.Context) any { return manager.Status() })
+	if coast != nil {
+		api.AddStatus("coastal", func(context.Context) any { return coast.Detail() })
+	}
 	server := &http.Server{
 		Addr:              ":" + port,
 		Handler:           api.Handler(),
@@ -220,6 +276,7 @@ func main() {
 	<-statusDone
 	<-reportsDone
 	<-routerDone
+	<-coastalStatusDone
 }
 
 // registerStoreMetrics exposes P1 placement per unit for the Grafana Overview.

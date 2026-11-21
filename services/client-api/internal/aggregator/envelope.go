@@ -26,7 +26,7 @@ type Envelope struct {
 	Sources map[string]SourceStatus
 }
 
-// DecodeEnvelope validates data/count and both source statuses in the M1 read contract.
+// DecodeEnvelope requires both M1 sources and validates optional M2 sources.
 // Freshness is preserved for the HTTP projection, including empty query results.
 func DecodeEnvelope(data []byte) (Envelope, error) {
 	var wire struct {
@@ -39,13 +39,16 @@ func DecodeEnvelope(data []byte) (Envelope, error) {
 		return Envelope{}, fmt.Errorf("invalid Aggregator envelope")
 	}
 	result := Envelope{Data: wire.Data, Count: *wire.Count, Sources: make(map[string]SourceStatus, 2)}
-	for _, name := range []string{"BMKG", "PVMBG"} {
+	for _, name := range []string{"BMKG", "PVMBG", "SENSOR_PANTAI", "SATELIT"} {
+		payload, present := wire.Sources[name]
+		if !present && (name == "SENSOR_PANTAI" || name == "SATELIT") {
+			continue
+		}
 		var required struct {
 			Available         *bool    `json:"available"`
 			Stale             *bool    `json:"stale"`
 			StaleAfterSeconds *float64 `json:"stale_after_seconds"`
 		}
-		payload := wire.Sources[name]
 		if err := json.Unmarshal(payload, &required); err != nil || required.Available == nil ||
 			required.Stale == nil || required.StaleAfterSeconds == nil || *required.StaleAfterSeconds <= 0 {
 			return Envelope{}, fmt.Errorf("invalid Aggregator source status")

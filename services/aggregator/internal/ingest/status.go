@@ -24,7 +24,6 @@ func initialStatus(now time.Time) map[string]SourceStatus {
 
 func (m *Manager) Status() map[string]SourceStatus {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 	now := time.Now().UTC()
 	// Allow the normal polling interval plus upstream/storage deadlines before
 	// treating a stalled worker as stale. Errors mark it stale immediately.
@@ -33,7 +32,26 @@ func (m *Manager) Status() map[string]SourceStatus {
 	for name, status := range m.status {
 		result[name] = statusSnapshot(status, now, staleAfter)
 	}
+	providers := make(map[string]func() SourceStatus, len(m.statusProviders))
+	for name, provider := range m.statusProviders {
+		providers[name] = provider
+	}
+	m.mu.RUnlock()
+	for name, provider := range providers {
+		result[name] = provider()
+	}
 	return result
+}
+
+// AddSourceStatus joins independent source workers without making HTTP reads
+// call upstreams. Providers must return in-memory status snapshots promptly.
+func (m *Manager) AddSourceStatus(name string, provider func() SourceStatus) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.statusProviders == nil {
+		m.statusProviders = make(map[string]func() SourceStatus)
+	}
+	m.statusProviders[name] = provider
 }
 
 func statusSnapshot(status SourceStatus, now time.Time, staleAfter time.Duration) SourceStatus {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -64,6 +65,18 @@ func (r *PostgresRepository) exportReports(ctx context.Context, p int) ([]FieldR
 	if err != nil {
 		return nil, err
 	}
+	return scanReports(rows)
+}
+
+func (r *PostgresRepository) exportReportsByID(ctx context.Context, ids []string) ([]FieldReport, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+reportColumns+` FROM field_reports WHERE report_id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	return scanReports(rows)
+}
+
+func scanReports(rows pgx.Rows) ([]FieldReport, error) {
 	defer rows.Close()
 	var out []FieldReport
 	for rows.Next() {

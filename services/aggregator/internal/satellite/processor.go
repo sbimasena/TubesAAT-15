@@ -32,19 +32,36 @@ type Processor struct {
 	repo       Repository
 	epoch      int64
 	verify     func(context.Context) error
+	lateness   time.Duration
 	checkpoint recoveryCheckpoint
 	progress   atomic.Pointer[satelliteProgress]
 	session    atomic.Pointer[Session]
 }
 
-func NewProcessor(repo Repository, epoch int64, verify func(context.Context) error) (*Processor, error) {
+// Option configures one processor instance without changing existing callers.
+type Option func(*Processor)
+
+// WithLateness sets the event-time window accepted from the feed. The
+// deployment configuration is authoritative and is also applied on restore.
+func WithLateness(lateness time.Duration) Option {
+	return func(p *Processor) { p.lateness = lateness }
+}
+
+func NewProcessor(repo Repository, epoch int64, verify func(context.Context) error, options ...Option) (*Processor, error) {
 	if repo == nil || verify == nil {
 		return nil, errors.New("satellite: repository and term verifier required")
+	}
+	processor := &Processor{repo: repo, epoch: epoch, verify: verify, lateness: DefaultLateness}
+	for _, option := range options {
+		option(processor)
+	}
+	if processor.lateness <= 0 {
+		return nil, errors.New("satellite: lateness must be positive")
 	}
 	processorReady.Set(0)
 	offsetLag.Set(-1)
 	eventLag.Set(-1)
-	return &Processor{repo: repo, epoch: epoch, verify: verify}, nil
+	return processor, nil
 }
 
 func (p *Processor) save(ctx context.Context, checkpoint recoveryCheckpoint) error {
@@ -71,7 +88,7 @@ func (p *Processor) Restore(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	checkpoint := recoveryCheckpoint{Version: 1, State: NewState()}
+	checkpoint := recoveryCheckpoint{Version: 1, State: NewStateWithLateness(p.lateness)}
 	if raw != "" {
 		if len(raw) > 16<<20 {
 			return errors.New("satellite: stored checkpoint exceeds 16 MiB")
@@ -82,6 +99,9 @@ func (p *Processor) Restore(ctx context.Context) error {
 		if checkpoint.Version != 1 || checkpoint.State == nil || checkpoint.State.Offset < -1 || checkpoint.State.Lateness <= 0 || (checkpoint.State.Offset >= 0 && checkpoint.State.LastIngested.IsZero()) || checkpoint.State.Detections == nil || checkpoint.State.Owners == nil || checkpoint.State.Events == nil {
 			return errors.New("satellite: invalid recovery checkpoint")
 		}
+		// Configuration is authoritative; a restored checkpoint adopts the
+		// deployment's lateness before any new effects are applied.
+		checkpoint.State.Lateness = p.lateness
 	}
 	// A previous failed RF acknowledgement may have left only one new copy.
 	// Replicate that complete recovery record before applying any of its effects.

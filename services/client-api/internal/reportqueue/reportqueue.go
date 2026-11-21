@@ -149,9 +149,8 @@ func (p *Publisher) ensureSession(ctx context.Context) (*brokerSession, error) {
 			return nil, err
 		}
 		setupCtx, cancel := context.WithTimeout(ctx, dialTimeout)
-		// The timer must close the session on timeout but stay disarmed on
-		// success: cancel() would fire the close callback, so success only
-		// aborts the timer and keeps the session open for publishing.
+		// Stop the close callback before canceling a successful setup context
+		// so its resources are released without closing the reusable session.
 		abort := context.AfterFunc(setupCtx, func() { session.close() })
 		declareErr := declare(session.channel)
 		confirmErr := error(nil)
@@ -162,6 +161,7 @@ func (p *Publisher) ensureSession(ctx context.Context) (*brokerSession, error) {
 			session.returns = session.channel.NotifyReturn(make(chan amqp.Return, 1))
 			p.connection, p.channel, p.socket, p.returns = session.connection, session.channel, session.socket, session.returns
 			abort()
+			cancel()
 			return session, nil
 		}
 		session.close()

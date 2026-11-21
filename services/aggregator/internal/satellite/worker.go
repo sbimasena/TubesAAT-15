@@ -11,8 +11,8 @@ const FeedURL = "https://satellite.naufarrel.dev"
 
 // RunWorker runs inside the current leader term. A failed store operation is
 // recovered from the durable checkpoint before opening another stream.
-func RunWorker(ctx context.Context, client *StreamClient, repo Repository, epoch int64, verify func(context.Context) error, logger *slog.Logger) error {
-	processor, err := NewProcessor(repo, epoch, verify)
+func RunWorker(ctx context.Context, client *StreamClient, repo Repository, epoch int64, verify func(context.Context) error, logger *slog.Logger, options ...Option) error {
+	processor, err := NewProcessor(repo, epoch, verify, options...)
 	if err != nil {
 		return err
 	}

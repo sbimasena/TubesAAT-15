@@ -43,20 +43,19 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var healthy atomic.Bool
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		status := "ready"
+		if !healthy.Load() {
+			status = "unavailable"
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		fmt.Fprintf(w, `{"service":%q,"status":%q}`, serviceName, status)
+	})
+	mux.Handle("/metrics", metricsHandler())
 	server := &http.Server{Addr: ":8080", ReadHeaderTimeout: 3 * time.Second, WriteTimeout: 3 * time.Second,
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/health" {
-				http.NotFound(w, r)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			status := "ready"
-			if !healthy.Load() {
-				status = "unavailable"
-				w.WriteHeader(http.StatusServiceUnavailable)
-			}
-			fmt.Fprintf(w, `{"service":%q,"status":%q}`, serviceName, status)
-		})}
+		Handler: mux}
 	go func() {
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("health server failed", "error", err)
@@ -71,8 +70,9 @@ func main() {
 }
 
 func run(ctx context.Context, brokerURL, path string, healthy *atomic.Bool, logger *slog.Logger) {
+	pendingCriticalACKs := make(map[string]time.Time)
 	for ctx.Err() == nil {
-		err := session(ctx, brokerURL, path, healthy, logger)
+		err := session(ctx, brokerURL, path, healthy, logger, pendingCriticalACKs)
 		healthy.Store(false)
 		if ctx.Err() != nil {
 			return
@@ -87,13 +87,14 @@ func run(ctx context.Context, brokerURL, path string, healthy *atomic.Bool, logg
 	}
 }
 
-func session(ctx context.Context, brokerURL, path string, healthy *atomic.Bool, logger *slog.Logger) error {
+func session(ctx context.Context, brokerURL, path string, healthy *atomic.Bool, logger *slog.Logger, pendingCriticalACKs map[string]time.Time) error {
 	healthy.Store(false)
 	j, err := openJournal(path)
 	if err != nil {
 		return fmt.Errorf("journal unavailable: %w", err)
 	}
 	defer j.file.Close()
+	j.pendingCriticalACKs = pendingCriticalACKs
 	logger.Info("journal restored", "processed_ids", len(j.seen))
 	var socket net.Conn
 	connection, err := amqp.DialConfig(brokerURL, amqp.Config{Heartbeat: 5 * time.Second,
@@ -173,16 +174,42 @@ func handle(delivery amqp.Delivery, j *journal, logger *slog.Logger) error {
 		logger.Error("invalid event rejected", "message_id", delivery.MessageId, "correlation_id", delivery.CorrelationId, "error", err, "requeue", false)
 		return delivery.Reject(false) // No DLQ for M1; malformed payload is discarded for this subscription.
 	}
+	// The journal stores the pre-append age; the histograms include sync and the ACK call.
+	r.EventAgeMS = r.eventAgeMilliseconds(time.Now())
 	result, err := j.save(r)
 	if err != nil {
 		logger.Error("journal write failed; event unacknowledged", "message_id", r.MessageID, "correlation_id", r.CorrelationID, "error", err)
 		return err
 	}
 	if err := delivery.Ack(false); err != nil {
+		if result != "duplicate" && r.coastalCritical {
+			j.pendingCriticalACKs[r.MessageID] = r.IngestedAt
+		}
 		return err
 	}
+	// ACK success is local to the consumer; AMQP does not confirm consumer ACKs.
+	ackedAt := time.Now()
+	if result != "duplicate" {
+		if age := ackedAt.Sub(r.IngestedAt); !r.IngestedAt.IsZero() && age >= 0 {
+			eventAge.Observe(age.Seconds())
+		}
+	}
+	ingestedAt, recovering := j.pendingCriticalACKs[r.MessageID]
+	if recovering {
+		delete(j.pendingCriticalACKs, r.MessageID)
+	} else {
+		ingestedAt = r.IngestedAt
+	}
+	if recovering || (result != "duplicate" && r.coastalCritical) {
+		coastalCriticalAcknowledged.Inc()
+		if age := ackedAt.Sub(ingestedAt); !ingestedAt.IsZero() && age >= 0 {
+			coastalCriticalAge.Observe(age.Seconds())
+		}
+	}
+	handledEvents.WithLabelValues(result).Inc()
 	logger.Info("event handled", "message_id", r.MessageID, "hazard_id", r.HazardID, "hazard_revision", r.Revision,
 		"correlation_id", r.CorrelationID, "result", result, "redelivered", delivery.Redelivered,
-		"latency_ms", float64(time.Since(started).Microseconds())/1000)
+		"latency_ms", float64(time.Since(started).Microseconds())/1000,
+		"ingested_at", r.IngestedAt, "event_age_ms", r.EventAgeMS)
 	return nil
 }

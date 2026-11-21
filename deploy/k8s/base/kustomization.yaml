@@ -17,6 +17,7 @@ resources:
   - broker.yaml
   - aggregator.yaml
   - api.yaml
+  - hpa.yaml
   - consumers.yaml
   - sensor-pantai.yaml
 

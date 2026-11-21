@@ -13,7 +13,7 @@ spec:
     matchLabels: {app: notification-consumer}
   template:
     metadata:
-      labels: {app: notification-consumer, role: consumer}
+      labels: {app: notification-consumer, role: consumer, bnpb/scrape: "true"}
     spec:
       nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
       containers:

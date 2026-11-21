@@ -8,10 +8,38 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/domain"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/store"
 	"golang.org/x/sync/singleflight"
 )
+
+var (
+	cacheHitsTotal   atomic.Uint64
+	cacheMissesTotal atomic.Uint64
+	cacheHitsMetric  = prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Name: "bnpb_read_cache_hits_total", Help: "Read requests served from the per-instance cache.",
+	}, func() float64 { return float64(cacheHitsTotal.Load()) })
+	cacheMissesMetric = prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Name: "bnpb_read_cache_misses_total", Help: "Read requests that reached storage because the cache missed.",
+	}, func() float64 { return float64(cacheMissesTotal.Load()) })
+	cacheRatioMetric = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "bnpb_read_cache_hit_ratio", Help: "Cache hits divided by hits plus misses.",
+	}, func() float64 {
+		hits, misses := cacheHitsTotal.Load(), cacheMissesTotal.Load()
+		if hits+misses == 0 {
+			return 0
+		}
+		return float64(hits) / float64(hits+misses)
+	})
+	cacheEnabledMetric = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "bnpb_read_cache_enabled", Help: "1 when the per-instance read cache is enabled.",
+	})
+)
+
+func init() {
+	prometheus.MustRegister(cacheHitsMetric, cacheMissesMetric, cacheRatioMetric, cacheEnabledMetric)
+}
 
 type cachedRead struct {
 	events []domain.HazardEvent
@@ -33,9 +61,11 @@ type readCache struct {
 func (s *Server) EnableReadCache(ttl time.Duration) {
 	if ttl <= 0 {
 		s.cache = nil
+		cacheEnabledMetric.Set(0)
 		return
 	}
 	s.cache = &readCache{entries: make(map[store.Filter]cachedRead), ttl: ttl}
+	cacheEnabledMetric.Set(1)
 }
 
 // CacheStatus reports bounded cache state and the measured hit ratio.
@@ -69,9 +99,11 @@ func (s *Server) readHazards(ctx context.Context, f store.Filter, id string) ([]
 	c.mu.Unlock()
 	if ok && time.Since(entry.at) < c.ttl {
 		c.hits.Add(1)
+		cacheHitsTotal.Add(1)
 		return entry.events, nil
 	}
 	c.misses.Add(1)
+	cacheMissesTotal.Add(1)
 	key := fmt.Sprintf("%s|%s|%s|%d", f.Source, f.HazardType, f.Since.Format(time.RFC3339Nano), f.Limit)
 	result := c.pending.DoChan(key, func() (any, error) {
 		// A previous in-flight request may have filled the cache before DoChan.

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/domain"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/store"
 )
@@ -93,5 +94,30 @@ func TestReadCacheReportsHitRatio(t *testing.T) {
 	status, ok := s.CacheStatus().(map[string]any)
 	if !ok || status["enabled"] != true || status["hits"] != uint64(1) || status["misses"] != uint64(1) || status["hit_ratio"] != 0.5 {
 		t.Fatalf("cache status = %#v", status)
+	}
+}
+
+func TestReadCacheExportsPrometheusMetrics(t *testing.T) {
+	r := &cacheRepository{}
+	s := NewServer(r, nil, nil)
+	s.EnableReadCache(time.Second)
+	if testutil.ToFloat64(cacheEnabledMetric) != 1 {
+		t.Fatal("enabled gauge is not 1")
+	}
+	f := store.Filter{Source: "PVMBG", HazardType: "VOLCANIC", Limit: 7}
+	hits, misses := testutil.ToFloat64(cacheHitsMetric), testutil.ToFloat64(cacheMissesMetric)
+	for i := 0; i < 2; i++ {
+		if _, err := s.readHazards(context.Background(), f, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := testutil.ToFloat64(cacheHitsMetric); got != hits+1 {
+		t.Fatalf("hits = %v, want %v", got, hits+1)
+	}
+	if got := testutil.ToFloat64(cacheMissesMetric); got != misses+1 {
+		t.Fatalf("misses = %v, want %v", got, misses+1)
+	}
+	if ratio := testutil.ToFloat64(cacheRatioMetric); ratio <= 0 || ratio > 1 {
+		t.Fatalf("hit ratio = %v", ratio)
 	}
 }

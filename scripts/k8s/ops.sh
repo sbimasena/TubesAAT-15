@@ -137,7 +137,7 @@ case "${1:-}" in
     forward svc/aggregator 18083:8083
     for source in BMKG PVMBG SATELIT SENSOR_PANTAI ""; do
       echo "+ curl http://127.0.0.1:18083/internal/audit/checksum?source=$source" >&2
-      curl_auth "$token" -sS "http://127.0.0.1:18083/internal/audit/checksum?source=$source"
+      curl_auth "$token" -fsS "http://127.0.0.1:18083/internal/audit/checksum?source=$source"
     done
     ;;
   p1-distribution)

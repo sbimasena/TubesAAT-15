@@ -2,7 +2,7 @@
 source "$(dirname "$0")/../k8s/lib.sh"
 need kubectl k6
 [[ -n "${TARGET_URL:-}" ]] || die 'Set TARGET_URL to the Aggregator load balancer URL (a pod port-forward cannot measure scaling)'
-confirm "Run 10k VU and change Aggregator replicas 3 -> 5 -> 2 in $(kubectl config current-context)?"
+confirm "Run ${VUS:-10000} VU for ${DURATION:-120s} and change Aggregator replicas 3 -> 5 -> 2 in $(kubectl config current-context)?"
 mkdir -p "$ROOT/artifacts/m2/runs"
 out="$ROOT/artifacts/m2/runs/$(date -u +%Y%m%dT%H%M%SZ)-p2-load"
 exec > >(tee "$out.log") 2>&1

@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -216,6 +219,31 @@ func TestJournalRecordsEventAge(t *testing.T) {
 	// A payload without ingested_at must not fabricate an age.
 	if age := (record{}).eventAgeMilliseconds(time.Now()); age != -1 {
 		t.Fatalf("missing ingested_at age = %v, want -1", age)
+	}
+}
+
+func TestHandleRecordsAcknowledgedMetric(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metrics.jsonl")
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	j, err := openJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.file.Close()
+	before := testutil.ToFloat64(handledEvents.WithLabelValues("notification_simulated"))
+	ingested := time.Now().UTC().Add(-2 * time.Second).Format(time.RFC3339Nano)
+	delivery := message("metrics-1", 2, &acknowledgement{})
+	delivery.Body = []byte(fmt.Sprintf(`{"hazard_id":"haz-check","source":"BMKG","hazard_type":"SEISMIC","severity":"SIAGA","area_name":"Check area","ingested_at":%q,"attributes":{}}`, ingested))
+	if err := handle(delivery, j, logger); err != nil {
+		t.Fatal(err)
+	}
+	if after := testutil.ToFloat64(handledEvents.WithLabelValues("notification_simulated")); after != before+1 {
+		t.Fatalf("acknowledged counter = %v, want %v", after, before+1)
+	}
+	recorder := httptest.NewRecorder()
+	metricsHandler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	if recorder.Code != 200 || !strings.Contains(recorder.Body.String(), "notification_event_age_seconds") {
+		t.Fatalf("metrics endpoint code=%d body=%q", recorder.Code, recorder.Body.String())
 	}
 }
 

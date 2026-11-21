@@ -43,20 +43,19 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var healthy atomic.Bool
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		status := "ready"
+		if !healthy.Load() {
+			status = "unavailable"
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		fmt.Fprintf(w, `{"service":%q,"status":%q}`, serviceName, status)
+	})
+	mux.Handle("/metrics", metricsHandler())
 	server := &http.Server{Addr: ":8080", ReadHeaderTimeout: 3 * time.Second, WriteTimeout: 3 * time.Second,
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/health" {
-				http.NotFound(w, r)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			status := "ready"
-			if !healthy.Load() {
-				status = "unavailable"
-				w.WriteHeader(http.StatusServiceUnavailable)
-			}
-			fmt.Fprintf(w, `{"service":%q,"status":%q}`, serviceName, status)
-		})}
+		Handler: mux}
 	go func() {
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("health server failed", "error", err)
@@ -183,6 +182,12 @@ func handle(delivery amqp.Delivery, j *journal, logger *slog.Logger) error {
 	if err := delivery.Ack(false); err != nil {
 		return err
 	}
+	// The histogram records the SLI only after the broker ack, not just the
+	// journal sync. Duplicates were already measured on their first delivery.
+	if result != "duplicate" && !r.IngestedAt.IsZero() {
+		eventAge.Observe(time.Since(r.IngestedAt).Seconds())
+	}
+	handledEvents.WithLabelValues(result).Inc()
 	logger.Info("event handled", "message_id", r.MessageID, "hazard_id", r.HazardID, "hazard_revision", r.Revision,
 		"correlation_id", r.CorrelationID, "result", result, "redelivered", delivery.Redelivered,
 		"latency_ms", float64(time.Since(started).Microseconds())/1000,

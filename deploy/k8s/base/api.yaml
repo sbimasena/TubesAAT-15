@@ -58,7 +58,8 @@ kind: Deployment
 metadata:
   name: client-api
 spec:
-  replicas: 1
+  # HPA owns the replica count; 2 is the declared minimum (D-BONUS).
+  replicas: 2
   strategy:
     rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
   selector:
@@ -86,8 +87,8 @@ spec:
             - name: BROKER_URL
               value: amqp://$(RABBITMQ_DEFAULT_USER):$(RABBITMQ_DEFAULT_PASS)@rabbitmq:5672/
           resources:
-            requests: {memory: 128Mi}
-            limits: {memory: 256Mi}
+            requests: {memory: 128Mi, cpu: 100m}
+            limits: {memory: 256Mi, cpu: 500m}
           readinessProbe:
             httpGet: {path: /health, port: http}
             periodSeconds: 5

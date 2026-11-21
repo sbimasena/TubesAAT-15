@@ -136,6 +136,15 @@ case "${1:-}" in
     echo "Press Ctrl+C to close the port-forwards."
     wait
     ;;
+  p2-kill-leader)
+    # Kill the actual leader pod by reading the Lease holder, instead of relying
+    # on the Tester Agent to pick it among the Aggregator pods.
+    holder="$(kubectl -n "$NS" get lease aggregator-leader -o jsonpath='{.spec.holderIdentity}')"
+    [[ -n "$holder" ]] || die "Aggregator has no elected leader yet"
+    pod="${holder%%_*}"
+    confirm "Delete leader pod $pod in $(kubectl config current-context)?"
+    run kubectl -n "$NS" delete pod "$pod"
+    ;;
   p4-export)
     need python3
     token="$(secret_value audit-token token)"

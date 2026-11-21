@@ -27,6 +27,7 @@
     {"id": "p2-load", "group": "P2", "label": "10k VU + scale 3 to 5 to 2", "make": "p2-load", "destructive": true},
     {"id": "p2-throughput", "group": "P2", "label": "Compare throughput at one and three replicas", "make": "p2-throughput", "destructive": true},
     {"id": "p2-failover", "group": "P2", "label": "Tester Agent kill-leader", "make": "p2-failover", "destructive": true},
+    {"id": "p2-kill-leader", "group": "P2", "label": "Delete the actual leader pod (by Lease holder)", "make": "p2-kill-leader", "destructive": true},
     {"id": "p2-slo", "group": "P2", "label": "Event-to-durable-ack SLO from notification journal", "make": "p2-slo", "params": ["JOURNAL", "EXPECTED"], "destructive": false},
     {"id": "p3-check", "group": "P3", "label": "Isolated DLQ, replay and field-report acceptance", "make": "p3-check", "destructive": false},
     {"id": "p4-sample", "group": "P4", "label": "Capture authenticated satellite feed sample", "make": "p4-sample", "destructive": false},

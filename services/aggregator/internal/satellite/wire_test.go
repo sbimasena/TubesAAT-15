@@ -53,3 +53,19 @@ func TestPracticeFeedRejectsOffsetMismatch(t *testing.T) {
 		t.Fatalf("wanted protocol error, got %v", err)
 	}
 }
+
+// Captured at practice offsets 162175 and 162263.
+func TestExponentCoordinateMatchesFeedUpdateKey(t *testing.T) {
+	detection, err := decodeFrame(Frame{Kind: "detection", Offset: 0, Data: []byte(`{"offset":0,"detection":{"satellite":"N20","acq_date":"2026-11-25","acq_time":1704,"latitude":-2.1e-4,"longitude":110.82748,"confidence":"n","frp":3.66}}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	update, err := decodeFrame(Frame{Kind: "update", Offset: 1, Data: []byte(`{"offset":1,"key":"N20|2026-11-25|1704|-0.00021|110.82748","changes":{"frp":3.27}}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, _, err := NewState().Next([]Mutation{detection, update}, time.Date(2026, 11, 25, 18, 0, 0, 0, time.UTC))
+	if err != nil || state.Detections["N20|2026-11-25|1704|-0.00021|110.82748"].FRP != 3.27 {
+		t.Fatalf("patch did not reach the detection: %v", err)
+	}
+}

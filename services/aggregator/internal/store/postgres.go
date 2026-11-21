@@ -35,6 +35,7 @@ var migrations = []migration{
 	{version: 4, file: "migrations/004_unprocessed_messages.sql"}, // D-DLQ
 	{version: 5, file: "migrations/005_field_reports.sql"},        // D-FR
 	{version: 6, file: "migrations/006_field_report_dlq.sql"},
+	{version: 7, file: "migrations/007_satellite_delta_cursor.sql"},
 }
 
 // migrationLockID serialises migrations when several Aggregator replicas start together.

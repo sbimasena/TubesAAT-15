@@ -216,7 +216,7 @@ func TestMigrationBackfillsM1Rows(t *testing.T) {
 		t.Fatalf("backfill: partition=%d err=%v", partition, err)
 	}
 	var version int64
-	if err := repo.pool.QueryRow(ctx, "SELECT max(version) FROM schema_migrations").Scan(&version); err != nil || version != 6 {
+	if err := repo.pool.QueryRow(ctx, "SELECT max(version) FROM schema_migrations").Scan(&version); err != nil || version != int64(len(migrations)) {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 }

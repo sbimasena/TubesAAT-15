@@ -131,7 +131,8 @@ func NewStreamClient(base, token string) (*StreamClient, error) {
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, errors.New("satellite: expected an HTTPS base URL")
 	}
-	if strings.TrimSpace(token) == "" {
+	token = strings.TrimSpace(token)
+	if token == "" {
 		return nil, errors.New("satellite: token required")
 	}
 	transport := &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 5 * time.Second}
@@ -248,7 +249,7 @@ func (c *StreamClient) Session(ctx context.Context) (Session, error) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	response, err := c.http.Do(req)
 	if err != nil {
-		return Session{}, errors.New("satellite: session request failed")
+		return Session{}, fmt.Errorf("satellite: session request failed: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {

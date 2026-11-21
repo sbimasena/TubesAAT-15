@@ -493,3 +493,53 @@ func TestAntiEntropyCopiesOnlyDifferingRows(t *testing.T) {
 		t.Fatalf("newer revision must win and the lost event return: area=%q count=%d", area, count)
 	}
 }
+
+func TestSyncPartitionCopiesDeadLettersVerbatim(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	names := []string{"store-0", "store-1"}
+	repos := make([]*PostgresRepository, len(names))
+	for i := range names {
+		databaseURL, _ := testSchema(t, ctx)
+		repo, err := OpenPostgres(ctx, databaseURL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(repo.Close)
+		repos[i] = repo
+	}
+	r, err := newRouter(names, repos, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.CheckUnits(ctx)
+	if err := r.LoadMap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	id := "dlq-copy-1"
+	p := PartitionOf(id)
+	raw := []byte{0xff, '{', 0xfe}
+	retryAt := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	if _, err := repos[0].pool.Exec(ctx, `INSERT INTO unprocessed_messages
+		(message_id, partition_id, source, raw, reason, attempts, status, next_retry_at, received_at)
+		VALUES ($1, $2, 'PVMBG', $3, 'invalid', 2, 'retrying', $4, $4)`, id, p, raw, retryAt); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := r.syncPartition(ctx, 0, p, r.units[0], r.units[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var gotRaw []byte
+	var status string
+	var attempts, copies int
+	var gotRetry time.Time
+	if err := repos[1].pool.QueryRow(ctx, `SELECT raw, status, attempts, next_retry_at,
+		(SELECT count(*) FROM unprocessed_messages) FROM unprocessed_messages WHERE message_id = $1`, id).
+		Scan(&gotRaw, &status, &attempts, &gotRetry, &copies); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(gotRaw, raw) || status != "retrying" || attempts != 2 || !gotRetry.Equal(retryAt) || copies != 1 {
+		t.Fatalf("copy differs: raw=%x status=%s attempts=%d retry=%v rows=%d", gotRaw, status, attempts, gotRetry, copies)
+	}
+}

@@ -493,6 +493,50 @@ func (r *PostgresRepository) exportEvents(ctx context.Context, ids []string) ([]
 	return scanEvents(rows)
 }
 
+const unprocessedColumns = `message_id, partition_id, source, source_ref_id, position, raw, reason,
+	attempts, status, next_retry_at, received_at, created_at, last_error_at`
+
+// exportUnprocessed reads partition p's dead letters verbatim for a partition copy.
+func (r *PostgresRepository) exportUnprocessed(ctx context.Context, p int) ([][]any, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+unprocessedColumns+` FROM unprocessed_messages WHERE partition_id = $1`, p)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][]any
+	for rows.Next() {
+		values, err := rows.Values()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, values)
+	}
+	return out, rows.Err()
+}
+
+// importUnprocessed adds copied dead letters under the fence. An existing message_id is
+// kept: status changes go to every unit, so a copy already there is current.
+func (r *PostgresRepository) importUnprocessed(ctx context.Context, epoch int64, rows [][]any) (int64, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	if err := checkFence(ctx, tx, epoch); err != nil {
+		return 0, err
+	}
+	var copied int64
+	for _, values := range rows {
+		tag, err := tx.Exec(ctx, `INSERT INTO unprocessed_messages (`+unprocessedColumns+`)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT (message_id) DO NOTHING`, values...)
+		if err != nil {
+			return 0, err
+		}
+		copied += tag.RowsAffected()
+	}
+	return copied, tx.Commit(ctx)
+}
+
 // exportPartition reads every row of partition p for a copy to another unit.
 // shortcut: loads the partition in memory (dataset / 24 rows); stream it if partitions grow past ~50k rows.
 func (r *PostgresRepository) exportPartition(ctx context.Context, p int) ([]domain.HazardEvent, error) {

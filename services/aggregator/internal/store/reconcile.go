@@ -409,7 +409,7 @@ func boolInt(b bool) int {
 }
 
 // syncPartition copies every row of partition p from src into dst, newer ingested_at wins,
-// then the partition's field reports.
+// then the partition's field reports and dead letters.
 func (r *Router) syncPartition(ctx context.Context, epoch int64, p int, src, dst *unit) error {
 	ctx, cancel := context.WithTimeout(ctx, syncTimeout)
 	defer cancel()
@@ -438,9 +438,20 @@ func (r *Router) syncPartition(ctx context.Context, epoch int64, p int, src, dst
 	if err != nil {
 		return fmt.Errorf("import reports into %s: %w", dst.name, err)
 	}
-	if copied > 0 || reportsCopied > 0 {
+	deadLetters, err := src.repo.exportUnprocessed(ctx, p)
+	if err != nil {
+		return fmt.Errorf("export dead letters from %s: %w", src.name, err)
+	}
+	deadLettersCopied, err := dst.repo.importUnprocessed(ctx, epoch, deadLetters)
+	if errors.Is(err, ErrFenced) {
+		return err
+	}
+	if err != nil {
+		return fmt.Errorf("import dead letters into %s: %w", dst.name, err)
+	}
+	if copied > 0 || reportsCopied > 0 || deadLettersCopied > 0 {
 		r.log(slog.LevelInfo, "partition rows copied", "partition", p, "from", src.name, "to", dst.name,
-			"rows", copied, "reports", reportsCopied)
+			"rows", copied, "reports", reportsCopied, "dead_letters", deadLettersCopied)
 	}
 	return nil
 }

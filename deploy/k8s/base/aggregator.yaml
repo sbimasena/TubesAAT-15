@@ -23,6 +23,8 @@ spec:
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels: {app: aggregator}
+          # Count only this revision's pods, so a rolling update does not skew around old ones.
+          matchLabelKeys: [pod-template-hash]
       containers:
         - name: aggregator
           image: bnpb/aggregator

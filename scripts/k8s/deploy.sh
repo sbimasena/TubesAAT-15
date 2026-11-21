@@ -67,6 +67,7 @@ cleanup_secrets() {
 trap cleanup_secrets EXIT
 chmod 700 "$SECRET_DIR"
 
+declare -A SECRET_DATA=()
 apply_secret() {
   local name="$1"
   shift
@@ -85,6 +86,7 @@ apply_secret() {
     fi
     printf '%s' "$value" >"$file"
     chmod 600 "$file"
+    SECRET_DATA[$name]+="$key=$value"$'\n'
     files+=(--from-file="$key=$file")
   done
   echo "+ secret $name (from .env)" >&2
@@ -104,13 +106,15 @@ apply_secret auth-credentials \
 apply_secret pantai-token token=PANTAI_AUTH_TOKEN
 apply_secret audit-token token=AUDIT_TOKEN
 apply_secret satellite-token token=SATELLITE_TOKEN
-# Pods restart when a credential changes: the hash goes into a pod template annotation.
-SECRETS_HASH="$(
-  {
-    for key in "${REQUIRED[@]}"; do printf '%s=%s\n' "$key" "${!key}"; done
-    printf 'SATELLITE_TOKEN=%s\n' "${SATELLITE_TOKEN:-}"
-  } | sha256 | cut -c1-16
-)"
+# Pods restart only when a Secret they reference changes: a hash of those Secrets goes into
+# their pod template annotation.
+secret_hash() {
+  local name
+  for name in "$@"; do printf '%s\n%s' "$name" "${SECRET_DATA[$name]:-}"; done | sha256 | cut -c1-16
+}
+mapfile -t SECRET_REFS < <(kubectl kustomize "$ROOT/deploy/k8s/overlays/$OVERLAY" |
+  kubectl create --dry-run=client -o go-template-file="$ROOT/scripts/k8s/secret-refs.gotmpl" -f - | awk NF)
+[[ ${#SECRET_REFS[@]} -gt 0 ]] || die "found no Deployment or StatefulSet in overlay '$OVERLAY'"
 
 image_ref() {
   if [[ "$IMAGE_MODE" == push ]]; then echo "$REGISTRY/bnpb-$1:$TAG"; else echo "bnpb/$1:$TAG"; fi
@@ -142,9 +146,12 @@ mkdir -p "$GENERATED"
   echo "kind: Kustomization"
   echo "resources: [../overlays/$OVERLAY]"
   echo "patches:"
-  for kind in Deployment StatefulSet; do
-    echo "  - target: {kind: $kind, labelSelector: app.kubernetes.io/part-of=bnpb}"
-    echo "    patch: '[{\"op\": \"add\", \"path\": \"/spec/template/metadata/annotations\", \"value\": {\"bnpb/secrets-hash\": \"$SECRETS_HASH\"}}]'"
+  for line in "${SECRET_REFS[@]}"; do
+    read -r workload refs <<<"$line"
+    # shellcheck disable=SC2046 # refs are Secret names: no spaces or globs
+    digest="$(secret_hash $(tr ' ' '\n' <<<"$refs" | sort -u))"
+    echo "  - target: {kind: ${workload%%/*}, name: ${workload#*/}}"
+    echo "    patch: '[{\"op\": \"add\", \"path\": \"/spec/template/metadata/annotations\", \"value\": {\"bnpb/secrets-hash\": \"$digest\"}}]'"
   done
   echo "images:"
   for service in "${SERVICES[@]}"; do

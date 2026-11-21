@@ -713,8 +713,9 @@ func (r *Router) LoadCursor(ctx context.Context, source string) (string, error) 
 }
 
 // Ping succeeds while any unit answers; per-partition health shows up as partial reads.
+// It uses the read timeout so a hung unit cannot push /health past the readiness probe timeout.
 func (r *Router) Ping(ctx context.Context) error {
-	return noUnitAnswered(gather(ctx, r.units, operationTimeout, func(ctx context.Context, u *unit) (struct{}, error) {
+	return noUnitAnswered(gather(ctx, r.units, unitReadTimeout, func(ctx context.Context, u *unit) (struct{}, error) {
 		return struct{}{}, u.repo.Ping(ctx)
 	}))
 }

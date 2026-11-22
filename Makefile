@@ -125,6 +125,25 @@ p5-resilience: ## Run isolated Sensor Pantai adapter and resilience fault tests 
 p5-ingestion: ## Verify coastal ingestion, restart and sensor outage on an isolated Compose stack
 	@$(SH) scripts/m2/pantai-ingestion.sh
 
+.PHONY: p3-retryable p3-replay-cluster p5-critical-alert p5-source-latency p5-breaker-timeline p5-slo-fetch
+p3-retryable: ## Isolated P3 retryable vs permanent DLQ test with real PostgreSQL
+	@$(SH) scripts/m2/p3-retryable.sh
+
+p3-replay-cluster: ## Replay and verify PVMBG DLQ items via Audit API: make p3-replay-cluster AUDIT_URL=... AUDIT_TOKEN=...
+	python3 scripts/m2/p3-replay-cluster.py --audit-url "$(AUDIT_URL)" --audit-token "$(AUDIT_TOKEN)" $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
+
+p5-critical-alert: ## Measure critical alert latency and zero loss: make p5-critical-alert AGGREGATOR_URL=... AUDIT_TOKEN=... [JOURNAL=path]
+	python3 scripts/m2/p5-critical-alert.py --aggregator-url "$(AGGREGATOR_URL)" --audit-token "$(AUDIT_TOKEN)" $(if $(JOURNAL),--journal-path "$(JOURNAL)",) $(if $(CONSUMER_METRICS),--consumer-metrics-url "$(CONSUMER_METRICS)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
+
+p5-source-latency: ## Measure BMKG/PVMBG latency during Pantai outage: make p5-source-latency AGGREGATOR_URL=... AUDIT_TOKEN=... [KUBECTL=kubectl]
+	python3 scripts/m2/p5-source-latency.py --aggregator-url "$(AGGREGATOR_URL)" --audit-token "$(AUDIT_TOKEN)" --kubectl "$(or $(KUBECTL),kubectl)" $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
+
+p5-breaker-timeline: ## Circuit breaker timeline during Pantai outage: make p5-breaker-timeline AGGREGATOR_URL=... AUDIT_TOKEN=... [CLIENT_API_URL=...]
+	python3 scripts/m2/p5-breaker-timeline.py --aggregator-url "$(AGGREGATOR_URL)" --audit-token "$(AUDIT_TOKEN)" $(if $(CLIENT_API_URL),--client-api-url "$(CLIENT_API_URL)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
+
+p5-slo-fetch: ## Fetch SLO and error budget from Prometheus: make p5-slo-fetch PROMETHEUS_URL=... [JOURNAL=path]
+	python3 scripts/m2/p5-slo-fetch.py --prometheus-url "$(PROMETHEUS_URL)" $(if $(JOURNAL),--consumer-journal "$(JOURNAL)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
+
 .PHONY: p4-sample
 p4-sample: ## Capture 60 seconds of live SSE using SATELLITE_TOKEN from the environment or .env
 	bash -c 'source scripts/k8s/lib.sh; if [[ -z "$${SATELLITE_TOKEN:-}" ]]; then load_env; fi; exec python3 scripts/m2/satellite-sample.py'

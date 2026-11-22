@@ -42,8 +42,19 @@ type record struct {
 type journal struct {
 	file   *os.File
 	seen   map[string]bool
-	latest map[string]record
-	// ponytail: in-memory ID index grows with the JSONL journal; compact/use a consumer DB beyond M1.
+	latest map[string]version // only what newer() compares; full payloads OOM'd at ~140k hazards
+	// shortcut: in-memory ID index grows with the JSONL journal; compact/use a consumer DB beyond M1.
+}
+
+type version struct {
+	Revision   int64
+	IngestedAt time.Time
+}
+
+func versionOf(r record) version {
+	var body hazard
+	json.Unmarshal(r.Payload, &body) // payload validated before restore/save
+	return version{Revision: r.Revision, IngestedAt: body.IngestedAt}
 }
 
 func integer(value any) int64 {
@@ -94,7 +105,7 @@ func openJournal(path string) (*journal, error) {
 	if err != nil {
 		return nil, err
 	}
-	j := &journal{file: file, seen: make(map[string]bool), latest: make(map[string]record)}
+	j := &journal{file: file, seen: make(map[string]bool), latest: make(map[string]version)}
 	fail := func(err error) (*journal, error) { file.Close(); return nil, err }
 	// One writer per volume, including accidental additional container replicas.
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
@@ -148,7 +159,7 @@ func openJournal(path string) (*journal, error) {
 func (j *journal) restore(r record) {
 	j.seen[r.MessageID] = true
 	if (r.Result == "dashboard_updated" || r.Result == "dashboard_withdrawn") && newer(r, j.latest[r.HazardID]) {
-		j.latest[r.HazardID] = r
+		j.latest[r.HazardID] = versionOf(r)
 	}
 }
 
@@ -185,13 +196,10 @@ func (j *journal) save(r record) (string, error) {
 
 // Satellite checkpoints preserve a monotonic ingested_at across restarts/skew;
 // per-replica revision numbers can diverge after partial writes and repairs.
-func newer(incoming, previous record) bool {
-	var next, old hazard
+func newer(incoming record, previous version) bool {
+	var next hazard
 	if json.Unmarshal(incoming.Payload, &next) == nil && next.Source == "SATELIT" && !next.IngestedAt.IsZero() {
-		if json.Unmarshal(previous.Payload, &old) != nil || old.IngestedAt.IsZero() {
-			return true
-		}
-		return next.IngestedAt.After(old.IngestedAt)
+		return previous.IngestedAt.IsZero() || next.IngestedAt.After(previous.IngestedAt)
 	}
 	return incoming.Revision > previous.Revision
 }

@@ -221,7 +221,7 @@ func TestSatelliteWithdrawalSurvivesReplay(t *testing.T) {
 func TestSatelliteOrderingUsesCheckpointTime(t *testing.T) {
 	old := record{Revision: 100, Payload: json.RawMessage(`{"source":"SATELIT","ingested_at":"2026-11-12T00:00:00Z"}`)}
 	current := record{Revision: 2, Payload: json.RawMessage(`{"source":"SATELIT","ingested_at":"2026-11-12T00:00:01Z"}`)}
-	if !newer(current, old) || newer(old, current) {
+	if !newer(current, versionOf(old)) || newer(old, versionOf(current)) {
 		t.Fatal("replica revision overrode satellite checkpoint order")
 	}
 }

@@ -137,6 +137,30 @@ class VerifyCommonTests(unittest.TestCase):
         self.assertIn("error", result)
         self.assertEqual(result["status"], 0)
 
+    def test_session_logs_in_again_after_401(self):
+        calls, tokens = [], iter(["t2"])
+        original_http, original_login = vc.http_json, vc.login
+        vc.http_json = lambda base, path, token=None, **_: (
+            calls.append(token) or {"status": 200 if token == "t2" else 401})
+        vc.login = lambda *_: next(tokens)
+        try:
+            session = vc.Session(token="t1", auth_url="http://auth", client_id="c", password="p")
+            self.assertEqual(session.get("http://api", "/hazards")["status"], 200)
+        finally:
+            vc.http_json, vc.login = original_http, original_login
+        self.assertEqual(calls, ["t1", "t2"])
+        self.assertEqual(session.relogins, 1)
+
+    def test_session_without_auth_returns_401(self):
+        original_http = vc.http_json
+        vc.http_json = lambda *_, **__: {"status": 401}
+        try:
+            session = vc.Session(token="t1")
+            self.assertEqual(session.get("http://api", "/hazards")["status"], 401)
+        finally:
+            vc.http_json = original_http
+        self.assertEqual(session.relogins, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

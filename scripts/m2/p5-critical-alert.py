@@ -28,8 +28,10 @@ def reconcile_expected(critical, expected, kind="auto"):
         return None
     if kind == "auto":
         kind = "hazard_id" if all(str(item).startswith("haz_") for item in expected) else "message_id"
-    if kind == "hazard_id":
-        observed = {item["hazard_id"] for item in critical if item.get("hazard_id")}
+    if kind in ("hazard_id", "source_ref_id"):
+        # source_ref_id = the sensor's own observation_id, so the expected list can come
+        # straight from the sensor API, independent of the Aggregator.
+        observed = {item[kind] for item in critical if item.get(kind)}
     else:
         observed = {item["message_id"] for item in critical}
     result = common.reconcile_ids(observed, expected)
@@ -93,7 +95,7 @@ def main():
     parser.add_argument("--prometheus-url", required=True, help="Prometheus base URL")
     parser.add_argument("--journal-path", required=True, help="Notification consumer journal")
     parser.add_argument("--expected-ids", help="Independent expected alert IDs (one per line or JSON)")
-    parser.add_argument("--expected-id-kind", choices=("auto", "message_id", "hazard_id"), default="auto")
+    parser.add_argument("--expected-id-kind", choices=("auto", "message_id", "hazard_id", "source_ref_id"), default="auto")
     parser.add_argument("--min-alerts", type=int, default=20, help="Minimum critical alerts for an evaluation")
     parser.add_argument("--window", default="1h", help="Prometheus lookback, e.g. 15m or 1h")
     parser.add_argument("--since", help="Journal window start (ISO 8601); defaults to now-window")

@@ -19,7 +19,7 @@ class Diagram:
 <title id="title">{escape(title)}</title>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="{INK}"/></marker>
 <marker id="blue-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="{BLUE}"/></marker></defs>
-<style>text {{font-family: Arial, Helvetica, sans-serif; fill: {INK};}} .body {{font-size: 23px;}} .small {{font-size: 21px; fill: {MUTED};}} .heading {{font-size: 27px; font-weight: 700;}} .heading-compact {{font-size: 23px; font-weight: 700;}} .group {{font-size: 24px; font-weight: 700; letter-spacing: .5px;}} .edge {{font-size: 21px;}} </style>
+<style>text {{font-family: Arial, Helvetica, sans-serif; fill: {INK};}} .body {{font-size: 23px;}} .small {{font-size: 21px; fill: {MUTED};}} .heading {{font-size: 27px; font-weight: 700;}} .heading-compact {{font-size: 23px; font-weight: 700;}} .group {{font-size: 24px; font-weight: 700; letter-spacing: .5px;}} .edge {{font-size: 21px;}} .pod {{font-size: 20px;}} </style>
 <rect width="100%" height="100%" fill="white"/>''']
 
     def text(self, x, y, lines, css='body', anchor='start', gap=31):
@@ -37,12 +37,16 @@ class Diagram:
         self.text(x + 19, y + 39, title, heading)
         self.text(x + 19, y + 77, lines, 'body', gap=30)
 
-    def edge(self, points, blue=False, dashed=False):
+    def pod(self, x, y, w, name, accent=False):
+        self.parts.append(f'<rect x="{x}" y="{y}" width="{w}" height="44" rx="4" fill="{BG if accent else "white"}" stroke="{BLUE if accent else MUTED}" stroke-width="1.6"/>')
+        self.text(x + 16, y + 29, name, 'pod')
+
+    def edge(self, points, blue=False, dashed=False, arrow=True):
         color = BLUE if blue else INK
         self.parts.append('<polyline points="' + ' '.join(f'{x},{y}' for x, y in points) +
                           f'" fill="none" stroke="{color}" stroke-width="2.3" stroke-linejoin="round"' +
                           (' stroke-dasharray="8 6"' if dashed else '') +
-                          f' marker-end="url(#{"blue-arrow" if blue else "arrow"})"/>')
+                          (f' marker-end="url(#{"blue-arrow" if blue else "arrow"})"' if arrow else '') + '/>')
 
     def label(self, x, y, lines, anchor='middle'):
         if isinstance(lines, str):
@@ -53,7 +57,7 @@ class Diagram:
         self.text(x, y, lines, 'edge', anchor, 29)
 
     def write(self, path):
-        path.write_text('\n'.join(self.parts) + '\n</svg>\n')
+        path.write_text('\n'.join(self.parts) + '\n</svg>\n', encoding='utf-8')
 
 
 def overview():
@@ -148,14 +152,106 @@ def aggregator():
     return d
 
 
+def m2_architecture():
+    d = Diagram(1800, 1610, 'Arsitektur sistem M2: klien, Aggregator terdistribusi, Canonical Store, broker, dan sumber')
+    d.boundary(360, 90, 1400, 1170, 'BNPB · CLUSTER k3s')
+    d.node(40, 400, 260, 170, 'Klien', ['Media / Pers', 'Tim Lapangan', 'Internal Ops'])
+    d.node(400, 150, 320, 150, 'Auth', ['Login, refresh', 'Argon2id, sesi memori'])
+    d.node(400, 380, 320, 210, 'Client API', ['GET /hazards per peran', 'POST /field-reports', 'Admisi + bulkhead', 'HPA 2–4 replika'])
+    d.node(400, 720, 320, 150, 'Kubernetes API', ['Lease leader (CAS)', 'Peta partisi'])
+    d.node(400, 930, 320, 150, 'Observability', ['Prometheus, Grafana', 'Jaeger (OTLP)'])
+    d.boundary(780, 300, 460, 600, 'AGGREGATOR · 3 REPLIKA')
+    d.node(810, 360, 400, 200, 'Semua replika', ['Read API, Audit API', 'Analytics, dashboard', 'Field report processor'])
+    d.node(810, 640, 400, 220, 'Leader saja', ['Lease + fencing epoch', 'Poller BMKG / PVMBG', 'Worker Satelit, coastal', 'Reconciler, outbox'], accent=True)
+    d.node(1320, 360, 400, 200, 'Canonical Store', ['store-0 · store-1 · store-2', 'PostgreSQL, 1 per node', '24 partisi, RF=2'])
+    d.text(1520, 595, 'Hanya Aggregator yang mengakses', 'small', 'middle')
+    d.node(1320, 680, 400, 180, 'RabbitMQ · 3 node', ['hazard.events · fanout', 'quorum queue'])
+    d.node(1320, 960, 400, 110, 'Consumer notifikasi', ['Jurnal, dedup, SLI alert'], heading='heading-compact')
+    d.node(1320, 1110, 400, 110, 'Consumer dashboard', ['Jurnal, dedup'], heading='heading-compact')
+    d.text(40, 1400, 'SUMBER DATA', 'group')
+    d.node(400, 1320, 300, 150, 'BMKG Mock', ['HTTP poll 3 s', 'X-BMKG-Key'])
+    d.node(740, 1320, 300, 150, 'PVMBG Mock', ['HTTP poll 3 s', 'Bearer token'])
+    d.node(1080, 1320, 300, 150, 'Sensor Pantai', ['HTTP poll 500 ms', 'image vendor'])
+    d.node(1420, 1320, 300, 150, 'Feed Satelit', ['SSE dari offset', 'internet'])
+
+    d.edge([(300, 430), (340, 430), (340, 225), (400, 225)], blue=True)
+    d.label(325, 185, ['Login /', 'refresh'], 'end')
+    d.edge([(300, 500), (400, 500)], blue=True)
+    d.label(350, 472, 'HTTP')
+    d.edge([(560, 380), (560, 300)], blue=True)
+    d.label(580, 345, 'Introspeksi token', 'start')
+    d.edge([(720, 470), (810, 470)], blue=True)
+    d.label(765, 440, 'HTTP')
+    d.edge([(1210, 460), (1320, 460)])
+    d.label(1265, 430, 'baca')
+    d.edge([(1210, 690), (1265, 690), (1265, 530), (1320, 530)])
+    d.label(1265, 615, 'tulis')
+    d.edge([(1210, 780), (1320, 780)], dashed=True)
+    d.label(1265, 750, 'AMQP')
+    d.edge([(1520, 860), (1520, 960)], dashed=True)
+    d.edge([(1720, 800), (1745, 800), (1745, 1165), (1720, 1165)], dashed=True)
+    d.edge([(810, 800), (720, 800)])
+    d.label(765, 770, 'Lease')
+    # Ingest arrows go down to the sources; only the leader polls.
+    d.edge([(840, 860), (840, 1285), (550, 1285), (550, 1320)], blue=True)
+    d.edge([(890, 860), (890, 1320)], blue=True)
+    d.edge([(1150, 860), (1150, 1285), (1230, 1285), (1230, 1320)], blue=True)
+    d.edge([(1195, 860), (1195, 1240), (1570, 1240), (1570, 1320)], blue=True)
+    d.text(40, 1520, 'Panah HTTP/SQL: pemanggil → tujuan. Garis putus-putus: event AMQP; HazardEvent membawa traceparent ke kedua consumer.', 'small')
+    d.text(40, 1552, 'Field report: Client API publish ke queue field-reports dan menunggu confirm sebelum menjawab 202; diproses replika Aggregator.', 'small')
+    d.text(40, 1584, 'Semua komponen kecuali Feed Satelit berjalan di cluster k3s 3 node; Tester Agent (DaemonSet asisten) ada di setiap node.', 'small')
+    return d
+
+
+def m2_deployment():
+    d = Diagram(1800, 1440, 'Deployment M2: tiga VM k3s di dua host fisik')
+    d.boundary(40, 90, 1110, 830, 'PC WINDOWS · RYZEN 7 9700X · 32 GB')
+    d.boundary(1190, 90, 570, 830, 'MACBOOK · CORE i5-1038NG7 · 16 GB')
+    vms = [
+        (70, 'node-a', ['VM 4 vCPU / 8 GB', '192.168.18.201', 'k3s server + worker'],
+         [('aggregator', True), ('client-api', False), ('store-1 · PostgreSQL', True), ('rabbitmq-2', True), ('pvmbg mock', False),
+          ('notification-consumer', False), ('dashboard-consumer', False), ('prometheus · grafana', False), ('jaeger', False), ('tester-agent', False)]),
+        (610, 'node-c', ['VM 4 vCPU / 8 GB', '192.168.18.203', 'k3s agent'],
+         [('aggregator', True), ('auth', False), ('store-2 · PostgreSQL', True), ('rabbitmq-0', True), ('bmkg mock', False),
+          ('sensor-pantai', False), ('tester-agent', False)]),
+        (1220, 'node-b', ['VM 2 vCPU / 6 GB', '192.168.18.202', 'k3s agent, lewat Wi-Fi'],
+         [('aggregator', True), ('client-api', False), ('store-0 · PostgreSQL', True), ('rabbitmq-1', True), ('tester-agent', False)]),
+    ]
+    for x, name, lines, pods in vms:
+        d.node(x, 150, 510, 740, name, lines)
+        for i, (pod, accent) in enumerate(pods):
+            d.pod(x + 25, 320 + i * 56, 460, pod, accent)
+    d.node(700, 1030, 400, 110, 'Router Wi-Fi', ['192.168.18.0/24'], heading='heading-compact')
+    d.node(1240, 1190, 480, 110, 'Internet', ['Feed Satelit (SSE), Docker Hub'], heading='heading-compact')
+    d.node(40, 1190, 520, 110, 'Klien (k6, Postman, Console)', ['NodePort 30080 / 30083 / 30084'], heading='heading-compact')
+    d.edge([(325, 890), (325, 1085), (700, 1085)], arrow=False)
+    d.label(325, 985, 'bridged')
+    d.edge([(865, 890), (865, 1030)], arrow=False)
+    d.label(865, 985, 'bridged')
+    d.edge([(1475, 890), (1475, 1085), (1100, 1085)], arrow=False)
+    d.label(1475, 985, 'Wi-Fi')
+    d.edge([(900, 1140), (900, 1245), (1240, 1245)])
+    d.edge([(560, 1245), (800, 1245), (800, 1140)], blue=True)
+    d.pod(40, 1340, 200, 'aggregator', True)
+    d.text(260, 1369, 'satu per node (anti-affinity): Aggregator, store, RabbitMQ. Pod lain mengikuti scheduler (keadaan 22 Nov).', 'small')
+    d.text(40, 1420, 'Antar-node: overlay flannel VXLAN (UDP 8472) membawa PostgreSQL 5432 dan AMQP 5672; kubelet dan Lease ke API server 6443 di node-a.', 'small')
+    return d
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, default=Path('docs/diagrams'))
     parser.add_argument('--chrome', default='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+    parser.add_argument('--only', nargs='*', help='render only these stems, e.g. m2-architecture m2-deployment')
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    drawings = {'bab-3-arsitektur-sistem': overview, 'bab-3-alur-internal-aggregator': aggregator,
+                'm2-architecture': m2_architecture, 'm2-deployment': m2_deployment}
     with tempfile.TemporaryDirectory(prefix='tubesaat-diagram-chrome-') as profile:
-        for stem, drawing in [('bab-3-arsitektur-sistem', overview()), ('bab-3-alur-internal-aggregator', aggregator())]:
+        for stem, draw in drawings.items():
+            if args.only and stem not in args.only:
+                continue
+            drawing = draw()
             svg = (args.output_dir / (stem + '.svg')).resolve()
             png = svg.with_suffix('.png')
             drawing.write(svg)

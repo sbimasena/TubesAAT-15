@@ -74,8 +74,14 @@ def source_from_status(body):
 def summarize_timeline(timeline, client_target_ms):
     breaker_entries = [entry for entry in timeline if isinstance(entry.get("breaker"), dict)]
     states = [entry["breaker"].get("state") for entry in breaker_entries]
-    opened = "open" in states
-    recovered = bool(opened and states and states[-1] == "closed")
+
+    def phase(label):
+        return [entry["breaker"].get("state") for entry in breaker_entries if entry.get("label") == label]
+
+    # Judge per phase: a later 503 burst from the sensor itself may legitimately reopen the
+    # breaker, so recovery means "closed once the sensor is back", not "closed at the last poll".
+    opened = "open" in phase("outage")
+    recovered = bool(opened and "closed" in phase("recovery"))
     first = breaker_entries[0]["breaker"] if breaker_entries else {}
     last = breaker_entries[-1]["breaker"] if breaker_entries else {}
     rejected_delta = (last.get("rejected") or 0) - (first.get("rejected") or 0)
@@ -123,8 +129,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--aggregator-url", required=True, help="Aggregator base URL")
     parser.add_argument("--client-api-url", help="Client API base URL for Field Team reads")
-    parser.add_argument("--client-token-env", default="FIELD_TEAM_TOKEN")
-    parser.add_argument("--client-token-file")
+    common.add_client_auth_args(parser)
     parser.add_argument("--client-target-ms", type=float, default=1000.0)
     parser.add_argument("--kubectl", default="kubectl")
     parser.add_argument("--namespace", default="sistem-informasi-kebencanaan-bnpb")
@@ -142,12 +147,7 @@ def main():
     if min(args.baseline_polls, args.outage_polls, args.recovery_polls) < 1:
         parser.error("poll counts must be at least 1")
 
-    client_token = None
-    token_source = None
-    if args.client_api_url:
-        token_env = None if args.client_token_file else args.client_token_env
-        client_token, token_source = common.resolve_token(
-            token_env, args.client_token_file, "Field Team token")
+    session, token_source = common.client_session(args) if args.client_api_url else (None, None)
 
     stamp = datetime.datetime.now(common.UTC).strftime("%Y%m%dT%H%M%SZ")
     folder = (args.output_dir or ROOT / "artifacts/m2/runs" /
@@ -173,7 +173,7 @@ def main():
         }
         if args.client_api_url:
             query = urllib.parse.urlencode({"source": "SENSOR_PANTAI", "limit": "5"})
-            client = common.http_json(args.client_api_url, "/hazards?" + query, token=client_token)
+            client = session.get(args.client_api_url, "/hazards?" + query)
             entry.update({"client_api_status": client["status"],
                           "client_api_latency_ms": client["latency_ms"],
                           "client_api_error": client["error"]})
@@ -229,6 +229,7 @@ def main():
         "aggregator_url": args.aggregator_url,
         "client_api_url": args.client_api_url,
         "token_source": token_source,
+        "relogins": session.relogins if session else 0,
         "scale_outage": args.scale_outage,
         "kubectl": kubectl_evidence,
         "summary": summary,

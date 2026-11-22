@@ -54,11 +54,11 @@ def scale(binary, namespace, deployment, replicas):
                                 "--replicas=" + str(replicas)])
 
 
-def collect(client_url, token, samples, interval, source="BMKG"):
+def collect(client_url, session, samples, interval, source="BMKG"):
     query = urllib.parse.urlencode({"source": source, "limit": "50"})
     results = []
     for index in range(samples):
-        response = common.http_json(client_url, "/hazards?" + query, token=token)
+        response = session.get(client_url, "/hazards?" + query)
         results.append({"status": response["status"], "latency_ms": response["latency_ms"],
                         "error": response["error"]})
         if index + 1 < samples:
@@ -118,9 +118,7 @@ def evaluate(phases, outage_confirmed):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--client-api-url", required=True, help="Client API base URL")
-    parser.add_argument("--client-token-env", default="FIELD_TEAM_TOKEN",
-                        help="Environment variable holding a Field Team access token")
-    parser.add_argument("--client-token-file", help="File holding a Field Team access token")
+    common.add_client_auth_args(parser)
     parser.add_argument("--aggregator-url", help="Aggregator base URL for an optional coastal status snapshot")
     parser.add_argument("--kubectl", default="kubectl", help="kubectl binary")
     parser.add_argument("--namespace", default="sistem-informasi-kebencanaan-bnpb")
@@ -139,8 +137,7 @@ def main():
     if args.restore_replicas < 1:
         parser.error("--restore-replicas must be at least 1")
 
-    token, token_source = common.resolve_token(args.client_token_env, args.client_token_file,
-                                               "Field Team token")
+    session, token_source = common.client_session(args)
     stamp = datetime.datetime.now(common.UTC).strftime("%Y%m%dT%H%M%SZ")
     folder = (args.output_dir or ROOT / "artifacts/m2/runs" /
               (stamp + "-p5-source-latency-" + secrets.token_hex(3))).resolve()
@@ -150,7 +147,7 @@ def main():
     scaled = False
     outage_confirmed = False
     try:
-        baseline = collect(args.client_api_url, token, args.samples, args.interval)
+        baseline = collect(args.client_api_url, session, args.samples, args.interval)
         phases["baseline"] = summarize_phase(baseline, args.target_ms)
         common.write_json(folder / "baseline.json", baseline)
 
@@ -167,7 +164,7 @@ def main():
                 args.kubectl, args.namespace, args.deployment)
             if outage_confirmed:
                 phases["status_during_outage"] = status_snapshot(args.aggregator_url)
-                during = collect(args.client_api_url, token, args.samples, args.interval)
+                during = collect(args.client_api_url, session, args.samples, args.interval)
                 phases["during_outage"] = summarize_phase(during, args.target_ms)
                 common.write_json(folder / "during-outage.json", during)
     finally:
@@ -181,7 +178,7 @@ def main():
                 args.kubectl, args.namespace, args.deployment)
 
     if outage_confirmed:
-        after = collect(args.client_api_url, token, args.samples, args.interval)
+        after = collect(args.client_api_url, session, args.samples, args.interval)
         phases["after_recovery"] = summarize_phase(after, args.target_ms)
         common.write_json(folder / "after-recovery.json", after)
 
@@ -190,6 +187,7 @@ def main():
         "timestamp": common.isoformat(),
         "client_api_url": args.client_api_url,
         "token_source": token_source,
+        "relogins": session.relogins,
         "source": "BMKG",
         "target_ms": args.target_ms,
         "scale_outage": args.scale_outage,

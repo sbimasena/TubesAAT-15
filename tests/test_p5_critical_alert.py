@@ -53,6 +53,12 @@ class P5CriticalAlertTests(unittest.TestCase):
         self.assertEqual(reconciliation["kind"], "message_id")
         self.assertEqual(reconciliation["missing"], [])
 
+    def test_reconcile_expected_source_ref_id(self):
+        critical = [{"message_id": "m1", "hazard_id": "haz_a", "source_ref_id": "obs-1"}]
+        reconciliation = pca.reconcile_expected(critical, ["obs-1", "obs-2"], "source_ref_id")
+        self.assertEqual(reconciliation["kind"], "source_ref_id")
+        self.assertEqual(reconciliation["missing"], ["obs-2"])
+
     def test_reconcile_expected_none(self):
         self.assertIsNone(pca.reconcile_expected([], [], "auto"))
 

@@ -24,11 +24,11 @@ class P5BreakerTimelineTests(unittest.TestCase):
 
     def test_summarize_timeline_pass(self):
         timeline = [
-            {"breaker": {"state": "closed", "rejected": 0, "attempts": 0, "retries": 0},
+            {"label": "baseline", "breaker": {"state": "closed", "rejected": 0, "attempts": 0, "retries": 0},
              "client_api_status": 200, "client_api_latency_ms": 10.0},
-            {"breaker": {"state": "open", "rejected": 2, "attempts": 2, "retries": 1},
+            {"label": "outage", "breaker": {"state": "open", "rejected": 2, "attempts": 2, "retries": 1},
              "client_api_status": 200, "client_api_latency_ms": 20.0},
-            {"breaker": {"state": "closed", "rejected": 2, "attempts": 2, "retries": 1},
+            {"label": "recovery", "breaker": {"state": "closed", "rejected": 2, "attempts": 2, "retries": 1},
              "client_api_status": 200, "client_api_latency_ms": 15.0},
         ]
         summary = pbt.summarize_timeline(timeline, 1000.0)
@@ -36,6 +36,25 @@ class P5BreakerTimelineTests(unittest.TestCase):
         self.assertTrue(summary["opened"])
         self.assertTrue(summary["recovered"])
         self.assertEqual(summary["rejected_delta"], 2)
+
+    def test_late_sensor_503_after_recovery_still_counts_as_recovered(self):
+        timeline = [
+            {"label": "baseline", "breaker": {"state": "open", "rejected": 0}},  # left over from a previous run
+            {"label": "outage", "breaker": {"state": "open", "rejected": 2}},
+            {"label": "recovery", "breaker": {"state": "closed", "rejected": 2}},
+            {"label": "recovery", "breaker": {"state": "open", "rejected": 3}},
+        ]
+        summary = pbt.summarize_timeline(timeline, 1000.0)
+        self.assertTrue(summary["recovered"])
+        self.assertEqual(summary["result"], "PARTIAL")
+
+    def test_open_only_in_baseline_is_not_an_outage_open(self):
+        timeline = [
+            {"label": "baseline", "breaker": {"state": "open", "rejected": 0}},
+            {"label": "outage", "breaker": {"state": "closed", "rejected": 1}},
+            {"label": "recovery", "breaker": {"state": "closed", "rejected": 1}},
+        ]
+        self.assertFalse(pbt.summarize_timeline(timeline, 1000.0)["opened"])
 
     def test_summarize_timeline_fail_not_opened(self):
         timeline = [
@@ -47,9 +66,9 @@ class P5BreakerTimelineTests(unittest.TestCase):
 
     def test_summarize_timeline_partial_no_client(self):
         timeline = [
-            {"breaker": {"state": "closed", "rejected": 0, "attempts": 0, "retries": 0}},
-            {"breaker": {"state": "open", "rejected": 2, "attempts": 2, "retries": 1}},
-            {"breaker": {"state": "closed", "rejected": 2, "attempts": 2, "retries": 1}},
+            {"label": "baseline", "breaker": {"state": "closed", "rejected": 0, "attempts": 0, "retries": 0}},
+            {"label": "outage", "breaker": {"state": "open", "rejected": 2, "attempts": 2, "retries": 1}},
+            {"label": "recovery", "breaker": {"state": "closed", "rejected": 2, "attempts": 2, "retries": 1}},
         ]
         summary = pbt.summarize_timeline(timeline, 1000.0)
         self.assertEqual(summary["result"], "PARTIAL")
@@ -57,11 +76,11 @@ class P5BreakerTimelineTests(unittest.TestCase):
 
     def test_summarize_timeline_client_failure(self):
         timeline = [
-            {"breaker": {"state": "closed", "rejected": 0, "attempts": 0, "retries": 0},
+            {"label": "baseline", "breaker": {"state": "closed", "rejected": 0, "attempts": 0, "retries": 0},
              "client_api_status": 200, "client_api_latency_ms": 10.0},
-            {"breaker": {"state": "open", "rejected": 2, "attempts": 2, "retries": 1},
+            {"label": "outage", "breaker": {"state": "open", "rejected": 2, "attempts": 2, "retries": 1},
              "client_api_status": 500, "client_api_latency_ms": 20.0},
-            {"breaker": {"state": "closed", "rejected": 2, "attempts": 2, "retries": 1},
+            {"label": "recovery", "breaker": {"state": "closed", "rejected": 2, "attempts": 2, "retries": 1},
              "client_api_status": 200, "client_api_latency_ms": 15.0},
         ]
         summary = pbt.summarize_timeline(timeline, 1000.0)

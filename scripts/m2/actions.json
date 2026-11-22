@@ -42,9 +42,9 @@
     {"id": "p5-sample", "group": "P5", "label": "Isolated official Sensor Pantai HTTP sample", "make": "p5-sample", "destructive": false},
     {"id": "p5-resilience", "group": "P5", "label": "Isolated Pantai adapter and resilience fault tests", "make": "p5-resilience", "destructive": false},
     {"id": "p5-ingestion", "group": "P5", "label": "Isolated coastal ingestion, restart and outage checks", "make": "p5-ingestion", "destructive": false},
-    {"id": "p5-critical-alert", "group": "P5", "label": "Critical alert latency and zero-loss check", "make": "p5-critical-alert", "params": ["PROMETHEUS_URL", "JOURNAL", "EXPECTED_IDS", "MIN_ALERTS", "OUTPUT_DIR"], "destructive": false},
-    {"id": "p5-source-latency", "group": "P5", "label": "BMKG read latency during Pantai outage", "make": "p5-source-latency", "params": ["CLIENT_API_URL", "FIELD_TEAM_TOKEN", "AGGREGATOR_URL", "SCALE_OUTAGE", "OUTPUT_DIR"], "destructive": true},
-    {"id": "p5-breaker-timeline", "group": "P5", "label": "Circuit breaker timeline during Pantai outage", "make": "p5-breaker-timeline", "params": ["AGGREGATOR_URL", "CLIENT_API_URL", "FIELD_TEAM_TOKEN", "SCALE_OUTAGE", "OUTPUT_DIR"], "destructive": true},
+    {"id": "p5-critical-alert", "group": "P5", "label": "Critical alert latency and zero-loss check", "make": "p5-critical-alert", "params": ["PROMETHEUS_URL", "JOURNAL", "EXPECTED_IDS", "EXPECTED_KIND", "MIN_ALERTS", "OUTPUT_DIR"], "destructive": false},
+    {"id": "p5-source-latency", "group": "P5", "label": "BMKG read latency during Pantai outage", "make": "p5-source-latency", "params": ["CLIENT_API_URL", "AUTH_URL", "FIELD_TEAM_TOKEN", "AGGREGATOR_URL", "SCALE_OUTAGE", "OUTPUT_DIR"], "destructive": true},
+    {"id": "p5-breaker-timeline", "group": "P5", "label": "Circuit breaker timeline during Pantai outage", "make": "p5-breaker-timeline", "params": ["AGGREGATOR_URL", "CLIENT_API_URL", "AUTH_URL", "FIELD_TEAM_TOKEN", "SCALE_OUTAGE", "OUTPUT_DIR"], "destructive": true},
     {"id": "p5-slo-fetch", "group": "P5", "label": "Fetch SLO and error budget panels 13-16", "make": "p5-slo-fetch", "params": ["PROMETHEUS_URL", "JOURNAL", "OUTPUT_DIR"], "destructive": false}
   ]
 }

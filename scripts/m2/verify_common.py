@@ -151,6 +151,59 @@ def http_json(base_url, path, token=None, method="GET", body=None, timeout=30):
                 "error": summarize_error(error)}
 
 
+def login(auth_url, client_id, password, timeout=10):
+    """Return a fresh access token from Auth POST /login."""
+    response = http_json(auth_url, "/login", method="POST",
+                         body={"client_id": client_id, "password": password}, timeout=timeout)
+    body = response["body"] if isinstance(response["body"], dict) else {}
+    require(response["status"] == 200 and body.get("access_token"),
+            "login failed: " + str(response["error"] or response["status"]))
+    return body["access_token"]
+
+
+class Session:
+    """Bearer token that logs in again after a 401: access tokens expire (60 s in
+    the cluster), so a fixed token cannot cover a multi-minute measurement."""
+
+    def __init__(self, token=None, auth_url=None, client_id=None, password=None):
+        self.auth = (auth_url, client_id, password) if auth_url else None
+        self.token = token or login(*self.auth)
+        self.relogins = 0
+
+    def get(self, base_url, path):
+        response = http_json(base_url, path, token=self.token)
+        if response["status"] != 401 or not self.auth:
+            return response
+        try:
+            self.token = login(*self.auth)
+        except AssertionError:
+            return response
+        self.relogins += 1
+        return http_json(base_url, path, token=self.token)
+
+
+def client_session(args, label="Field Team token"):
+    """Build a Session from --auth-url plus credential env vars, or from a fixed token."""
+    if getattr(args, "auth_url", None):
+        client_id = os.environ.get(args.client_id_env, "")
+        password = os.environ.get(args.client_password_env, "")
+        require(client_id and password, label + ": " + args.client_id_env + " and "
+                + args.client_password_env + " must be set with --auth-url")
+        return Session(auth_url=args.auth_url, client_id=client_id, password=password), "login:" + args.client_id_env
+    token_env = None if args.client_token_file else args.client_token_env
+    token, source = resolve_token(token_env, args.client_token_file, label)
+    return Session(token=token), source
+
+
+def add_client_auth_args(parser):
+    parser.add_argument("--client-token-env", default="FIELD_TEAM_TOKEN",
+                        help="Environment variable holding a Field Team access token")
+    parser.add_argument("--client-token-file", help="File holding a Field Team access token")
+    parser.add_argument("--auth-url", help="Auth base URL; logs in and logs in again on 401")
+    parser.add_argument("--client-id-env", default="FIELD_TEAM_CLIENT_ID")
+    parser.add_argument("--client-password-env", default="FIELD_TEAM_CLIENT_PASSWORD")
+
+
 def http_text(base_url, path, token=None, timeout=15):
     """Fetch a text endpoint such as /metrics; never raises raw errors."""
     url = str(base_url).rstrip("/") + path
@@ -209,6 +262,7 @@ def critical_alerts(records):
         found[message_id] = {
             "message_id": message_id,
             "hazard_id": record.get("hazard_id") or payload.get("hazard_id"),
+            "source_ref_id": payload.get("source_ref_id"),
             "ingested_at": record.get("ingested_at") or payload.get("ingested_at"),
             "received_at": record.get("received_at"),
             "event_age_ms": record.get("event_age_ms"),

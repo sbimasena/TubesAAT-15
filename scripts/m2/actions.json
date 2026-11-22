@@ -31,6 +31,8 @@
     {"id": "p2-freeze", "group": "P2", "label": "Pause the leader VM >15 s then resume (VirtualBox host)", "make": "p2-freeze", "destructive": true},
     {"id": "p2-slo", "group": "P2", "label": "Event-to-durable-ack SLO from notification journal", "make": "p2-slo", "params": ["JOURNAL", "EXPECTED"], "destructive": false},
     {"id": "p3-check", "group": "P3", "label": "Isolated DLQ, replay and field-report acceptance", "make": "p3-check", "destructive": false},
+    {"id": "p3-retryable", "group": "P3", "label": "Isolated transient vs permanent PVMBG DLQ check", "make": "p3-retryable", "destructive": false},
+    {"id": "p3-replay-cluster", "group": "P3", "label": "Inventory/replay PVMBG DLQ via Audit API", "make": "p3-replay-cluster", "params": ["AUDIT_URL", "AUDIT_TOKEN", "REPLAY", "MESSAGE_IDS", "OUTPUT_DIR"], "destructive": true},
     {"id": "p4-sample", "group": "P4", "label": "Capture authenticated satellite feed sample", "make": "p4-sample", "destructive": false},
     {"id": "p4-check", "group": "P4", "label": "Satellite replay and recovery checks", "make": "p4-check", "destructive": false},
     {"id": "p4-export", "group": "P4", "label": "Export satellite Audit events", "make": "p4-export", "destructive": false},
@@ -39,6 +41,10 @@
     {"id": "p5-gameday", "group": "P5", "label": "Game day: kill-store, sensor down, PVMBG outage under load (no intervention)", "make": "p5-gameday", "destructive": true},
     {"id": "p5-sample", "group": "P5", "label": "Isolated official Sensor Pantai HTTP sample", "make": "p5-sample", "destructive": false},
     {"id": "p5-resilience", "group": "P5", "label": "Isolated Pantai adapter and resilience fault tests", "make": "p5-resilience", "destructive": false},
-    {"id": "p5-ingestion", "group": "P5", "label": "Isolated coastal ingestion, restart and outage checks", "make": "p5-ingestion", "destructive": false}
+    {"id": "p5-ingestion", "group": "P5", "label": "Isolated coastal ingestion, restart and outage checks", "make": "p5-ingestion", "destructive": false},
+    {"id": "p5-critical-alert", "group": "P5", "label": "Critical alert latency and zero-loss check", "make": "p5-critical-alert", "params": ["PROMETHEUS_URL", "JOURNAL", "EXPECTED_IDS", "MIN_ALERTS", "OUTPUT_DIR"], "destructive": false},
+    {"id": "p5-source-latency", "group": "P5", "label": "BMKG read latency during Pantai outage", "make": "p5-source-latency", "params": ["CLIENT_API_URL", "FIELD_TEAM_TOKEN", "AGGREGATOR_URL", "SCALE_OUTAGE", "OUTPUT_DIR"], "destructive": true},
+    {"id": "p5-breaker-timeline", "group": "P5", "label": "Circuit breaker timeline during Pantai outage", "make": "p5-breaker-timeline", "params": ["AGGREGATOR_URL", "CLIENT_API_URL", "FIELD_TEAM_TOKEN", "SCALE_OUTAGE", "OUTPUT_DIR"], "destructive": true},
+    {"id": "p5-slo-fetch", "group": "P5", "label": "Fetch SLO and error budget panels 13-16", "make": "p5-slo-fetch", "params": ["PROMETHEUS_URL", "JOURNAL", "OUTPUT_DIR"], "destructive": false}
   ]
 }

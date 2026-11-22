@@ -452,12 +452,32 @@ class Check:
         self.wait("report retry commits once after broker recovery", lambda: self.report_count([report_id]) == 1)
         checks["broker_failure"]["committed_after_retry"] = 1
 
-    def run(self):
+    def start(self):
         self.prepare()
+        self.evidence["existing_states_before"] = self.existing_states()
+        self.compose("up", "--build", "-d", "--wait", "--wait-timeout", "180", log="build.log", timeout=600)
+        require(set(self.states()) == SERVICES, "fixture must contain exactly nine services")
+
+    def stop(self):
+        self.progress("Removing only the isolated P3 fixture")
+        for container in self.test_containers:
+            self.command(["docker", "rm", "--force", container], check=False)
+        self.compose("unpause", "canonical-store", check=False)
+        cleanup = self.compose("down", "--volumes", "--remove-orphans", log="cleanup.log", check=False)
+        for image in self.test_images:
+            self.command(["docker", "image", "rm", image], check=False)
+        self.evidence.update(cleanup="PASS" if cleanup.returncode == 0 else "FAIL", finished_at=now())
+        self.evidence["existing_states_after"] = self.existing_states()
+        if self.evidence["existing_states_after"] != self.evidence.get("existing_states_before", {}):
+            self.evidence.update(result="FAIL", cleanup="FAIL",
+                                 cleanup_failure="existing project containers changed during the run")
+        if cleanup.returncode:
+            self.evidence["result"] = "FAIL"
+        self.save()
+
+    def run(self):
+        self.start()
         try:
-            self.evidence["existing_states_before"] = self.existing_states()
-            self.compose("up", "--build", "-d", "--wait", "--wait-timeout", "180", log="build.log", timeout=600)
-            require(set(self.states()) == SERVICES, "fixture must contain exactly nine services")
             self.contract_tests()
             self.wait("live canonical reads are ready", lambda: self.http("client", "/hazards?source=PVMBG&limit=1", role="field-team")["status"] == 200)
             self.permissions()
@@ -468,20 +488,7 @@ class Check:
             self.evidence.update(result="FAIL", failure=self.redact(str(error)))
             self.compose("logs", "--no-log-prefix", "--tail", "150", log="diagnostics.log", check=False)
         finally:
-            self.progress("Removing only the isolated P3 fixture")
-            for container in self.test_containers:
-                self.command(["docker", "rm", "--force", container], check=False)
-            self.compose("unpause", "canonical-store", check=False)
-            cleanup = self.compose("down", "--volumes", "--remove-orphans", log="cleanup.log", check=False)
-            for image in self.test_images:
-                self.command(["docker", "image", "rm", image], check=False)
-            self.evidence.update(cleanup="PASS" if cleanup.returncode == 0 else "FAIL", finished_at=now())
-            self.evidence["existing_states_after"] = self.existing_states()
-            if self.evidence["existing_states_after"] != self.evidence.get("existing_states_before", {}):
-                self.evidence.update(result="FAIL", cleanup="FAIL", cleanup_failure="existing project containers changed during the run")
-            if cleanup.returncode:
-                self.evidence["result"] = "FAIL"
-            self.save()
+            self.stop()
         self.progress(self.evidence["result"] + ": " + str(self.folder / "p3-check.json"))
         return 0 if self.evidence["result"] == "PASS" else 1
 

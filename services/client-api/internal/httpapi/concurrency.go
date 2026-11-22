@@ -1,22 +1,75 @@
 package httpapi
 
-import "net/http"
+import (
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"strings"
+)
+
+// admission bounds requests before Auth introspection. The shared lane is the M1
+// semaphore; Field Team and Internal Ops also get reserved lanes, because a Media flood
+// held every shared slot during introspection and the Field Team never reached its
+// role pool (P5.5, measured 22 Nov: 39% Field Team success under 400 Media VUs).
+type admission struct {
+	shared, fieldTeam, internalOps chan struct{}
+}
+
+func newAdmission(shared int, pools PoolConfig) *admission {
+	return &admission{shared: make(chan struct{}, shared), fieldTeam: make(chan struct{}, pools.FieldTeam),
+		internalOps: make(chan struct{}, pools.InternalOps)}
+}
+
+// claimedScope reads the scope claim of a bearer JWT without verifying it. It only picks
+// an admission lane; introspection still decides access, so a forged claim gains at most
+// a brief reserved slot before its 401.
+func claimedScope(r *http.Request) string {
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	parts := strings.Split(token, ".")
+	if !ok || len(parts) != 3 || len(parts[1]) > 4096 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		Scope string `json:"scope"`
+	}
+	if json.Unmarshal(payload, &claims) != nil {
+		return ""
+	}
+	return claims.Scope
+}
 
 // limitRequests bounds the entire hazard path, including Auth introspection.
 // Full capacity is rejected immediately; callers never wait in an internal queue.
-func limitRequests(permits chan struct{}, next http.HandlerFunc) http.HandlerFunc {
+func limitRequests(admit *admission, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Context().Err() != nil {
 			return
 		}
-		select {
-		case permits <- struct{}{}:
-			defer func() { <-permits }()
-		default:
-			w.Header().Set("Retry-After", "1")
-			writeError(w, http.StatusTooManyRequests, "concurrency_limit", "hazard request capacity exceeded")
-			return
+		var reserved chan struct{}
+		switch claimedScope(r) {
+		case "field-team":
+			reserved = admit.fieldTeam
+		case "internal-ops":
+			reserved = admit.internalOps
 		}
+		lane := admit.shared
+		select {
+		case reserved <- struct{}{}: // a nil channel (no reservation) is never ready
+			lane = reserved
+		default:
+			select {
+			case lane <- struct{}{}:
+			default:
+				w.Header().Set("Retry-After", "1")
+				writeError(w, http.StatusTooManyRequests, "concurrency_limit", "hazard request capacity exceeded")
+				return
+			}
+		}
+		defer func() { <-lane }()
 		if r.Context().Err() == nil {
 			next(w, r)
 		}

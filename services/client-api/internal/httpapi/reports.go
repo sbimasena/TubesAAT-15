@@ -38,8 +38,8 @@ type fieldReportInput struct {
 	OccurredAt *string `json:"occurred_at"`
 }
 
-func serveFieldReports(permits chan struct{}, validator accessValidator, sink reportSink) http.HandlerFunc {
-	return limitRequests(permits, authenticate(validator, func(w http.ResponseWriter, r *http.Request) {
+func serveFieldReports(admit *admission, validator accessValidator, sink reportSink) http.HandlerFunc {
+	return limitRequests(admit, authenticate(validator, func(w http.ResponseWriter, r *http.Request) {
 		info := r.Context().Value(identityKey{}).(*requestIdentity)
 		// Only the Field Team writes reports; Media and Internal Ops have no
 		// submit authority on this path.

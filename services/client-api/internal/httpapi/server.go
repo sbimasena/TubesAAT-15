@@ -25,14 +25,14 @@ func NewHandler(client hazardLister, validator accessValidator, enableProvisiona
 	if maxConcurrent < 1 {
 		panic("hazard concurrency limit must be positive")
 	}
-	permits := make(chan struct{}, maxConcurrent)
+	admit := newAdmission(maxConcurrent, pools)
 	rolePools := newRolePools(pools)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "client-api"})
 	})
-	serveHazards := limitRequests(permits, authenticate(validator, func(w http.ResponseWriter, r *http.Request) {
+	serveHazards := limitRequests(admit, authenticate(validator, func(w http.ResponseWriter, r *http.Request) {
 		info := r.Context().Value(identityKey{}).(*requestIdentity)
 		query, err := url.ParseQuery(r.URL.RawQuery)
 		if err != nil {
@@ -73,10 +73,10 @@ func NewHandler(client hazardLister, validator accessValidator, enableProvisiona
 	}))
 	mux.HandleFunc("GET /hazards", serveHazards)
 	audit, _ := client.(unprocessedReader)
-	mux.HandleFunc("GET /internal/audit/unprocessed", limitRequests(permits, authenticate(validator, serveUnprocessed(audit, rolePools))))
+	mux.HandleFunc("GET /internal/audit/unprocessed", limitRequests(admit, authenticate(validator, serveUnprocessed(audit, rolePools))))
 	replay, _ := client.(pvmbgReplayer)
-	mux.HandleFunc("POST /internal/audit/unprocessed/replay", limitRequests(permits, authenticate(validator, serveReplay(replay, rolePools))))
-	mux.Handle("POST /field-reports", serveFieldReports(permits, validator, reports))
+	mux.HandleFunc("POST /internal/audit/unprocessed/replay", limitRequests(admit, authenticate(validator, serveReplay(replay, rolePools))))
+	mux.Handle("POST /field-reports", serveFieldReports(admit, validator, reports))
 	// NOT FINAL: alias retirement awaits a checkpoint migration decision.
 	// Opt-in requests use the same Auth, projection, and admission limit as /hazards.
 	if enableProvisionalHazards {

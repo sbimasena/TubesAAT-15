@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -275,5 +276,57 @@ func TestErrorResponsesReleaseCapacityAndNeverExposeInternalDetails(t *testing.T
 				}
 			}
 		})
+	}
+}
+
+// P5.5 regression (22 Nov cluster run): Media held every shared admission slot during
+// introspection, so Field Team got 429 before its role pool. A Field Team token must
+// still be admitted through its reserved lane while Media fills the shared lane.
+func TestFieldTeamAdmittedWhileMediaFillsSharedLane(t *testing.T) {
+	entered := make(chan struct{}, 4)
+	release := make(chan struct{})
+	defer close(release)
+	lister := listerFunc(func(ctx context.Context, _ url.Values, _ string) ([]byte, error) {
+		entered <- struct{}{}
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return []byte(emptyResponse), nil
+	})
+	fieldToken := "e30." + base64.RawURLEncoding.EncodeToString([]byte(`{"scope":"field-team"}`)) + ".sig"
+	validator := validatorFunc(func(_ context.Context, access, _ string) (authclient.Identity, error) {
+		scope := map[string]string{"media-token": "media", fieldToken: "field-team"}[access]
+		if scope == "" {
+			return authclient.Identity{}, authclient.ErrInvalid
+		}
+		return authclient.Identity{ClientID: scope, Scope: scope, SessionID: "sid"}, nil
+	})
+	// One shared slot: the first Media request takes it and blocks in the Aggregator.
+	handler := NewHandler(lister, validator, false, 1, PoolConfig{Media: 4, FieldTeam: 1, InternalOps: 1}, nil, nil)
+	request := func(token string) *http.Request {
+		r := hazardRequest("/hazards")
+		r.Header.Set("Authorization", "Bearer "+token)
+		return r
+	}
+	go handler.ServeHTTP(httptest.NewRecorder(), request("media-token"))
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("media request never reached the aggregator")
+	}
+	mediaOverflow := httptest.NewRecorder()
+	handler.ServeHTTP(mediaOverflow, request("media-token"))
+	if mediaOverflow.Code != http.StatusTooManyRequests || mediaOverflow.Header().Get("Retry-After") != "1" {
+		t.Fatalf("media overflow: %d", mediaOverflow.Code)
+	}
+	field := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { defer close(done); handler.ServeHTTP(field, request(fieldToken)) }()
+	select {
+	case <-entered: // the Field Team request reached the Aggregator despite the full shared lane
+	case <-time.After(5 * time.Second):
+		t.Fatalf("field team request was not admitted: %d %s", field.Code, field.Body.String())
 	}
 }

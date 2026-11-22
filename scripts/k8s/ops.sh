@@ -243,6 +243,100 @@ SQL
     echo "location $id: $(curl_auth "$token" -fsS "http://127.0.0.1:18083/internal/audit/location?hazard_id=$id")"
     echo "harapan: 2 lokasi (primary + replica) di node berbeda"
     ;;
+  exam-keys)
+    # Exam materials from the assistants (docs/m2/demo-ujian.md). Each is optional; files, not argv.
+    [[ -n "${TESTER_KEY:-}${PANTAI_KEY:-}${AUDIT_TOKEN_FILE:-}" ]] || die "usage: make exam-keys TESTER_KEY=<file> PANTAI_KEY=<file> AUDIT_TOKEN_FILE=<file>"
+    if [[ -n "${TESTER_KEY:-}" ]]; then
+      [[ -f "$TESTER_KEY" ]] || die "$TESTER_KEY not found"
+      # Keeps the assistants' file name; the DaemonSet mounts the Secret at /var/run/tester.
+      kubectl -n "$TESTER_NS" create secret generic tester-key --from-file="$TESTER_KEY" --dry-run=client -o yaml | kubectl apply -f -
+      run kubectl -n "$TESTER_NS" rollout restart ds/tester-agent
+      run kubectl -n "$TESTER_NS" rollout status ds/tester-agent --timeout=180s
+    fi
+    if [[ -n "${PANTAI_KEY:-}" ]]; then
+      [[ -f "$PANTAI_KEY" ]] || die "$PANTAI_KEY not found"
+      kubectl -n "$NS" create secret generic pantai-key --from-file=key="$PANTAI_KEY" --dry-run=client -o yaml | kubectl apply -f -
+      echo "pantai-key terpasang; lanjutkan dengan make exam-pantai"
+    fi
+    if [[ -n "${AUDIT_TOKEN_FILE:-}" ]]; then
+      [[ -f "$AUDIT_TOKEN_FILE" ]] || die "$AUDIT_TOKEN_FILE not found"
+      token="$(tr -d '\r\n' <"$AUDIT_TOKEN_FILE")"
+      [[ -n "$token" ]] || die "audit token file is empty"
+      kubectl -n "$NS" create secret generic audit-token --from-literal=token="$token" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+      # AUDIT_TOKEN is read from env at start, so the new token needs new pods.
+      run kubectl -n "$NS" rollout restart deploy/aggregator
+      run kubectl -n "$NS" rollout status deploy/aggregator --timeout=300s
+    fi
+    ;;
+  exam-pantai)
+    # Sensor Pantai to the exam profile with the assistants' key (kontrak-m2.md §6). make deploy/reset reverts it.
+    kubectl -n "$NS" get secret pantai-key >/dev/null || die "Secret pantai-key belum ada; make exam-keys PANTAI_KEY=<file>"
+    confirm "Switch Sensor Pantai to PANTAI_PROFILE=exam on $(kubectl config current-context)?"
+    if ! kubectl -n "$NS" get deploy sensor-pantai -o jsonpath='{.spec.template.spec.volumes[*].name}' | grep -qw key; then
+      run kubectl -n "$NS" patch deploy sensor-pantai --type=json -p='[
+        {"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"key","secret":{"secretName":"pantai-key"}}},
+        {"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"key","mountPath":"/var/run/pantai","readOnly":true}}]'
+    fi
+    run kubectl -n "$NS" set env deploy/sensor-pantai PANTAI_PROFILE=exam
+    run kubectl -n "$NS" rollout status deploy/sensor-pantai --timeout=180s
+    echo "Aggregator mendeteksi sesi baru sendiri: make logs S=aggregator, cari 'coastal session restarted'."
+    ;;
+  exam-satellite-prep)
+    # The satellite worker resumes from its stored offset and rejects gaps; an exam session may
+    # restart offsets. Back up and clear practice SATELIT state with every Aggregator stopped,
+    # so no leader rewrites the checkpoint. Leaves Aggregator at 0 until make exam-start.
+    confirm "Stop Aggregator and delete practice SATELIT data + checkpoint on $(kubectl config current-context)?"
+    stores="$(kubectl -n "$NS" get pods -l app=store -o 'jsonpath={range .items[*]}{.metadata.name}={.status.containerStatuses[0].ready} {end}')"
+    [[ "$(grep -o '=true' <<<"$stores" | wc -l)" -eq 3 ]] || die "semua store harus Ready: $stores"
+    replicas="$(kubectl -n "$NS" get deploy aggregator -o jsonpath='{.spec.replicas}')"
+    kubectl -n "$NS" annotate deploy aggregator bnpb/exam-replicas="$replicas" --overwrite >/dev/null
+    run kubectl -n "$NS" scale deploy aggregator --replicas=0
+    run kubectl -n "$NS" wait --for=delete pod -l app=aggregator --timeout=180s || true
+    backup="$ROOT/artifacts/m2/exam/$(date -u +%Y%m%dT%H%M%SZ)-satellite-practice"
+    mkdir -p "$backup"
+    for pod in $(kubectl -n "$NS" get pods -l app=store -o 'jsonpath={.items[*].metadata.name}'); do
+      kubectl -n "$NS" exec "$pod" -c postgres -- sh -c 'psql -qAt -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "COPY (SELECT row_to_json(e) FROM hazard_events e WHERE source = '"'SATELIT'"') TO STDOUT"' >"$backup/$pod-events.ndjson"
+      kubectl -n "$NS" exec "$pod" -c postgres -- sh -c 'psql -qAt -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "COPY (SELECT row_to_json(c) FROM ingest_cursor c WHERE source IN ('"'SATELIT','SATELIT_DELTA'"')) TO STDOUT"' >"$backup/$pod-cursor.ndjson"
+      echo "$pod: $(wc -l <"$backup/$pod-events.ndjson") event SATELIT dicadangkan"
+      run kubectl -n "$NS" exec -i "$pod" -c postgres -- sh -c 'psql -v ON_ERROR_STOP=1 -qAt -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+BEGIN;
+DELETE FROM hazard_outbox WHERE hazard_id IN (SELECT hazard_id FROM hazard_events WHERE source = 'SATELIT');
+DELETE FROM hazard_events WHERE source = 'SATELIT';
+DELETE FROM ingest_cursor WHERE source IN ('SATELIT', 'SATELIT_DELTA');
+COMMIT;
+SQL
+    done
+    echo "Cadangan: $backup"
+    echo "Aggregator berhenti. Mulai rekam, lalu: make exam-start EXAM_TOKEN_FILE=<file>"
+    ;;
+  exam-start)
+    # Starts the exam satellite session (call when recording starts), then brings Aggregator back.
+    [[ -f "${EXAM_TOKEN_FILE:-}" ]] || die "usage: make exam-start EXAM_TOKEN_FILE=<file berisi token ujian>"
+    confirm "POST /v1/exam/start now? Only once per recording."
+    curl_auth "$(tr -d '\r\n' <"$EXAM_TOKEN_FILE")" -sS -X POST -w '\nHTTP %{http_code}\n' https://satellite.naufarrel.dev/v1/exam/start
+    replicas="$(kubectl -n "$NS" get deploy aggregator -o jsonpath='{.metadata.annotations.bnpb/exam-replicas}')"
+    run kubectl -n "$NS" scale deploy aggregator --replicas="${replicas:-3}"
+    run kubectl -n "$NS" rollout status deploy/aggregator --timeout=300s
+    curl_auth "$(secret_value satellite-token token)" -sS -w '\n' https://satellite.naufarrel.dev/v1/session
+    ;;
+  exam-tester)
+    # Exam scenarios need the tester-key Secret; check the exact command with tester-list once it is mounted.
+    [[ -n "${2:-}" ]] || die "usage: make exam-tester S=<skenario ujian>; lihat make tester-list"
+    confirm "Run Tester Agent EXAM scenario '$2' against $(kubectl config current-context)?"
+    run env MSYS_NO_PATHCONV=1 kubectl -n "$TESTER_NS" exec daemonset/tester-agent -- /app run exam "$2"
+    echo "Pantau: kubectl logs -n $TESTER_NS -l app=tester-agent -f --prefix"
+    ;;
+  video-submit|video-status)
+    # Video link goes to the satellite service with the group token (kontrak-m2.md §5).
+    token="$(secret_value satellite-token token)"
+    [[ -n "$token" ]] || die "Secret satellite-token kosong"
+    if [[ "$1" == video-submit ]]; then
+      [[ "${2:-}" =~ ^https:// ]] || die "usage: make video-submit URL=https://(youtube|drive.google.com)/..."
+      body="$(printf '{"url":"%s"}' "$2")"
+      curl_auth "$token" -sS -X POST -H 'Content-Type: application/json' -d "$body" -w '\nHTTP %{http_code}\n' https://satellite.naufarrel.dev/v1/video
+    fi
+    curl_auth "$token" -sS -w '\nHTTP %{http_code}\n' https://satellite.naufarrel.dev/v1/video
+    ;;
   audit-run)
     # Practice auditor: Audit API before/after one Tester Agent scenario, then a verdict.
     [[ -n "${2:-}" ]] || die "usage: make audit-run S=<scenario>, e.g. S=kill-store"

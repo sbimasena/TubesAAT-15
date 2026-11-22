@@ -10,7 +10,7 @@ endif
 SH = "$(BASH)"
 
 .DEFAULT_GOAL := help
-.PHONY: help dev-up dev-down deploy status prepull logs tester-list tester audit-run open console reset p1-checksum p1-distribution p1-load p1-surge p1-wipe-node p1-dashboard p1-amnesia p1-audit p1-netpol obs-open system-status broker-status broker-recover
+.PHONY: help dev-up dev-down deploy status prepull logs tester-list tester audit-run exam-keys exam-pantai exam-satellite-prep exam-start exam-tester video-submit video-status open console reset p1-checksum p1-distribution p1-load p1-surge p1-wipe-node p1-dashboard p1-amnesia p1-audit p1-netpol obs-open system-status broker-status broker-recover
 
 help: ## Daftar target
 	@$(SH) scripts/k8s/help.sh Makefile
@@ -35,6 +35,27 @@ logs: ## Ikuti log satu service: make logs S=aggregator
 
 tester-list: ## Daftar skenario Tester Agent
 	@$(SH) scripts/k8s/ops.sh tester-list
+
+exam-keys: ## Ujian: pasang bahan asisten: make exam-keys TESTER_KEY=<f> PANTAI_KEY=<f> AUDIT_TOKEN_FILE=<f>
+	@TESTER_KEY="$(TESTER_KEY)" PANTAI_KEY="$(PANTAI_KEY)" AUDIT_TOKEN_FILE="$(AUDIT_TOKEN_FILE)" $(SH) scripts/k8s/ops.sh exam-keys
+
+exam-pantai: ## Ujian: Sensor Pantai ke PANTAI_PROFILE=exam + kunci
+	@$(SH) scripts/k8s/ops.sh exam-pantai
+
+exam-satellite-prep: ## Ujian: hentikan Aggregator, cadangkan lalu hapus data + checkpoint SATELIT latihan
+	@$(SH) scripts/k8s/ops.sh exam-satellite-prep
+
+exam-start: ## Ujian: POST /v1/exam/start saat mulai rekam, lalu nyalakan Aggregator: make exam-start EXAM_TOKEN_FILE=<f>
+	@EXAM_TOKEN_FILE="$(EXAM_TOKEN_FILE)" $(SH) scripts/k8s/ops.sh exam-start
+
+exam-tester: ## Ujian: jalankan skenario ujian Tester Agent: make exam-tester S=<nama>
+	@$(SH) scripts/k8s/ops.sh exam-tester $(S)
+
+video-submit: ## Kirim tautan video (YouTube/Drive): make video-submit URL=https://...
+	@$(SH) scripts/k8s/ops.sh video-submit "$(URL)"
+
+video-status: ## Lihat kiriman video terakhir kelompok
+	@$(SH) scripts/k8s/ops.sh video-status
 
 audit-run: ## Auditor latihan: Audit API sebelum/sesudah skenario Tester Agent: make audit-run S=kill-store
 	@$(SH) scripts/k8s/ops.sh audit-run $(S)

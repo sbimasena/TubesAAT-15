@@ -76,6 +76,69 @@
       "destructive": true
     },
     {
+      "id": "exam-keys",
+      "group": "Ujian",
+      "label": "Ujian: pasang kunci Tester/Pantai + token Audit",
+      "make": "exam-keys",
+      "params": [
+        "TESTER_KEY",
+        "PANTAI_KEY",
+        "AUDIT_TOKEN_FILE"
+      ],
+      "destructive": true
+    },
+    {
+      "id": "exam-pantai",
+      "group": "Ujian",
+      "label": "Ujian: Sensor Pantai ke profil exam",
+      "make": "exam-pantai",
+      "destructive": true
+    },
+    {
+      "id": "exam-satellite-prep",
+      "group": "Ujian",
+      "label": "Ujian: reset data + checkpoint SATELIT latihan",
+      "make": "exam-satellite-prep",
+      "destructive": true
+    },
+    {
+      "id": "exam-start",
+      "group": "Ujian",
+      "label": "Ujian: mulai sesi Feed Satelit + nyalakan Aggregator",
+      "make": "exam-start",
+      "params": [
+        "EXAM_TOKEN_FILE"
+      ],
+      "destructive": true
+    },
+    {
+      "id": "exam-tester",
+      "group": "Ujian",
+      "label": "Ujian: jalankan skenario ujian Tester Agent",
+      "make": "exam-tester",
+      "params": [
+        "S"
+      ],
+      "destructive": true
+    },
+    {
+      "id": "video-submit",
+      "group": "Ujian",
+      "label": "Kirim tautan video",
+      "make": "video-submit",
+      "params": [
+        "URL"
+      ],
+      "destructive": false
+    },
+    {
+      "id": "video-status",
+      "group": "Ujian",
+      "label": "Lihat kiriman video terakhir",
+      "make": "video-status",
+      "destructive": false
+    },
+    {
       "id": "open",
       "group": "Umum",
       "label": "Buka UI (port-forward)",

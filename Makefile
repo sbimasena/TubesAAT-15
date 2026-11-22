@@ -10,7 +10,7 @@ endif
 SH = "$(BASH)"
 
 .DEFAULT_GOAL := help
-.PHONY: help dev-up dev-down deploy status prepull logs tester-list tester open reset p1-checksum p1-distribution p1-load p1-surge p1-wipe-node p1-dashboard p1-amnesia p1-audit p1-netpol obs-open system-status broker-status broker-recover
+.PHONY: help dev-up dev-down deploy status prepull logs tester-list tester open console reset p1-checksum p1-distribution p1-load p1-surge p1-wipe-node p1-dashboard p1-amnesia p1-audit p1-netpol obs-open system-status broker-status broker-recover
 
 help: ## Daftar target
 	@$(SH) scripts/k8s/help.sh Makefile
@@ -44,6 +44,9 @@ open: ## Port-forward RabbitMQ UI dan tampilkan URL layanan
 
 system-status: ## Status sistem dari Aggregator (storage, sumber, leader, DLQ)
 	@$(SH) scripts/k8s/ops.sh system-status
+
+console: ## Control Console lokal (status live, aksi, klien per peran): http://127.0.0.1:8090
+	@python3 scripts/m2/console.py || python scripts/m2/console.py
 
 obs-open: ## Port-forward Grafana (metrik) dan Jaeger (trace)
 	@$(SH) scripts/k8s/ops.sh obs-open

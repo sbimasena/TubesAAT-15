@@ -1,0 +1,701 @@
+{
+  "info": {
+    "_postman_id": "1078127e-2ede-4051-a88c-6541c82bd8ef",
+    "name": "BNPB M2",
+    "description": "Client API per peran, field report, DLQ, Audit API, dan status Aggregator. Token login diambil otomatis per peran (pre-request) dari password di environment. Test setiap request mencatat time_total dan X-Correlation-ID.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "login_script",
+      "value": "// Logs in once per role and reuses the access token until shortly before it expires (TTL 60 s).\nconst role = pm.collectionVariables.get('login_role');\nconst key = 'token_' + role.replace('-', '_');\nconst until = Number(pm.collectionVariables.get(key + '_until') || 0);\nif (Date.now() < until) { return; }\nconst password = pm.environment.get(role.replace('-', '_') + '_password');\npm.sendRequest({ url: pm.environment.get('auth_url') + '/login', method: 'POST',\n  header: { 'Content-Type': 'application/json' },\n  body: { mode: 'raw', raw: JSON.stringify({ client_id: role, password }) } }, (err, res) => {\n  if (err || res.code !== 200) { console.error('login failed for ' + role, err || res.code); return; }\n  const body = res.json();\n  pm.collectionVariables.set(key, body.access_token);\n  pm.collectionVariables.set(key + '_until', String(Date.now() + 50000));\n});"
+    },
+    {
+      "key": "login_role",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Client API (publik)",
+      "item": [
+        {
+          "name": "Media: GET /hazards (7 field ringkasan)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_media}}"
+              }
+            ],
+            "url": "{{api_url}}/hazards?limit=5"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('login_role', 'media');",
+                  "eval(pm.collectionVariables.get('login_script'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);",
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Media: minta field mentah (harus 403)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_media}}"
+              }
+            ],
+            "url": "{{api_url}}/hazards?limit=5&include_raw=true"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('login_role', 'media');",
+                  "eval(pm.collectionVariables.get('login_script'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);",
+                  "pm.test('403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Tim Lapangan: GET /hazards (11 field)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_field_team}}"
+              }
+            ],
+            "url": "{{api_url}}/hazards?limit=5"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('login_role', 'field-team');",
+                  "eval(pm.collectionVariables.get('login_script'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);",
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Tim Lapangan: hazard Sensor Pantai",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_field_team}}"
+              }
+            ],
+            "url": "{{api_url}}/hazards?source=SENSOR_PANTAI&limit=5"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('login_role', 'field-team');",
+                  "eval(pm.collectionVariables.get('login_script'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Tim Lapangan: hazard kebakaran (SATELIT)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_field_team}}"
+              }
+            ],
+            "url": "{{api_url}}/hazards?source=SATELIT&limit=5"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('login_role', 'field-team');",
+                  "eval(pm.collectionVariables.get('login_script'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Tim Lapangan: POST /field-reports (202)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_field_team}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{api_url}}/field-reports",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"report_id\": \"{{$guid}}\",\n  \"note\": \"Laporan uji dari Postman\",\n  \"area_name\": \"Jawa Barat\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('login_role', 'field-team');",
+                  "eval(pm.collectionVariables.get('login_script'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);",
+                  "pm.test('202', () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Media: POST /field-reports (harus 403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_media}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{api_url}}/field-reports",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"report_id\": \"{{$guid}}\",\n  \"note\": \"tidak berhak\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('login_role', 'media');",
+                  "eval(pm.collectionVariables.get('login_script'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);",
+                  "pm.test('403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Internal Ops: DLQ GET /internal/audit/unprocessed",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_internal_ops}}"
+              }
+            ],
+            "url": "{{api_url}}/internal/audit/unprocessed?limit=10"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('login_role', 'internal-ops');",
+                  "eval(pm.collectionVariables.get('login_script'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);",
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Tim Lapangan: DLQ (harus 403)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_field_team}}"
+              }
+            ],
+            "url": "{{api_url}}/internal/audit/unprocessed?limit=10"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('login_role', 'field-team');",
+                  "eval(pm.collectionVariables.get('login_script'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);",
+                  "pm.test('403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Internal Ops: replay DLQ (isi replay_message_id dari daftar DLQ)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_internal_ops}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{api_url}}/internal/audit/unprocessed/replay",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message_ids\": [\n    \"{{replay_message_id}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('login_role', 'internal-ops');",
+                  "eval(pm.collectionVariables.get('login_script'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Aggregator: Audit API (token audit)",
+      "item": [
+        {
+          "name": "events (50 terbaru, pagination via next_cursor)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{audit_token}}"
+              }
+            ],
+            "url": "{{aggregator_url}}/internal/audit/events?limit=50"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "events per sumber",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{audit_token}}"
+              }
+            ],
+            "url": "{{aggregator_url}}/internal/audit/events?source=SENSOR_PANTAI&limit=50"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "checksum BMKG",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{audit_token}}"
+              }
+            ],
+            "url": "{{aggregator_url}}/internal/audit/checksum?source=BMKG"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "checksum SATELIT",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{audit_token}}"
+              }
+            ],
+            "url": "{{aggregator_url}}/internal/audit/checksum?source=SATELIT"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "location satu hazard_id",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{audit_token}}"
+              }
+            ],
+            "url": "{{aggregator_url}}/internal/audit/location?hazard_id={{hazard_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "unprocessed (DLQ) PVMBG",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{audit_token}}"
+              }
+            ],
+            "url": "{{aggregator_url}}/internal/audit/unprocessed?source=PVMBG&limit=50"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Aggregator: operasional",
+      "item": [
+        {
+          "name": "status (leader, storage, sumber, breaker, satelit)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{aggregator_url}}/internal/v1/status"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "health",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{aggregator_url}}/health"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "analytics (agregat dashboard)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Correlation-ID",
+                "value": "postman-{{$guid}}"
+              }
+            ],
+            "url": "{{aggregator_url}}/internal/analytics"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('time_total ' + pm.response.responseTime + ' ms, X-Correlation-ID ' + pm.response.headers.get('X-Correlation-ID'), () => true);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

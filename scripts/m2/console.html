@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BNPB Control Console</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --ink:#1d2430; --muted:#667085; --line:#d9dee7; --ok:#12805c; --bad:#c0362c; --warn:#b26b00; --accent:#2457c5; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12151b; --panel:#1b2029; --ink:#e6e9ef; --muted:#98a2b3; --line:#2c3340; --ok:#3ccf91; --bad:#ff7b72; --warn:#f0b44c; --accent:#7aa2ff; } }
+  * { box-sizing:border-box } body { margin:0; font:14px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--ink) }
+  header { display:flex; flex-wrap:wrap; gap:16px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line); background:var(--panel) }
+  header h1 { font-size:16px; margin:0 } header span { color:var(--muted) }
+  main { display:grid; grid-template-columns:minmax(260px,1fr) 2fr; gap:12px; padding:12px 16px }
+  @media (max-width: 900px) { main { grid-template-columns:1fr } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; min-width:0 }
+  h2 { font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin:0 0 8px }
+  .ok { color:var(--ok) } .bad { color:var(--bad) } .warn { color:var(--warn) } .muted { color:var(--muted) }
+  table { width:100%; border-collapse:collapse; font-size:13px } td { padding:2px 4px; border-bottom:1px solid var(--line); vertical-align:top }
+  .tabs button, button { font:inherit; border:1px solid var(--line); background:var(--bg); color:var(--ink); border-radius:6px; padding:3px 9px; cursor:pointer }
+  .tabs button.on { background:var(--accent); color:#fff; border-color:var(--accent) } button.danger { border-color:var(--bad); color:var(--bad) }
+  .tabs { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px }
+  .action { display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:5px 0; border-bottom:1px solid var(--line) }
+  .action .label { flex:1 1 240px } .action input { width:110px; font:inherit; padding:2px 4px; border:1px solid var(--line); border-radius:4px; background:var(--bg); color:var(--ink) }
+  pre { margin:0; max-height:320px; overflow:auto; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:8px; font:12px/1.35 ui-monospace, Consolas, monospace; white-space:pre-wrap; word-break:break-word }
+  .stack { display:grid; gap:12px; align-content:start; min-width:0 }
+  dialog { border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--ink); max-width:440px }
+  dialog::backdrop { background:rgba(0,0,0,.4) } select { font:inherit; background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:4px }
+  a { color:var(--accent) }
+</style>
+</head>
+<body>
+<header>
+  <h1>BNPB Control Console</h1>
+  <span id="leader">leader: …</span>
+  <span id="updated">memuat…</span>
+</header>
+<main>
+  <div class="stack">
+    <section><h2>Cluster</h2><table id="nodes"></table><details><summary class="muted">Pod per node</summary><table id="pods"></table></details></section>
+    <section><h2>Sistem</h2><table id="system"></table></section>
+    <section><h2>Riwayat aksi</h2><table id="history"></table></section>
+    <section><h2>Link</h2>
+      <div>Jalankan aksi <b>obs-open</b> untuk <a href="http://127.0.0.1:3000" target="_blank" rel="noopener">Grafana</a> dan <a href="http://127.0.0.1:16686" target="_blank" rel="noopener">Jaeger</a>, <b>open</b> untuk <a href="http://127.0.0.1:15672" target="_blank" rel="noopener">RabbitMQ</a>, <b>p1-dashboard</b> untuk <a href="http://127.0.0.1:18083/dashboard" target="_blank" rel="noopener">dashboard analitik</a>.</div>
+    </section>
+  </div>
+  <div class="stack">
+    <section><h2>Aksi</h2><div class="tabs" id="groups"></div><div id="actions"></div></section>
+    <section><h2>Output <span id="jobinfo" class="muted"></span> <button id="stop" hidden>Hentikan</button></h2><pre id="output">Pilih aksi lalu tekan Jalankan. Command persis dan outputnya tampil di sini; transkrip disimpan di artifacts/m2/runs/.</pre></section>
+    <section><h2>Klien</h2>
+      <div class="action">
+        <label>Peran <select id="role"><option value="field-team">Tim Lapangan</option><option value="media">Media</option><option value="internal-ops">Internal Ops</option></select></label>
+        <label>Sumber <select id="source"><option value="">semua</option><option>BMKG</option><option>PVMBG</option><option>SATELIT</option><option>SENSOR_PANTAI</option></select></label>
+        <button data-op="hazards">GET /hazards</button><button data-op="field-report">POST /field-reports</button><button data-op="unprocessed">GET /internal/audit/unprocessed</button>
+      </div>
+      <pre id="client">Login memakai kredensial dari Secret cluster (tidak ditampilkan).</pre>
+    </section>
+    <section><h2>Event terbaru</h2><table id="events"></table></section>
+  </div>
+</main>
+<dialog id="confirm"><p><b id="ctitle"></b></p><p class="warn">Aksi ini merusak atau mengubah keadaan cluster. Lanjutkan?</p><form method="dialog"><button value="no">Batal</button> <button value="yes" class="danger">Jalankan</button></form></dialog>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const get = async url => { const r = await fetch(url); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j; };
+let actions = [], group = "Umum", job = null;
+
+async function refreshCluster() {
+  try {
+    const c = await get("/api/cluster");
+    $("leader").textContent = `leader: ${c.leader.holder || "?"} (epoch ${c.leader.epoch})`;
+    const count = {}; c.pods.forEach(p => count[p.node] = (count[p.node] || 0) + 1);
+    $("nodes").innerHTML = c.nodes.map(n => `<tr><td>${esc(n.name)}</td><td class="${n.ready ? "ok" : "bad"}">${n.ready ? "● Ready" : "○ NotReady"}</td><td>${count[n.name] || 0} pod</td></tr>`).join("");
+    $("pods").innerHTML = c.pods.sort((a, b) => (a.node + a.name).localeCompare(b.node + b.name)).map(p =>
+      `<tr><td>${esc(p.node)}</td><td>${esc(p.name)}</td><td>${esc(p.role)}</td><td class="${p.ready ? "ok" : "bad"}">${p.terminating ? "terminating" : p.ready ? "ready" : "not ready"}</td><td>${p.restarts ? p.restarts + "↻" : ""}</td></tr>`).join("");
+    $("updated").textContent = "diperbarui " + new Date().toLocaleTimeString();
+  } catch (e) { $("updated").innerHTML = `<span class="bad">cluster: ${esc(e.message)}</span>`; }
+}
+
+async function refreshSystem() {
+  try {
+    const s = await get("/api/status"), rows = [];
+    const st = s.storage || {};
+    (st.units || []).forEach(u => rows.push([u.unit + " @ " + (u.node || "?"), u.reachable === false ? "✖ tak terjangkau" : (u.serving === false ? "◐ mengisi ulang" : "● serving") + (u.partitions != null ? ` · ${u.partitions} partisi` : ""), u.reachable === false ? "bad" : "ok"]));
+    if (st.under_replicated_partitions != null) rows.push(["partisi under-replicated", st.under_replicated_partitions, st.under_replicated_partitions ? "warn" : "ok"]);
+    Object.entries(s.sources || {}).forEach(([k, v]) => rows.push(["sumber " + k, v.stale ? "stale" : "segar", v.stale ? "warn" : "ok"]));
+    if (s.coastal && s.coastal.breaker) rows.push(["breaker SENSOR_PANTAI", s.coastal.breaker.state, s.coastal.breaker.state === "closed" ? "ok" : "bad"]);
+    if (st.moves_in_progress) rows.push(["perpindahan partisi berjalan", st.moves_in_progress, "warn"]);
+    if (s.satellite) rows.push(["satelit", `offset ${s.satellite.processed_offset ?? "?"} · terlambat ${s.satellite.late_detections ?? 0} · ${s.satellite.state || ""}`, s.satellite.pending_effects ? "warn" : ""]);
+    if (s.cache) rows.push(["cache baca", s.cache.enabled ? `hit ${Math.round((s.cache.hit_ratio || 0) * 100)}%` : "mati", ""]);
+    $("system").innerHTML = rows.map(r => `<tr><td>${esc(r[0])}</td><td class="${r[2]}">${esc(r[1])}</td></tr>`).join("") || "<tr><td class='muted'>status belum tersedia</td></tr>";
+  } catch (e) { $("system").innerHTML = `<tr><td class="bad">status: ${esc(e.message)}</td></tr>`; }
+}
+
+async function refreshEvents() {
+  try {
+    const e = await get("/api/events");
+    $("events").innerHTML = (e.data || []).map(h => `<tr><td>${esc((h.ingested_at || "").slice(11, 19))}</td><td>${esc(h.hazard_type)}</td><td>${esc(h.severity)}</td><td>${esc(h.area_name)}</td><td class="muted">${esc(h.source)}</td></tr>`).join("");
+  } catch (err) { $("events").innerHTML = `<tr><td class="bad">${esc(err.message)}</td></tr>`; }
+}
+
+async function refreshHistory() {
+  try { $("history").innerHTML = (await get("/api/history")).map(h => `<tr><td class="muted">${esc(h.time)}</td><td>${esc(h.name)}</td></tr>`).join(""); } catch (e) {}
+}
+
+function renderActions() {
+  const groups = [...new Set(actions.map(a => a.group))];
+  $("groups").innerHTML = groups.map(g => `<button class="${g === group ? "on" : ""}" data-group="${esc(g)}">${esc(g)}</button>`).join("");
+  $("actions").innerHTML = actions.filter(a => a.group === group).map(a =>
+    `<div class="action"><span class="label">${esc(a.label)} <span class="muted">make ${esc(a.make)}</span>${a.destructive ? ' <span class="warn">⚠ merusak</span>' : ""}</span>
+     ${(a.params || []).map(p => `<input placeholder="${esc(p)}" data-param="${esc(p)}" data-for="${esc(a.id)}">`).join("")}
+     <button class="${a.destructive ? "danger" : ""}" data-run="${esc(a.id)}">Jalankan</button></div>`).join("");
+}
+
+async function run(id) {
+  const a = actions.find(x => x.id === id), params = {};
+  document.querySelectorAll(`[data-for="${CSS.escape(id)}"]`).forEach(i => params[i.dataset.param] = i.value);
+  if (a.destructive) {
+    $("ctitle").textContent = a.label + " (make " + a.make + ")";
+    const answer = await new Promise(res => { $("confirm").onclose = () => res($("confirm").returnValue); $("confirm").showModal(); });
+    if (answer !== "yes") return;
+  }
+  const r = await fetch("/api/run", {method: "POST", body: JSON.stringify({id, params, confirmed: !!a.destructive})});
+  const j = await r.json();
+  if (!r.ok) { $("output").textContent = "Ditolak: " + j.error; return; }
+  job = j.job; $("stop").hidden = false; pollJob();
+}
+
+async function pollJob() {
+  if (!job) return;
+  const j = await get("/api/job/" + job);
+  $("jobinfo").textContent = `${j.action} · ${j.elapsed} s · ${j.exit === null ? "berjalan" : "exit " + j.exit} · ${j.transcript}`;
+  $("output").textContent = "$ " + j.argv + "\n" + j.output;
+  $("output").scrollTop = $("output").scrollHeight;
+  if (j.exit === null) setTimeout(pollJob, 1000); else { $("stop").hidden = true; refreshHistory(); }
+}
+
+document.addEventListener("click", async e => {
+  const t = e.target;
+  if (t.dataset.group) { group = t.dataset.group; renderActions(); }
+  if (t.dataset.run) run(t.dataset.run);
+  if (t.id === "stop" && job) fetch("/api/stop/" + job, {method: "POST"});
+  if (t.dataset.op) {
+    $("client").textContent = "mengirim…";
+    const r = await fetch("/api/client", {method: "POST", body: JSON.stringify({role: $("role").value, op: t.dataset.op, source: $("source").value})});
+    const j = await r.json();
+    $("client").textContent = j.error ? j.error : `${j.step} → HTTP ${j.status} · time_total ${j.ms} ms · correlation_id ${j.correlation_id || "-"}\n\n` + JSON.stringify(j.body, null, 2).slice(0, 6000);
+  }
+});
+
+(async () => {
+  try { actions = await get("/api/actions"); renderActions(); } catch (e) { $("actions").textContent = e.message; }
+  const tick = () => { refreshCluster(); refreshSystem(); refreshEvents(); };
+  tick(); refreshHistory(); setInterval(tick, 3000);
+})();
+</script>
+</body>
+</html>

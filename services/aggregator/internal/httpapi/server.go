@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/ingest"
@@ -111,9 +113,41 @@ func (s *Server) listHazards(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "canonical store unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"data": events, "count": len(events), "sources": s.manager.Status(),
-	})
+	body := map[string]any{"data": events, "count": len(events), "sources": s.manager.Status()}
+	w.Header().Add("Vary", "Accept-Encoding")
+	if !acceptsGzip(r) {
+		writeJSON(w, http.StatusOK, body)
+		return
+	}
+	// ~43 KB of JSON shrinks ~10x; under 10k VU the uncompressed body saturated the
+	// node links and held read slots while it drained, turning reads into timeouts.
+	zw := gzipWriters.Get().(*gzip.Writer)
+	defer gzipWriters.Put(zw)
+	zw.Reset(w)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Encoding", "gzip")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(zw).Encode(body); err != nil {
+		s.logger.Error("encode response", "error", err)
+	}
+	if err := zw.Close(); err != nil {
+		s.logger.Debug("gzip close", "error", err)
+	}
+}
+
+var gzipWriters = sync.Pool{New: func() any {
+	zw, _ := gzip.NewWriterLevel(nil, gzip.BestSpeed)
+	return zw
+}}
+
+func acceptsGzip(r *http.Request) bool {
+	for part := range strings.SplitSeq(r.Header.Get("Accept-Encoding"), ",") {
+		coding, params, _ := strings.Cut(strings.TrimSpace(part), ";")
+		if strings.EqualFold(strings.TrimSpace(coding), "gzip") && strings.ReplaceAll(params, " ", "") != "q=0" {
+			return true
+		}
+	}
+	return false
 }
 
 func parseFilter(r *http.Request) (store.Filter, error) {

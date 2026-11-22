@@ -15,7 +15,7 @@ export const options = {
 };
 export default function () {
   const response = http.get(`${targets[__VU % targets.length]}/internal/v1/hazards?source=BMKG&limit=100`, {
-    timeout: '10s', headers: { 'X-Correlation-ID': `m2-p2-${__VU}-${__ITER}` },
+    timeout: '10s', headers: { 'X-Correlation-ID': `m2-p2-${__VU}-${__ITER}`, 'Accept-Encoding': 'gzip' },
   });
   let body;
   try { body = response.json(); } catch (_) { body = null; }

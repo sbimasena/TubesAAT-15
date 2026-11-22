@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"io"
@@ -110,5 +111,38 @@ func TestSaturatedReadsGetLabelledRejection(t *testing.T) {
 	api.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/internal/v1/hazards", nil))
 	if response.Code != http.StatusOK {
 		t.Fatalf("free slot: status=%d", response.Code)
+	}
+}
+
+func TestHazardsGzipOnlyWhenAccepted(t *testing.T) {
+	repository := storedRepository{}
+	manager := ingest.NewManager(nil, nil, repository, time.Second, nil)
+	api := NewServer(repository, manager, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	for _, tc := range []struct {
+		accept string
+		gzip   bool
+	}{{"", false}, {"gzip, deflate", true}, {"br;q=1.0, GZIP;q=0.5", true}, {"gzip;q=0", false}, {"deflate", false}} {
+		request := httptest.NewRequest(http.MethodGet, "/internal/v1/hazards?source=PVMBG", nil)
+		request.Header.Set("Accept-Encoding", tc.accept)
+		response := httptest.NewRecorder()
+		api.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusOK || (response.Header().Get("Content-Encoding") == "gzip") != tc.gzip {
+			t.Fatalf("%q: status=%d encoding=%q", tc.accept, response.Code, response.Header().Get("Content-Encoding"))
+		}
+		var reader io.Reader = response.Body
+		if tc.gzip {
+			zr, err := gzip.NewReader(response.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader = zr
+		}
+		var body struct {
+			Count int                  `json:"count"`
+			Data  []domain.HazardEvent `json:"data"`
+		}
+		if err := json.NewDecoder(reader).Decode(&body); err != nil || body.Count != 1 || body.Data[0].HazardID != "stored" {
+			t.Fatalf("%q: body=%+v err=%v", tc.accept, body, err)
+		}
 	}
 }

@@ -234,11 +234,21 @@ Waktu UTC. k6 2.4.0 dari PC host (Windows), `TARGET_URL=http://192.168.18.201:30
 | 03:14:17 | + timeout rollout dilonggarkan | timeout | tidak jalan | tidak jalan | OOM (3 pod) | 6,94% | 711 |
 | 03:18:20 | + `GOMEMLIMIT` | OK | OK | OK | OOM (6×) | 63,54% | 524 |
 | 03:30:00 | + pembatas di luar tracing/log | **OK** | **OK** | **OK** | **0** | 1,80% | 483 |
-| **03:36:39** | + disk node diperbesar (lihat bawah) | **OK** | **OK** | **OK** | **0** | **1,96%** | **718** |
+| 03:36:39 | + disk node diperbesar (lihat bawah) | OK | OK | OK | 0 | 1,96% | 718 |
+| **11:46:47** | + respons baca gzip (lihat bawah) | **OK** | **OK** | **OK** | **0** | **0,13%** | **2.435** |
 
 Run final 03:36:39 (`artifacts/m2/runs/20261122T033639Z-p2-load.{log,json}`): 1.438.179 request (7.624/s), 135.416 respons kanonis, sisanya penolakan `503` berlabel. Memori puncak per pod **408Mi** (limit 512Mi). Rolling update ke tag kedua (`…-readcap2`) selesai di tengah beban.
 
 Sisa error tak terkendali (±2%) hampir semuanya `request timeout` 10 s di sisi klien (24.831), sisanya error koneksi (2.173). k6 dengan 10k VU berbagi CPU dengan VM `node-a` dan `node-c` di PC yang sama, dan sepertiga trafik NodePort `Cluster` diteruskan ke pod di `node-b` lewat Wi-Fi. Klien ideal tetap mesin ketiga di luar kedua host (batasan, sama dengan catatan throughput di atas).
+
+### Perbaikan lanjutan: respons baca gzip (run 11:46:47)
+
+- **Diagnosis run 03:36:** `data_received` 6,9 GB untuk 135.416 respons 200, yaitu ±51 KB per respons dengan total hanya ±37 MB/s. Yang jenuh adalah link (PC host dan node-b lewat Wi-Fi), bukan CPU. Selama respons 43 KB dikirim lewat link yang penuh, slot baca (256 per pod) tetap terpakai. Request lain akhirnya ditolak `503` atau menunggu sampai timeout klien 10 s.
+- **Perbaikan** (`services/aggregator/internal/httpapi/server.go`, `listHazards`): bila klien mengirim `Accept-Encoding: gzip`, respons `/hazards` dan `/internal/v1/hazards` dikompres gzip (BestSpeed, writer di-pool, `Vary: Accept-Encoding`). Klien tanpa header itu tetap menerima JSON biasa. Client API memakai `net/http`, yang otomatis meminta dan men-decompress gzip. Di cluster, respons `source=BMKG&limit=100` turun dari **43.568 B menjadi 8.411 B**. Tes: `TestHazardsGzipOnlyWhenAccepted`. Skrip k6 (`tests/k6/m2-aggregator.js`) kini mengirim `Accept-Encoding: gzip` seperti browser/klien HTTP biasa.
+- **Image:** `docker.io/sbimasena/bnpb-aggregator:d28063bd237e-gzip`, ditambah tag kedua `…-gzip-b` (kode sama) sebagai target rolling update. Keduanya di-import langsung ke containerd k3s di ketiga node (`k3s ctr images import`, `imagePullPolicy: IfNotPresent`), **belum di-push ke Docker Hub**.
+- **Run 11:46:47** (`artifacts/m2/runs/20261122T114647Z-p2-load.{log,json}`, `make p2-load` dengan `ROLLOUT_IMAGE=…-gzip-b`): 3→5→2 dan rolling update semua "successfully rolled out". Hasil: 1.959.543 request (10.511/s); **454.032 respons kanonis (2.435/s, 3,4× run 03:36)**; `uncontrolled_errors` **0,13%** (2.640: 1.348 timeout + error koneksi); p95 durasi 2,08 s (sebelumnya 4,99 s); `data_received` 4,3 GB (±9,5 KB per respons 200). Sesudah run: 3 pod Aggregator, 0 restart, checksum keempat sumber `partial:false`. Memori puncak per pod tidak diukur pada run ini.
+- **`failed_responses` 76,82%** (threshold `rate==0` gagal) mencakup **semua** respons yang bukan 200, termasuk `503 overloaded` berlabel dari load shedding yang disengaja. Threshold ini hanya aktif bila `ROLLOUT_IMAGE` di-set (kriteria 8). Kriteria P2.6 hanya menghitung error di luar penolakan terkontrol (0,13% < 1%). Kriteria 8 ("ganti versi tanpa request gagal") secara ketat tetap tidak terpenuhi di bawah overload 10k VU: rollout tidak menambah error tak terkendali, tetapi penolakan terkontrol tetap ada.
+- Screenshot: `artifacts/m2/screenshots/p2-03-k6-10000vu-gzip.png`.
 
 ### DiskPressure node-a saat load test
 
@@ -266,8 +276,8 @@ Sisa error tak terkendali (±2%) hampir semuanya `request timeout` 10 s di sisi 
 | Item | Status |
 |---|---|
 | Freeze VM >15 s | **Terbukti** (di atas) |
-| Rolling update di tengah beban | **Terbukti** (run 03:30 dan 03:36) |
-| Scale 3→5→2 di bawah 10k VU | **Terbukti** tanpa restart; error tak terkendali 1,96% (≥1% target internal, penyebab di sisi klien/jaringan) |
+| Rolling update di tengah beban | **Terbukti** (run 03:30, 03:36, 11:46) tanpa restart. Tanpa request gagal sama sekali (kriteria 8 ketat): **tidak**, penolakan `503` berlabel tetap ada saat overload |
+| Scale 3→5→2 di bawah 10k VU | **Terbukti** tanpa restart; error tak terkendali **0,13%** (run 11:46 dengan gzip; sebelumnya 1,96%) |
 | Throughput ≥2× | Terbukti 21 Nov (2,35× pada CPU 100m) |
 
 ## Catatan 22 Nov 2026 — NodePort Aggregator masuk manifest (PR #27)

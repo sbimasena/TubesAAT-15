@@ -11,7 +11,18 @@ make dev-up    # cluster k3d lokal: 1 server + 2 agent (3 node, k3s v1.33.5)
 make deploy    # perintah tunggal: Secret dari .env, build + import image (tag git SHA), apply, Tester Agent, tunggu rollout
 make status    # node, pod per node beserta label role
 make help      # semua target
+make dev-down  # hapus cluster k3d beserta datanya
 ```
+
+**Dari kondisi awal ke cluster demo 3 node:**
+
+1. Siapkan tiga VM Ubuntu 24.04 dan pasang k3s v1.33.5 (server di `node-a`, agent di `node-b`/`node-c`). Langkahnya, termasuk persiapan OS untuk Tester Agent, ada di [`docs/m2/setup-cluster.md`](docs/m2/setup-cluster.md).
+2. Salin kubeconfig `node-a` ke mesin operator, lalu jadikan context aktif (`kubectl get nodes` harus menampilkan 3 node `Ready`).
+3. Buat `.env` dengan `python3 scripts/setup-env.py`. Isi `SATELLITE_TOKEN` (token grup Feed Satelit), lalu `AUDIT_TOKEN` dan `PANTAI_AUTH_TOKEN` bila memakai token dari asisten.
+4. Login ke registry (`docker login`), lalu jalankan `make deploy OVERLAY=cluster REGISTRY=docker.io/<user>`. Perintah ini membuat Secret, build + push image, memasang Tester Agent dan observabilitas, lalu menunggu semua rollout.
+5. Periksa dengan `make status`, `make system-status`, lalu `curl -w '%{time_total}\n' http://<IP node>:30080/health`.
+
+Deploy berikutnya harus memakai `.env` yang sama dengan deploy pertama. Password PostgreSQL dan RabbitMQ hanya dipakai saat volume diinisialisasi, jadi `.env` yang berbeda membuat service gagal login. Runbook hari ujian (kunci asisten, sesi ujian satelit, video) ada di [`docs/m2/demo-ujian.md`](docs/m2/demo-ujian.md).
 
 Client API tersedia di `http://127.0.0.1:8080` (k3d) atau `http://<IP node>:30080` (NodePort, cluster demo). Untuk cluster demo: `make deploy OVERLAY=cluster REGISTRY=docker.io/<user>` dengan kubeconfig cluster tersebut sebagai context aktif; image di-push sebagai `linux/amd64` dengan tag git SHA. `deploy.sh` idempoten, menolak push bila `services/` belum di-commit, dan menunggu semua rollout. Manifest ada di `deploy/k8s` (Kustomize `base` + overlay `dev`/`cluster`), skrip di `scripts/k8s`, dan daftar aksi bersama di `scripts/m2/actions.json`.
 
@@ -24,7 +35,7 @@ Client API tersedia di `http://127.0.0.1:8080` (k3d) atau `http://<IP node>:3008
 | `node-c` (worker) | PC Windows (VM kedua) | VirtualBox, Ubuntu 24.04, 8 GB / 4 vCPU | `192.168.18.203` |
 
 - k3s, satu router (bridged), IP statis. Node tersebar di dua host fisik. Semua node x86_64, karena image Tester Agent dan Sensor Pantai hanya amd64.
-- **`node-a` bukan target `wipe-node` atau node mati.** Consumer (jurnal di volume local-path) dan stack observabilitas dipaku ke `node-a`. Gangguan node diarahkan ke `node-b`/`node-c`.
+- Consumer (jurnal di volume local-path) dan stack observabilitas dipaku ke `node-a`. Gangguan node manual (`p2-freeze`, mematikan VM) diarahkan ke `node-b`/`node-c`. Tester Agent sendiri memilih node secara acak (`nodes=any`), jadi `wipe-node` bisa mengenai `node-a` (control plane); lihat catatan `wipe-node` di bawah.
 - Data store berada di disk node tempat pod berjalan (`local-path`).
 
 ### Komponen M2
@@ -69,6 +80,17 @@ Tambahan dari tabel [Variabel konfigurasi](#variabel-konfigurasi). `deploy.sh` m
 | `PANTAI_AUTH_TOKEN` | Token yang diminta Sensor Pantai dari kliennya (Secret `pantai-token`) |
 | `FIELD_REPORT_PUBLISH_TIMEOUT_MS` | Compose saja (di cluster memakai default 5000): batas tunggu publisher confirm `POST /field-reports`; lewat batas ini klien menerima 503, bukan 202 |
 | `REREPLICATE_AFTER_SECONDS` | Manifest Aggregator (default 60): lama unit store tak terlihat sebelum partisinya dipindah |
+| `SATELLITE_TOKEN` | Token grup Feed Satelit (Secret `satellite-token`); kosong = worker P4 mati. Token yang sama dipakai `make video-submit` |
+| `SATELLITE_LATENESS_SECONDS` | Default `86400`: jendela event-time yang diterima dari feed satelit |
+| `AGGREGATOR_READ_CACHE_TTL_MS` | Default `1000`: cache baca per replika Aggregator; `0` mematikannya |
+| `CLIENT_API_MEDIA_POOL`, `CLIENT_API_FIELD_TEAM_POOL`, `CLIENT_API_INTERNAL_OPS_POOL` | Default `40`/`20`/`4`: kuota fetch per peran (bulkhead P5.5), agar Media tidak menghabiskan jatah Tim Lapangan |
+| `AUTH_INTROSPECTION_CACHE_TTL_MS` | Default `0`: cache introspeksi token di Client API. Nilai pendek (mis. `3000`) hanya untuk uji beban; token lama bisa tetap diterima selama TTL ini |
+| `PANTAI_BASE_URL` | URL Sensor Pantai; kosong = ingestion coastal mati (Compose dasar). Di cluster: `http://sensor-pantai:8080` |
+| `PANTAI_REQUEST_TIMEOUT_MS`, `PANTAI_POLL_INTERVAL_MS`, `PANTAI_PAGE_LIMIT` | Default `2000`, `500`, `100`: timeout per request, interval polling, dan ukuran halaman |
+| `PANTAI_PROGRESS_TIMEOUT_MS` | Default `10000`: jam virtual sensor dianggap macet bila tidak maju selama ini |
+| `PANTAI_BREAKER_FAILURE_THRESHOLD`, `PANTAI_BREAKER_OPEN_MS` | Default `3`, `10000`: kegagalan beruntun sebelum breaker terbuka, dan lama terbuka sebelum half-open |
+| `PANTAI_MAX_ATTEMPTS`, `PANTAI_RETRY_WINDOW_MS`, `PANTAI_RETRIES_PER_WINDOW` | Default `2`, `10000`, `2`: total percobaan per request dan anggaran retry per jendela (`0` = tanpa retry) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | ConfigMap: `http://jaeger.observability:4318`, tujuan trace OpenTelemetry |
 | `OVERLAY`, `REGISTRY` | Hanya untuk `make deploy`: `dev` (k3d import) atau `cluster` (push ke `REGISTRY`) |
 
 ### Memicu skenario
@@ -81,11 +103,13 @@ Setiap aksi tersedia sebagai target `make` dan tercatat di `scripts/m2/actions.j
 | Control Console | `make console` | Halaman lokal `http://127.0.0.1:8090` (hanya loopback, memakai kubeconfig sendiri): node dan pod per node, status Aggregator (leader, storage, sumber, breaker, satelit), tombol untuk setiap aksi di `scripts/m2/actions.json` dengan output live dan transkrip di `artifacts/m2/runs/`, event terbaru, dan klien per peran (Media, Tim Lapangan, Internal Ops) dengan `time_total` serta `correlation_id`. Aksi yang merusak meminta konfirmasi. |
 | Postman | `docs/api/postman/` | Collection `bnpb-m2` (Client API per peran, field report, DLQ, Audit API, status) dan environment `cluster`/`local`. Isi password peran dan `audit_token` di environment (jangan di-commit); token login diambil otomatis. `auth_url` cluster memakai `kubectl -n sistem-informasi-kebencanaan-bnpb port-forward svc/auth 18084:8084`. |
 | Tester Agent | `make tester S=<skenario>` | `kill-store`, `kill-leader`, `partition`, `clock-skew`, `schema`, `wipe-node` (profil practice) |
+| Auditor | `make audit-run S=<skenario>` | Snapshot Audit API sebelum/sesudah satu skenario latihan, lalu putusan: count tidak turun, tanpa duplikat, replika di dua node. Hasil di `artifacts/m2/runs/`, ringkasan di `docs/m2/hasil-auditor-latihan.md`. Menolak `wipe-node` |
+| Ujian | `make exam-keys`, `exam-pantai`, `exam-satellite-prep`, `exam-start`, `exam-tester S=...`, `video-submit URL=...`, `video-status` | Pasang bahan dari asisten, Sensor Pantai profil exam, reset checkpoint satelit lalu `POST /v1/exam/start`, jalankan skenario ujian, kirim tautan video. Urutan lengkap di `docs/m2/demo-ujian.md` |
 | P1 | `make p1-checksum`, `p1-distribution`, `p1-wipe-node`, `p1-amnesia S=store-N`, `p1-load FILE=...`, `p1-surge`, `p1-audit`, `p1-netpol`, `p1-dashboard` | Bandingkan checksum sebelum dan sesudah gangguan. Setelah pemulihan, total baris di ketiga unit semestinya dua kali jumlah event unik. Dashboard tersedia di `http://127.0.0.1:18083/dashboard` setelah `make p1-dashboard`. |
 | P2 | `make p2-status`, `p2-kill-leader`, `p2-failover`, `p2-freeze`, `p2-load`, `p2-throughput`, `p2-slo` | Lihat bagian P2 di bawah. `p2-kill-leader` selalu menghapus pemegang Lease; `p2-failover` memakai Tester `kill-leader`. `p2-freeze` dijalankan di host VirtualBox: VM leader dijeda >15 s lalu dilanjutkan; sesudahnya sinkronkan ulang jam VM (`sudo systemctl restart systemd-timesyncd`). `p2-load` butuh `TARGET_URL` dan k6 di luar node cluster; tambahkan `ROLLOUT_IMAGE` untuk ganti versi di tengah beban. |
-| P3 | `make p3-check` | Stack Compose terisolasi: DLQ byte-identik, replay/idempotensi, otorisasi Internal Ops, dan laporan 202 yang bertahan setelah penerima SIGKILL. Hasil di `artifacts/m2/runs/`; bukan bukti failover node Kubernetes. |
+| P3 | `make p3-check`, `p3-retryable`, `p3-replay-cluster AUDIT_URL=... [REPLAY=1]`, `p34-replay-copy` | `p3-check`: stack Compose terisolasi untuk DLQ byte-identik, replay/idempotensi, otorisasi Internal Ops, dan laporan 202 yang bertahan setelah penerima SIGKILL (bukan bukti failover node Kubernetes). `p3-retryable`: kesalahan sementara vs permanen dengan PostgreSQL asli. `p3-replay-cluster`: inventaris atau replay DLQ PVMBG di cluster lewat Audit API (port-forward `svc/aggregator 18083:8083`). `p34-replay-copy`: replay salinan DLQ cluster di PostgreSQL sekali pakai. Hasil di `artifacts/m2/runs/`. |
 | P4 | `make p4-sample`, `p4-check`, `p4-export`, `p4-compare` | Sampling, pemulihan, dan perbandingan dengan referensi |
-| P5 | `make p5-sample`, `p5-resilience`, `p5-ingestion` | Sampel HTTP Sensor Pantai resmi, uji gangguan adapter (breaker, retry budget, bulkhead, validasi kontrak), dan ingestion coastal pada stack terisolasi. Breaker di cluster: `kubectl -n sistem-informasi-kebencanaan-bnpb scale deploy/sensor-pantai --replicas=0`, amati `coastal.breaker` di `make system-status` dan `sources.SENSOR_PANTAI` di `GET /hazards`, lalu kembalikan `--replicas=1`. |
+| P5 | `make p5-sample`, `p5-resilience`, `p5-ingestion`, `p5-priority`, `p5-gameday`, `p53-concurrent`, `p5-critical-alert`, `p5-source-latency`, `p5-breaker-timeline`, `p5-slo-fetch`, `p57-evidence` | Sampel HTTP Sensor Pantai resmi, uji gangguan adapter (breaker, retry budget, bulkhead, validasi kontrak), dan ingestion coastal pada stack terisolasi. `p5-priority`: banjir Media vs baca Tim Lapangan dan HPA. `p5-gameday`: kill-store + sensor mati + outage PVMBG di bawah beban tanpa intervensi. `p53-concurrent`: BMKG saja vs PVMBG lambat saat sensor mati. `p5-critical-alert`, `p5-source-latency`, `p5-breaker-timeline`, `p5-slo-fetch`: pengukuran latensi alert kritis, latensi BMKG, timeline breaker, dan SLO/error budget dari Prometheus (argumen URL di `make help`). `p57-evidence`: metrik, trace Jaeger, dan log berkorelasi. Breaker di cluster: `kubectl -n sistem-informasi-kebencanaan-bnpb scale deploy/sensor-pantai --replicas=0`, amati `coastal.breaker` di `make system-status` dan `sources.SENSOR_PANTAI` di `GET /hazards`, lalu kembalikan `--replicas=1`. |
 | Broker | `make broker-status`, `make broker-recover S=rabbitmq-N` | Anggota cluster dan replika setiap queue; kosongkan disk member yang crash-loop agar bergabung ulang |
 | Pemulihan | `make reset` | Kembalikan manifest dan mode mock PVMBG ke normal |
 

@@ -37,6 +37,7 @@ export default function () {
     headers: { Authorization: `Bearer ${login(role)}`, 'X-Correlation-ID': `p5-priority-${role}-${__VU}-${__ITER}` },
     timeout: '10s', tags: { name: 'hazards', role },
   });
+  if (res.status === 401) token = ''; // session lost (Auth restart): log in again next iteration
   const ok = res.status === 200;
   let code = '';
   try { code = res.json('error.code') || ''; } catch (_) { code = ''; }

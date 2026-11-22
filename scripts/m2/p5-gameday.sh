@@ -28,12 +28,12 @@ trap cleanup EXIT
 checksums() {
   for source in BMKG PVMBG SATELIT SENSOR_PANTAI; do
     curl -s -H "Authorization: Bearer $AUDIT_TOKEN" "$AGG/internal/audit/checksum?source=$source" |
-      python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"  {d[\"source\"]}: count={d[\"count\"]} partial={d[\"partial\"]} unavailable={d.get(\"unavailable_units\")}")' ||
+      python3 -c 'import json,sys; d=json.load(sys.stdin); print("  %s: count=%s partial=%s unavailable=%s" % (d["source"], d["count"], d["partial"], d.get("unavailable_units")))' ||
       echo "  $source: unavailable"
   done
 }
 sample() {
-  curl -s -m 5 "$AGG/internal/v1/status" | python3 -c '
+  curl -s -m 10 "$AGG/internal/v1/status" | python3 -c '
 import json, sys, time
 d = json.load(sys.stdin)
 src = {k: ("stale" if v.get("stale") else "ok") for k, v in d.get("sources", {}).items()}

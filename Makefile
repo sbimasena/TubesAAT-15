@@ -166,3 +166,14 @@ p4-compare: ## Compare complete satellite exports: make p4-compare ACTUAL=actual
 
 p4-export: ## Export all SATELIT Audit events as JSON on stdout
 	@$(SH) scripts/k8s/ops.sh p4-export
+
+# Paste into the root Makefile; the scripts depend on the existing repo's helpers.
+.PHONY: p34-verify p53-concurrent p57-evidence
+p34-verify: ## Isolated P3.4 replay + read-only inventory of live cluster DLQ
+	@$(SH) scripts/m2/p34_run.sh
+
+p53-concurrent: ## BMKG-only vs PVMBG 3s during Pantai outage; restores original PVMBG/sensor settings
+	@$(SH) scripts/m2/p53_run.sh
+
+p57-evidence: ## Read-only P5.7 metrics + Jaeger trace + correlated/error logs evidence
+	@$(SH) scripts/m2/p57_run.sh

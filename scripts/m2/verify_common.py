@@ -352,3 +352,61 @@ def prom_query(base_url, query, timeout=15):
 
 def write_json(path, value):
     Path(path).write_text(json.dumps(value, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+
+
+def add_client_auth_args(parser):
+    """Register Field Team client-auth arguments on an argparse parser."""
+    parser.add_argument("--auth-url", required=True,
+                        help="Auth service base URL (e.g. http://127.0.0.1:8084)")
+    parser.add_argument("--client-id", default=os.environ.get("FIELD_TEAM_CLIENT_ID", ""),
+                        help="Field Team client ID (default: FIELD_TEAM_CLIENT_ID env)")
+    parser.add_argument("--client-password", default=os.environ.get("FIELD_TEAM_CLIENT_PASSWORD", ""),
+                        help="Field Team client password (default: FIELD_TEAM_CLIENT_PASSWORD env)")
+
+
+class ClientSession:
+    """A small authenticated GET helper that refreshes expiring JWTs."""
+
+    def __init__(self, args):
+        self.args = args
+        self.auth_url = str(args.auth_url).rstrip("/")
+        self.client_id = getattr(args, "client_id", "") or os.environ.get("FIELD_TEAM_CLIENT_ID", "")
+        self.password = getattr(args, "client_password", "") or os.environ.get("FIELD_TEAM_CLIENT_PASSWORD", "")
+        self.access_token = None
+        self.refresh_token = None
+        self.expires_at = 0.0
+        self.relogins = 0
+
+    def _login(self):
+        result = http_json(self.auth_url, "/login", method="POST",
+                           body={"client_id": self.client_id, "password": self.password})
+        if result["status"] != 200 or not isinstance(result["body"], dict):
+            raise RuntimeError("Field Team login failed: HTTP " + str(result["status"]))
+        body = result["body"]
+        self.access_token = body.get("access_token")
+        self.refresh_token = body.get("refresh_token")
+        self.expires_at = time.monotonic() + float(body.get("expires_in", 60)) - 5
+        self.relogins += 1
+
+    def _ensure_token(self):
+        if self.access_token is None or time.monotonic() >= self.expires_at:
+            if self.refresh_token:
+                result = http_json(self.auth_url, "/refresh", method="POST",
+                                   body={"refresh_token": self.refresh_token})
+                if result["status"] == 200 and isinstance(result["body"], dict):
+                    body = result["body"]
+                    self.access_token = body.get("access_token", self.access_token)
+                    self.refresh_token = body.get("refresh_token", self.refresh_token)
+                    self.expires_at = time.monotonic() + float(body.get("expires_in", 60)) - 5
+                    self.relogins += 1
+                    return
+            self._login()
+
+    def get(self, base_url, path):
+        self._ensure_token()
+        return http_json(base_url, path, token=self.access_token)
+
+
+def client_session(args):
+    """Return (session,) for callers that unpack the first element."""
+    return (ClientSession(args),)

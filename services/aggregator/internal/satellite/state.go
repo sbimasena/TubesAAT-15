@@ -34,16 +34,17 @@ type Mutation struct {
 // State is the recovery checkpoint. Owners retains identity when a fire becomes
 // a singleton/disappears, and after merges/splits, without relying on process RAM.
 type State struct {
-	Offset         int64
-	Lateness       time.Duration
-	MaxEventTime   time.Time
-	LastIngested   time.Time
-	LateDetections uint64
-	Singles        int
-	Detections     map[string]Detection
-	Owners         map[string]string
-	Seen           map[string]bool
-	Events         map[string]domain.HazardEvent
+	Offset           int64
+	Lateness         time.Duration
+	MaxEventTime     time.Time
+	LastIngested     time.Time
+	LateDetections   uint64
+	Singles          int
+	FinalizedSingles int `json:",omitempty"`
+	Detections       map[string]Detection
+	Owners           map[string]string
+	Seen             map[string]bool
+	Events           map[string]domain.HazardEvent
 	// PrunedBefore is the hour-aligned horizon below which finalized fires and
 	// detections were dropped. It depends only on the offset sequence, so crash and
 	// batch boundaries cannot change what is pruned.
@@ -65,6 +66,10 @@ func NewStateWithLateness(lateness time.Duration) *State {
 	}
 	return &State{Offset: -1, Lateness: lateness, Detections: map[string]Detection{}, Owners: map[string]string{}, Seen: map[string]bool{}, Events: map[string]domain.HazardEvent{}}
 }
+func (s *State) singletonTotal() int {
+	return s.Singles + s.FinalizedSingles
+}
+
 func (s *State) Watermark() time.Time {
 	if s.MaxEventTime.IsZero() {
 		return time.Time{}
@@ -155,6 +160,7 @@ func (s *State) prune(before time.Time, grid detectionGrid, pruned map[string]do
 		if inGrid {
 			grid.remove(key, p)
 			s.Singles--
+			s.FinalizedSingles++
 		}
 		delete(s.Detections, key)
 		delete(s.Owners, key)

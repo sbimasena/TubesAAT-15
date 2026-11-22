@@ -2,6 +2,7 @@ package satellite
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -75,20 +76,30 @@ func TestWorkerSyntheticBurstCatchUp(t *testing.T) {
 	router := postgresRouter(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	end := make(chan time.Time, 1)
-	const total = 1000
+	const burstSize, detectionsPerFire = 1000, 20
+	dates := []string{"2026-11-12", "2026-11-14"} // Cross the default 36-hour pruning horizon.
+	end := make(chan time.Time, len(dates))
+	nextBurst := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
 		case "/v1/session":
-			fmt.Fprint(w, `{"latest_offset":1000,"virtual_now":"2026-11-12T04:00:00Z"}`)
+			fmt.Fprint(w, `{"latest_offset":2000,"virtual_now":"2026-11-14T04:00:00Z"}`)
 		case "/v1/stream":
 			w.Header().Set("Content-Type", "text/event-stream")
-			for i := range total {
-				fmt.Fprintf(w, "id: %d\nevent: detection\ndata: {\"satellite\":\"N20\",\"acq_date\":\"2026-11-12\",\"acq_time\":243,\"latitude\":-2.51230,\"longitude\":%.6f,\"confidence\":\"n\",\"frp\":3}\n\n", i+1, 100+float64(i/20)*.03+float64(i%20)*.00002)
+			for burst, date := range dates {
+				for i := range burstSize {
+					offset := burst*burstSize + i + 1
+					lon := 100 + float64(i/detectionsPerFire)*.03 + float64(i%detectionsPerFire)*.00002
+					fmt.Fprintf(w, "id: %d\nevent: detection\ndata: {\"satellite\":\"N20\",\"acq_date\":\"%s\",\"acq_time\":243,\"latitude\":-2.51230,\"longitude\":%.6f,\"confidence\":\"n\",\"frp\":3}\n\n", offset, date, lon)
+				}
+				w.(http.Flusher).Flush()
+				end <- time.Now()
+				select {
+				case <-nextBurst:
+				case <-req.Context().Done():
+					return
+				}
 			}
-			w.(http.Flusher).Flush()
-			end <- time.Now()
-			<-req.Context().Done()
 		}
 	}))
 	defer server.Close()
@@ -98,53 +109,81 @@ func TestWorkerSyntheticBurstCatchUp(t *testing.T) {
 	go func() {
 		done <- RunWorker(ctx, client, router, 1, func(ctx context.Context) error { return ctx.Err() }, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	}()
-	var sent time.Time
-	select {
-	case sent = <-end:
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
-	}
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-poll:
-	for {
+	keys := make(map[string]bool)
+	for burst := range dates {
+		var sent time.Time
 		select {
+		case sent = <-end:
 		case err := <-done:
-			t.Fatalf("worker exited during burst: %v", err)
+			t.Fatalf("worker exited before burst %d: %v", burst+1, err)
 		case <-ctx.Done():
-			t.Fatal("synthetic burst did not converge within 60 seconds")
-		case <-ticker.C:
-			status := StoredStatus(ctx, router).(map[string]any)
-			if offset, ok := status["processed_offset"].(*int64); ok && offset != nil && *offset == total {
-				break poll
+			t.Fatal(ctx.Err())
+		}
+		wantOffset := int64((burst + 1) * burstSize)
+	poll:
+		for {
+			select {
+			case err := <-done:
+				t.Fatalf("worker exited during burst %d: %v", burst+1, err)
+			case <-ctx.Done():
+				t.Fatalf("burst %d did not converge: %v", burst+1, ctx.Err())
+			case <-ticker.C:
+				status := StoredStatus(ctx, router).(map[string]any)
+				if offset, ok := status["processed_offset"].(*int64); ok && offset != nil && *offset == wantOffset {
+					break poll
+				}
 			}
 		}
-	}
-	result, err := router.Checksum(ctx, "SATELIT")
-	if err != nil || result.Count != 50 {
-		t.Fatalf("expected all 50 fires after burst: %+v, %v", result, err)
+		result, err := router.Checksum(ctx, "SATELIT")
+		if err != nil || result.Partial || result.Count != int(wantOffset)/detectionsPerFire {
+			t.Fatalf("unexpected fire count after burst %d: %+v, %v", burst+1, result, err)
+		}
+		t.Logf("burst %d materialized through offset %d in %s after flush", burst+1, wantOffset, time.Since(sent).Round(time.Millisecond))
+		if burst+1 < len(dates) {
+			nextBurst <- struct{}{}
+		}
 	}
 	page, err := router.Query(ctx, store.Filter{Source: "SATELIT", Limit: 100}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys := make(map[string]bool)
 	for _, event := range page.Items {
-		eventKeys, err := eventKeys(event)
-		if err != nil || len(eventKeys) != 20 {
-			t.Fatalf("incorrect fire size: %d, %v", len(eventKeys), err)
+		members, err := eventKeys(event)
+		if err != nil || len(members) != detectionsPerFire {
+			t.Fatalf("incorrect fire size: %d, %v", len(members), err)
 		}
-		for _, key := range eventKeys {
+		for _, key := range members {
 			if keys[key] {
 				t.Fatalf("duplicate detection %s", key)
 			}
 			keys[key] = true
 		}
 	}
-	if len(keys) != total {
-		t.Fatalf("expected %d detections, got %d", total, len(keys))
+	for _, date := range dates {
+		for i := range burstSize {
+			lon := 100 + float64(i/detectionsPerFire)*.03 + float64(i%detectionsPerFire)*.00002
+			key := fmt.Sprintf("N20|%s|243|-2.51230|%.6f", date, lon)
+			if !keys[key] {
+				t.Fatalf("missing detection %s", key)
+			}
+		}
 	}
-	t.Logf("synthetic burst committed %d unique detections into %d fires in %s after the last frame was sent", len(keys), result.Count, time.Since(sent).Round(time.Millisecond))
+	raw, err := router.LoadCursor(ctx, "SATELIT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint recoveryCheckpoint
+	if err := json.Unmarshal([]byte(raw), &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyDelta(ctx, router, &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(checkpoint.State.Detections); got != burstSize {
+		t.Fatalf("checkpoint retained %d detections after pruning, want %d", got, burstSize)
+	}
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatal(err)

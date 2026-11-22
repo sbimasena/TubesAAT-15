@@ -1,40 +1,361 @@
 {
   "actions": [
-    {"id": "dev-up", "group": "Umum", "label": "Buat/nyalakan cluster k3d", "make": "dev-up", "destructive": false},
-    {"id": "dev-down", "group": "Umum", "label": "Hapus cluster k3d", "make": "dev-down", "destructive": true},
-    {"id": "deploy", "group": "Umum", "label": "Deploy seluruh sistem", "make": "deploy", "destructive": false},
-    {"id": "status", "group": "Umum", "label": "Status node dan pod", "make": "status", "destructive": false},
-    {"id": "prepull", "group": "Umum", "label": "Tarik semua image workload di setiap node (sebelum demo)", "make": "prepull", "params": ["NODES"], "destructive": false},
-    {"id": "logs", "group": "Umum", "label": "Log satu service", "make": "logs", "params": ["S"], "destructive": false},
-    {"id": "tester-list", "group": "Umum", "label": "Daftar skenario Tester Agent", "make": "tester-list", "destructive": false},
-    {"id": "tester", "group": "Umum", "label": "Jalankan skenario latihan Tester Agent", "make": "tester", "params": ["S"], "destructive": true},
-    {"id": "open", "group": "Umum", "label": "Buka UI (port-forward)", "make": "open", "destructive": false},
-    {"id": "system-status", "group": "Umum", "label": "Status sistem (GET /internal/v1/status)", "make": "system-status", "destructive": false},
-    {"id": "obs-open", "group": "Umum", "label": "Buka Grafana + Jaeger (port-forward)", "make": "obs-open", "destructive": false},
-    {"id": "broker-status", "group": "Umum", "label": "Status cluster RabbitMQ + replika queue", "make": "broker-status", "destructive": false},
-    {"id": "broker-recover", "group": "Umum", "label": "Kosongkan disk member RabbitMQ yang crash-loop", "make": "broker-recover", "params": ["S"], "destructive": true},
-    {"id": "p1-checksum", "group": "P1", "label": "Checksum Audit API semua sumber", "make": "p1-checksum", "destructive": false},
-    {"id": "p1-distribution", "group": "P1", "label": "Sebaran data per node/unit", "make": "p1-distribution", "destructive": false},
-    {"id": "p1-dashboard", "group": "P1", "label": "Buka dashboard analitik", "make": "p1-dashboard", "destructive": false},
-    {"id": "p1-wipe-node", "group": "P1", "label": "Checksum awal + Tester Agent wipe-node", "make": "p1-wipe-node", "destructive": true},
-    {"id": "p1-amnesia", "group": "P1", "label": "Simulasi disk kosong satu unit store", "make": "p1-amnesia", "params": ["S"], "destructive": true},
-    {"id": "p1-netpol", "group": "P1", "label": "Bukti kepemilikan storage (NetworkPolicy)", "make": "p1-netpol", "destructive": false},
-    {"id": "p1-audit", "group": "P1", "label": "Audit API events + location", "make": "p1-audit", "destructive": false},
-    {"id": "p1-load", "group": "P1", "label": "Muat katalog gempa + ukur beban per unit", "make": "p1-load", "params": ["FILE"], "destructive": false},
-    {"id": "p1-surge", "group": "P1", "label": "Lonjakan gempa satu wilayah + ukur beban per unit", "make": "p1-surge", "params": ["N", "REGION"], "destructive": false},
-    {"id": "reset", "group": "Reset", "label": "Kembalikan sistem ke normal", "make": "reset", "destructive": false},
-    {"id": "p2-status", "group": "P2", "label": "Leader Lease + pod placement", "make": "p2-status", "destructive": false},
-    {"id": "p2-load", "group": "P2", "label": "10k VU + scale 3 to 5 to 2", "make": "p2-load", "destructive": true},
-    {"id": "p2-throughput", "group": "P2", "label": "Compare throughput at one and three replicas", "make": "p2-throughput", "destructive": true},
-    {"id": "p2-failover", "group": "P2", "label": "Tester Agent kill-leader", "make": "p2-failover", "destructive": true},
-    {"id": "p2-slo", "group": "P2", "label": "Event-to-durable-ack SLO from notification journal", "make": "p2-slo", "params": ["JOURNAL", "EXPECTED"], "destructive": false},
-    {"id": "p3-check", "group": "P3", "label": "Isolated DLQ, replay and field-report acceptance", "make": "p3-check", "destructive": false},
-    {"id": "p4-sample", "group": "P4", "label": "Capture authenticated satellite feed sample", "make": "p4-sample", "destructive": false},
-    {"id": "p4-check", "group": "P4", "label": "Satellite replay and recovery checks", "make": "p4-check", "destructive": false},
-    {"id": "p4-export", "group": "P4", "label": "Export satellite Audit events", "make": "p4-export", "destructive": false},
-    {"id": "p4-compare", "group": "P4", "label": "Compare satellite fires with the reference", "make": "p4-compare", "params": ["ACTUAL", "REFERENCE"], "destructive": false},
-    {"id": "p5-sample", "group": "P5", "label": "Isolated official Sensor Pantai HTTP sample", "make": "p5-sample", "destructive": false},
-    {"id": "p5-resilience", "group": "P5", "label": "Isolated Pantai adapter and resilience fault tests", "make": "p5-resilience", "destructive": false},
-    {"id": "p5-ingestion", "group": "P5", "label": "Isolated coastal ingestion, restart and outage checks", "make": "p5-ingestion", "destructive": false}
+    {
+      "id": "dev-up",
+      "group": "Umum",
+      "label": "Buat/nyalakan cluster k3d",
+      "make": "dev-up",
+      "destructive": false
+    },
+    {
+      "id": "dev-down",
+      "group": "Umum",
+      "label": "Hapus cluster k3d",
+      "make": "dev-down",
+      "destructive": true
+    },
+    {
+      "id": "deploy",
+      "group": "Umum",
+      "label": "Deploy seluruh sistem",
+      "make": "deploy",
+      "destructive": false
+    },
+    {
+      "id": "status",
+      "group": "Umum",
+      "label": "Status node dan pod",
+      "make": "status",
+      "destructive": false
+    },
+    {
+      "id": "prepull",
+      "group": "Umum",
+      "label": "Tarik semua image workload di setiap node (sebelum demo)",
+      "make": "prepull",
+      "params": [
+        "NODES"
+      ],
+      "destructive": false
+    },
+    {
+      "id": "logs",
+      "group": "Umum",
+      "label": "Log satu service",
+      "make": "logs",
+      "params": [
+        "S"
+      ],
+      "destructive": false
+    },
+    {
+      "id": "tester-list",
+      "group": "Umum",
+      "label": "Daftar skenario Tester Agent",
+      "make": "tester-list",
+      "destructive": false
+    },
+    {
+      "id": "tester",
+      "group": "Umum",
+      "label": "Jalankan skenario latihan Tester Agent",
+      "make": "tester",
+      "params": [
+        "S"
+      ],
+      "destructive": true
+    },
+    {
+      "id": "open",
+      "group": "Umum",
+      "label": "Buka UI (port-forward)",
+      "make": "open",
+      "destructive": false
+    },
+    {
+      "id": "system-status",
+      "group": "Umum",
+      "label": "Status sistem (GET /internal/v1/status)",
+      "make": "system-status",
+      "destructive": false
+    },
+    {
+      "id": "obs-open",
+      "group": "Umum",
+      "label": "Buka Grafana + Jaeger (port-forward)",
+      "make": "obs-open",
+      "destructive": false
+    },
+    {
+      "id": "broker-status",
+      "group": "Umum",
+      "label": "Status cluster RabbitMQ + replika queue",
+      "make": "broker-status",
+      "destructive": false
+    },
+    {
+      "id": "broker-recover",
+      "group": "Umum",
+      "label": "Kosongkan disk member RabbitMQ yang crash-loop",
+      "make": "broker-recover",
+      "params": [
+        "S"
+      ],
+      "destructive": true
+    },
+    {
+      "id": "p1-checksum",
+      "group": "P1",
+      "label": "Checksum Audit API semua sumber",
+      "make": "p1-checksum",
+      "destructive": false
+    },
+    {
+      "id": "p1-distribution",
+      "group": "P1",
+      "label": "Sebaran data per node/unit",
+      "make": "p1-distribution",
+      "destructive": false
+    },
+    {
+      "id": "p1-dashboard",
+      "group": "P1",
+      "label": "Buka dashboard analitik",
+      "make": "p1-dashboard",
+      "destructive": false
+    },
+    {
+      "id": "p1-wipe-node",
+      "group": "P1",
+      "label": "Checksum awal + Tester Agent wipe-node",
+      "make": "p1-wipe-node",
+      "destructive": true
+    },
+    {
+      "id": "p1-amnesia",
+      "group": "P1",
+      "label": "Simulasi disk kosong satu unit store",
+      "make": "p1-amnesia",
+      "params": [
+        "S"
+      ],
+      "destructive": true
+    },
+    {
+      "id": "p1-netpol",
+      "group": "P1",
+      "label": "Bukti kepemilikan storage (NetworkPolicy)",
+      "make": "p1-netpol",
+      "destructive": false
+    },
+    {
+      "id": "p1-audit",
+      "group": "P1",
+      "label": "Audit API events + location",
+      "make": "p1-audit",
+      "destructive": false
+    },
+    {
+      "id": "p1-load",
+      "group": "P1",
+      "label": "Muat katalog gempa + ukur beban per unit",
+      "make": "p1-load",
+      "params": [
+        "FILE"
+      ],
+      "destructive": false
+    },
+    {
+      "id": "p1-surge",
+      "group": "P1",
+      "label": "Lonjakan gempa satu wilayah + ukur beban per unit",
+      "make": "p1-surge",
+      "params": [
+        "N",
+        "REGION"
+      ],
+      "destructive": false
+    },
+    {
+      "id": "reset",
+      "group": "Reset",
+      "label": "Kembalikan sistem ke normal",
+      "make": "reset",
+      "destructive": false
+    },
+    {
+      "id": "p2-status",
+      "group": "P2",
+      "label": "Leader Lease + pod placement",
+      "make": "p2-status",
+      "destructive": false
+    },
+    {
+      "id": "p2-load",
+      "group": "P2",
+      "label": "10k VU + scale 3 to 5 to 2",
+      "make": "p2-load",
+      "destructive": true
+    },
+    {
+      "id": "p2-throughput",
+      "group": "P2",
+      "label": "Compare throughput at one and three replicas",
+      "make": "p2-throughput",
+      "destructive": true
+    },
+    {
+      "id": "p2-failover",
+      "group": "P2",
+      "label": "Tester Agent kill-leader",
+      "make": "p2-failover",
+      "destructive": true
+    },
+    {
+      "id": "p2-slo",
+      "group": "P2",
+      "label": "Event-to-durable-ack SLO from notification journal",
+      "make": "p2-slo",
+      "params": [
+        "JOURNAL",
+        "EXPECTED"
+      ],
+      "destructive": false
+    },
+    {
+      "id": "p3-check",
+      "group": "P3",
+      "label": "Isolated DLQ, replay and field-report acceptance",
+      "make": "p3-check",
+      "destructive": false
+    },
+    {
+      "id": "p4-sample",
+      "group": "P4",
+      "label": "Capture authenticated satellite feed sample",
+      "make": "p4-sample",
+      "destructive": false
+    },
+    {
+      "id": "p4-check",
+      "group": "P4",
+      "label": "Satellite replay and recovery checks",
+      "make": "p4-check",
+      "destructive": false
+    },
+    {
+      "id": "p4-export",
+      "group": "P4",
+      "label": "Export satellite Audit events",
+      "make": "p4-export",
+      "destructive": false
+    },
+    {
+      "id": "p4-compare",
+      "group": "P4",
+      "label": "Compare satellite fires with the reference",
+      "make": "p4-compare",
+      "params": [
+        "ACTUAL",
+        "REFERENCE"
+      ],
+      "destructive": false
+    },
+    {
+      "id": "p5-sample",
+      "group": "P5",
+      "label": "Isolated official Sensor Pantai HTTP sample",
+      "make": "p5-sample",
+      "destructive": false
+    },
+    {
+      "id": "p5-resilience",
+      "group": "P5",
+      "label": "Isolated Pantai adapter and resilience fault tests",
+      "make": "p5-resilience",
+      "destructive": false
+    },
+    {
+      "id": "p5-ingestion",
+      "group": "P5",
+      "label": "Isolated coastal ingestion, restart and outage checks",
+      "make": "p5-ingestion",
+      "destructive": false
+    },
+    {
+      "id": "p3-retryable",
+      "group": "P3",
+      "label": "Isolated transient vs permanent PVMBG DLQ check",
+      "make": "p3-retryable",
+      "destructive": false
+    },
+    {
+      "id": "p3-replay-cluster",
+      "group": "P3",
+      "label": "Inventory/replay PVMBG DLQ via Audit API",
+      "make": "p3-replay-cluster",
+      "params": [
+        "AUDIT_URL",
+        "AUDIT_TOKEN",
+        "REPLAY",
+        "MESSAGE_IDS",
+        "OUTPUT_DIR"
+      ],
+      "destructive": true
+    },
+    {
+      "id": "p5-critical-alert",
+      "group": "P5",
+      "label": "Critical alert latency and zero-loss check",
+      "make": "p5-critical-alert",
+      "params": [
+        "PROMETHEUS_URL",
+        "JOURNAL",
+        "EXPECTED_IDS",
+        "MIN_ALERTS",
+        "OUTPUT_DIR"
+      ],
+      "destructive": false
+    },
+    {
+      "id": "p5-source-latency",
+      "group": "P5",
+      "label": "BMKG read latency during Pantai outage",
+      "make": "p5-source-latency",
+      "params": [
+        "CLIENT_API_URL",
+        "FIELD_TEAM_TOKEN",
+        "AGGREGATOR_URL",
+        "SCALE_OUTAGE",
+        "OUTPUT_DIR"
+      ],
+      "destructive": true
+    },
+    {
+      "id": "p5-breaker-timeline",
+      "group": "P5",
+      "label": "Circuit breaker timeline during Pantai outage",
+      "make": "p5-breaker-timeline",
+      "params": [
+        "AGGREGATOR_URL",
+        "CLIENT_API_URL",
+        "FIELD_TEAM_TOKEN",
+        "SCALE_OUTAGE",
+        "OUTPUT_DIR"
+      ],
+      "destructive": true
+    },
+    {
+      "id": "p5-slo-fetch",
+      "group": "P5",
+      "label": "Fetch SLO and error budget panels 13-16",
+      "make": "p5-slo-fetch",
+      "params": [
+        "PROMETHEUS_URL",
+        "JOURNAL",
+        "OUTPUT_DIR"
+      ],
+      "destructive": false
+    }
   ]
 }

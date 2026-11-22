@@ -121,17 +121,17 @@ p5-ingestion: ## Verify coastal ingestion, restart and sensor outage on an isola
 p3-retryable: ## Isolated P3 retryable vs permanent DLQ test with real PostgreSQL
 	@$(SH) scripts/m2/p3-retryable.sh
 
-p3-replay-cluster: ## Replay and verify PVMBG DLQ items via Audit API: make p3-replay-cluster AUDIT_URL=... AUDIT_TOKEN=...
-	python3 scripts/m2/p3-replay-cluster.py --audit-url "$(AUDIT_URL)" --audit-token "$(AUDIT_TOKEN)" $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
+p3-replay-cluster: ## Inventory/replay PVMBG DLQ via Audit API: make p3-replay-cluster AUDIT_URL=... [AUDIT_TOKEN=...] [REPLAY=1] [MESSAGE_IDS=...] [OUTPUT_DIR=...]
+	AUDIT_TOKEN="$(AUDIT_TOKEN)" python3 scripts/m2/p3-replay-cluster.py --audit-url "$(AUDIT_URL)" $(if $(REPLAY),--replay,) $(if $(MESSAGE_IDS),--message-ids "$(MESSAGE_IDS)",) $(if $(MESSAGE_ID_FILE),--message-id-file "$(MESSAGE_ID_FILE)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
 
-p5-critical-alert: ## Measure critical alert latency and zero loss: make p5-critical-alert AGGREGATOR_URL=... AUDIT_TOKEN=... [JOURNAL=path]
-	python3 scripts/m2/p5-critical-alert.py --aggregator-url "$(AGGREGATOR_URL)" --audit-token "$(AUDIT_TOKEN)" $(if $(JOURNAL),--journal-path "$(JOURNAL)",) $(if $(CONSUMER_METRICS),--consumer-metrics-url "$(CONSUMER_METRICS)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
+p5-critical-alert: ## Measure critical alert latency and zero loss: make p5-critical-alert PROMETHEUS_URL=... JOURNAL=... [EXPECTED_IDS=...] [MIN_ALERTS=20] [OUTPUT_DIR=...]
+	python3 scripts/m2/p5-critical-alert.py --prometheus-url "$(PROMETHEUS_URL)" --journal-path "$(JOURNAL)" $(if $(EXPECTED_IDS),--expected-ids "$(EXPECTED_IDS)",) $(if $(MIN_ALERTS),--min-alerts "$(MIN_ALERTS)",) $(if $(CONSUMER_METRICS),--consumer-metrics-url "$(CONSUMER_METRICS)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
 
-p5-source-latency: ## Measure BMKG/PVMBG latency during Pantai outage: make p5-source-latency AGGREGATOR_URL=... AUDIT_TOKEN=... [KUBECTL=kubectl]
-	python3 scripts/m2/p5-source-latency.py --aggregator-url "$(AGGREGATOR_URL)" --audit-token "$(AUDIT_TOKEN)" --kubectl "$(or $(KUBECTL),kubectl)" $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
+p5-source-latency: ## Measure BMKG read latency during a Pantai outage: make p5-source-latency CLIENT_API_URL=... FIELD_TEAM_TOKEN=... [AGGREGATOR_URL=...] [SCALE_OUTAGE=1] [OUTPUT_DIR=...]
+	FIELD_TEAM_TOKEN="$(FIELD_TEAM_TOKEN)" python3 scripts/m2/p5-source-latency.py --client-api-url "$(CLIENT_API_URL)" $(if $(AGGREGATOR_URL),--aggregator-url "$(AGGREGATOR_URL)",) $(if $(SCALE_OUTAGE),--scale-outage,) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
 
-p5-breaker-timeline: ## Circuit breaker timeline during Pantai outage: make p5-breaker-timeline AGGREGATOR_URL=... AUDIT_TOKEN=... [CLIENT_API_URL=...]
-	python3 scripts/m2/p5-breaker-timeline.py --aggregator-url "$(AGGREGATOR_URL)" --audit-token "$(AUDIT_TOKEN)" $(if $(CLIENT_API_URL),--client-api-url "$(CLIENT_API_URL)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
+p5-breaker-timeline: ## Circuit breaker timeline during a Pantai outage: make p5-breaker-timeline AGGREGATOR_URL=... [CLIENT_API_URL=...] [FIELD_TEAM_TOKEN=...] [SCALE_OUTAGE=1] [OUTPUT_DIR=...]
+	FIELD_TEAM_TOKEN="$(FIELD_TEAM_TOKEN)" python3 scripts/m2/p5-breaker-timeline.py --aggregator-url "$(AGGREGATOR_URL)" $(if $(CLIENT_API_URL),--client-api-url "$(CLIENT_API_URL)",) $(if $(SCALE_OUTAGE),--scale-outage,) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
 
 p5-slo-fetch: ## Fetch SLO and error budget from Prometheus: make p5-slo-fetch PROMETHEUS_URL=... [JOURNAL=path]
 	python3 scripts/m2/p5-slo-fetch.py --prometheus-url "$(PROMETHEUS_URL)" $(if $(JOURNAL),--consumer-journal "$(JOURNAL)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)

@@ -113,11 +113,14 @@ p2-slo: ## Event-to-durable-ack SLI from a notification journal: make p2-slo JOU
 p3-check: ## Isolated P3 checks with real PostgreSQL/RabbitMQ; no existing stack is changed
 	@$(SH) scripts/m2/p3-check.sh
 
-.PHONY: p5-sample
+.PHONY: p5-priority p5-sample
 p5-sample: ## Sample the official Sensor Pantai over HTTP on an isolated practice container
 	@$(SH) scripts/m2/pantai-sample.sh
 
 .PHONY: p5-resilience
+p5-priority: ## Media flood vs Field Team reads on the Client API (P5.5) + HPA before/after: make p5-priority [MEDIA_VUS=400 FIELD_VUS=20]
+	@$(SH) scripts/m2/p5-priority.sh
+
 p5-resilience: ## Run isolated Sensor Pantai adapter and resilience fault tests with the race detector
 	@$(SH) scripts/m2/pantai-resilience.sh
 

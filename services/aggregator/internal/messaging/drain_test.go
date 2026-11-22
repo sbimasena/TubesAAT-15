@@ -3,10 +3,12 @@ package messaging
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
 
+	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/store"
 )
 
@@ -47,5 +49,33 @@ func TestDrainPublishesEachSnapshotOnce(t *testing.T) {
 	failing := func(context.Context, store.OutboxMessage) error { return errors.New("broker down") }
 	if drain(context.Background(), batch, failing, repo, logger) || len(repo.marked) != 0 {
 		t.Fatalf("failed publish must stop without marking, marked %v", repo.marked)
+	}
+}
+
+// Units are merged one after another; a critical alert from the last unit must still be
+// published before the full batches of the others.
+func TestPrioritizeMovesCriticalAheadAndKeepsOrder(t *testing.T) {
+	batch := []store.OutboxMessage{
+		{Unit: "store-0", MessageID: 1}, {Unit: "store-0", MessageID: 2},
+		{Unit: "store-1", MessageID: 7, Critical: true}, {Unit: "store-1", MessageID: 3},
+		{Unit: "store-2", MessageID: 9, Critical: true},
+	}
+	prioritize(batch)
+	var got []int64
+	for _, m := range batch {
+		got = append(got, m.MessageID)
+	}
+	if want := []int64{7, 9, 1, 2, 3}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("order %v, want %v", got, want)
+	}
+}
+
+// The producer span's context must reach consumers through the AMQP headers.
+func TestStringHeadersCarryTraceparent(t *testing.T) {
+	headers := amqp.Table{"X-Correlation-ID": "c-1"}
+	carrier := stringHeaders(headers)
+	carrier.Set("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
+	if headers["traceparent"] != "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" || carrier.Get("X-Correlation-ID") != "c-1" || len(carrier.Keys()) != 2 {
+		t.Fatalf("headers %v", headers)
 	}
 }

@@ -525,6 +525,92 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Consumer: event diproses per detik",
+      "description": "Event hazard.events yang di-ACK atau ditolak oleh notification-consumer dan dashboard-consumer, per hasil.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (result) (rate(notification_events_total[5m]))",
+          "legendFormat": "notification {{result}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (result) (rate(dashboard_events_total[5m]))",
+          "legendFormat": "dashboard {{result}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Consumer: p95 umur event (ingest sampai ACK)",
+      "description": "Waktu dari ingested_at di Aggregator sampai ACK durable di consumer.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(notification_event_age_seconds_bucket[5m])))",
+          "legendFormat": "notification"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(dashboard_event_age_seconds_bucket[5m])))",
+          "legendFormat": "dashboard"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {}
     }
   ],
   "templating": {

@@ -43,6 +43,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var healthy atomic.Bool
+	shutdownTracing := setupTracing(ctx, logger)
+	defer shutdownTracing(context.Background())
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -169,6 +171,8 @@ func session(ctx context.Context, brokerURL, path string, healthy *atomic.Bool, 
 
 func handle(delivery amqp.Delivery, j *journal, logger *slog.Logger) error {
 	started := time.Now()
+	span := consumeSpan(delivery)
+	defer span.End()
 	r, err := decode(delivery)
 	if err != nil {
 		logger.Error("invalid event rejected", "message_id", delivery.MessageId, "correlation_id", delivery.CorrelationId, "error", err, "requeue", false)
@@ -208,7 +212,7 @@ func handle(delivery amqp.Delivery, j *journal, logger *slog.Logger) error {
 	}
 	handledEvents.WithLabelValues(result).Inc()
 	logger.Info("event handled", "message_id", r.MessageID, "hazard_id", r.HazardID, "hazard_revision", r.Revision,
-		"correlation_id", r.CorrelationID, "result", result, "redelivered", delivery.Redelivered,
+		"correlation_id", r.CorrelationID, "trace_id", span.SpanContext().TraceID().String(), "result", result, "redelivered", delivery.Redelivered,
 		"latency_ms", float64(time.Since(started).Microseconds())/1000,
 		"ingested_at", r.IngestedAt, "event_age_ms", r.EventAgeMS)
 	return nil

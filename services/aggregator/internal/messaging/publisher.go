@@ -8,10 +8,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"sort"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/store"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const brokerTimeout = 5 * time.Second
@@ -72,6 +76,14 @@ func (p *publisher) close() { p.socket.Close() }
 func (p *publisher) publish(ctx context.Context, message store.OutboxMessage) error {
 	ctx, cancel := context.WithTimeout(ctx, brokerTimeout)
 	defer cancel()
+	// Producer span: consumers continue this trace from the traceparent header, so Jaeger
+	// shows one event from outbox publish to both subscriptions.
+	ctx, span := otel.Tracer("aggregator").Start(ctx, "outbox publish", trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(attribute.String("messaging.message.id", messageID(message)),
+			attribute.String("correlation_id", message.CorrelationID)))
+	defer span.End()
+	headers := amqp.Table{"X-Correlation-ID": message.CorrelationID, "schema_version": int32(1), "hazard_revision": message.Revision}
+	otel.GetTextMapPropagator().Inject(ctx, stringHeaders(headers))
 	// The library context only checks cancellation before writing, so interrupt socket I/O too.
 	abort := context.AfterFunc(ctx, func() { p.socket.Close() })
 	defer abort()
@@ -79,7 +91,7 @@ func (p *publisher) publish(ctx context.Context, message store.OutboxMessage) er
 		ContentType: "application/json", DeliveryMode: amqp.Persistent,
 		MessageId: messageID(message), CorrelationId: message.CorrelationID,
 		Timestamp: message.CreatedAt, Type: "HazardEvent", Body: message.Payload,
-		Headers: amqp.Table{"X-Correlation-ID": message.CorrelationID, "schema_version": int32(1), "hazard_revision": message.Revision},
+		Headers: headers,
 	})
 	if err != nil {
 		return fmt.Errorf("publish: %w", err)
@@ -137,6 +149,7 @@ func Run(ctx context.Context, repository outbox, brokerURL, exchange string, log
 				logger.Warn("outbox read failed", "error", err)
 			} else {
 				logger.Info("outbox batch", "pending_batch", len(messages))
+				prioritize(messages)
 				if !drain(ctx, messages, p.publish, repository, logger) {
 					p.close()
 					p = nil
@@ -153,6 +166,26 @@ func Run(ctx context.Context, repository outbox, brokerURL, exchange string, log
 		case <-timer.C:
 		}
 	}
+}
+
+// stringHeaders writes propagator keys (traceparent) straight into the AMQP table.
+type stringHeaders amqp.Table
+
+func (h stringHeaders) Get(key string) string { value, _ := h[key].(string); return value }
+func (h stringHeaders) Set(key, value string) { h[key] = value }
+func (h stringHeaders) Keys() []string {
+	keys := make([]string, 0, len(h))
+	for key := range h {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// prioritize moves critical coastal alerts ahead of the rest. Each unit already returns
+// them first, but the router appends units one after another, so a critical row from the
+// last unit would otherwise wait behind full batches from the others.
+func prioritize(messages []store.OutboxMessage) {
+	sort.SliceStable(messages, func(i, j int) bool { return messages[i].Critical && !messages[j].Critical })
 }
 
 // drain publishes a batch in order and stops at the first failure (false). Every store

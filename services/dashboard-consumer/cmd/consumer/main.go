@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -43,20 +44,20 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var healthy atomic.Bool
-	server := &http.Server{Addr: ":8080", ReadHeaderTimeout: 3 * time.Second, WriteTimeout: 3 * time.Second,
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/health" {
-				http.NotFound(w, r)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			status := "ready"
-			if !healthy.Load() {
-				status = "unavailable"
-				w.WriteHeader(http.StatusServiceUnavailable)
-			}
-			fmt.Fprintf(w, `{"service":%q,"status":%q}`, serviceName, status)
-		})}
+	shutdownTracing := setupTracing(ctx, logger)
+	defer shutdownTracing(context.Background())
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		status := "ready"
+		if !healthy.Load() {
+			status = "unavailable"
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		fmt.Fprintf(w, `{"service":%q,"status":%q}`, serviceName, status)
+	})
+	mux.Handle("/metrics", metricsHandler())
+	server := &http.Server{Addr: ":8080", ReadHeaderTimeout: 3 * time.Second, WriteTimeout: 3 * time.Second, Handler: mux}
 	go func() {
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("health server failed", "error", err)
@@ -168,8 +169,11 @@ func session(ctx context.Context, brokerURL, path string, healthy *atomic.Bool, 
 
 func handle(delivery amqp.Delivery, j *journal, logger *slog.Logger) error {
 	started := time.Now()
+	span := consumeSpan(delivery)
+	defer span.End()
 	r, err := decode(delivery)
 	if err != nil {
+		handledEvents.WithLabelValues("rejected").Inc()
 		logger.Error("invalid event rejected", "message_id", delivery.MessageId, "correlation_id", delivery.CorrelationId, "error", err, "requeue", false)
 		return delivery.Reject(false) // No DLQ for M1; malformed payload is discarded for this subscription.
 	}
@@ -181,8 +185,17 @@ func handle(delivery amqp.Delivery, j *journal, logger *slog.Logger) error {
 	if err := delivery.Ack(false); err != nil {
 		return err
 	}
+	handledEvents.WithLabelValues(result).Inc()
+	var body struct {
+		IngestedAt time.Time `json:"ingested_at"`
+	}
+	if result != "duplicate" && json.Unmarshal(r.Payload, &body) == nil && !body.IngestedAt.IsZero() {
+		if age := time.Since(body.IngestedAt); age >= 0 {
+			eventAge.Observe(age.Seconds())
+		}
+	}
 	logger.Info("event handled", "message_id", r.MessageID, "hazard_id", r.HazardID, "hazard_revision", r.Revision,
-		"correlation_id", r.CorrelationID, "result", result, "redelivered", delivery.Redelivered,
+		"correlation_id", r.CorrelationID, "trace_id", span.SpanContext().TraceID().String(), "result", result, "redelivered", delivery.Redelivered,
 		"latency_ms", float64(time.Since(started).Microseconds())/1000)
 	return nil
 }

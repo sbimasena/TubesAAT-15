@@ -27,6 +27,8 @@ spec:
               valueFrom: {secretKeyRef: {name: broker-credentials, key: RABBITMQ_DEFAULT_PASS}}
             - name: BROKER_URL
               value: amqp://$(RABBITMQ_DEFAULT_USER):$(RABBITMQ_DEFAULT_PASS)@rabbitmq:5672/
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom: {configMapKeyRef: {name: bnpb-config, key: OTEL_EXPORTER_OTLP_ENDPOINT}}
           resources:
             requests: {memory: 128Mi}
             limits: {memory: 256Mi}
@@ -63,7 +65,7 @@ spec:
     matchLabels: {app: dashboard-consumer}
   template:
     metadata:
-      labels: {app: dashboard-consumer, role: consumer}
+      labels: {app: dashboard-consumer, role: consumer, bnpb/scrape: "true"}
     spec:
       nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
       containers:
@@ -77,6 +79,8 @@ spec:
               valueFrom: {secretKeyRef: {name: broker-credentials, key: RABBITMQ_DEFAULT_PASS}}
             - name: BROKER_URL
               value: amqp://$(RABBITMQ_DEFAULT_USER):$(RABBITMQ_DEFAULT_PASS)@rabbitmq:5672/
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom: {configMapKeyRef: {name: bnpb-config, key: OTEL_EXPORTER_OTLP_ENDPOINT}}
           resources:
             requests: {memory: 128Mi}
             limits: {memory: 256Mi}

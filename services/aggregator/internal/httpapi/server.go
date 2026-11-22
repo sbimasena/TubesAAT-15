@@ -27,10 +27,19 @@ type Server struct {
 	analytics  analyzer
 	status     map[string]func(context.Context) any
 	writeTerm  func(context.Context) (int64, error)
+	reads      chan struct{}
 }
 
+// Each in-flight read encodes its own response (~43 KB at limit=100); unbounded
+// concurrency at ~3k VU per pod exceeded the 512Mi limit. Excess reads wait briefly,
+// then get a labelled 503 that clients treat as a controlled rejection.
+const (
+	maxInflightReads = 256
+	readSlotWait     = 500 * time.Millisecond
+)
+
 func NewServer(repository store.Repository, manager *ingest.Manager, logger *slog.Logger) *Server {
-	return &Server{repository: repository, manager: manager, logger: logger}
+	return &Server{repository: repository, manager: manager, logger: logger, reads: make(chan struct{}, maxInflightReads)}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -52,7 +61,30 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /dashboard", s.dashboard)
 		mux.HandleFunc("GET /internal/analytics", s.analyticsData)
 	}
-	return telemetry.Middleware("aggregator", s.withRequestLogging(mux))
+	return s.limitReads(telemetry.Middleware("aggregator", s.withRequestLogging(mux)))
+}
+
+// limitReads sits outside tracing and logging so a shed request costs no span, log line,
+// or encode buffer; only hazard reads are bounded, probes and audit calls pass through.
+func (s *Server) limitReads(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/hazards" && r.URL.Path != "/internal/v1/hazards" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		timer := time.NewTimer(readSlotWait)
+		select {
+		case s.reads <- struct{}{}:
+			timer.Stop()
+			defer func() { <-s.reads }()
+			next.ServeHTTP(w, r)
+		case <-timer.C:
+			w.Header().Set("Retry-After", "1")
+			writeAuditError(w, http.StatusServiceUnavailable, "overloaded", "terlalu banyak permintaan baca serentak")
+		case <-r.Context().Done():
+			timer.Stop()
+		}
+	})
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {

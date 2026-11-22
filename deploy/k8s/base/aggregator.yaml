@@ -33,6 +33,10 @@ spec:
           env:
             - name: AGGREGATOR_PORT
               value: "8083"
+            # Soft heap target below the 512Mi contract limit: under 10k VU the GC otherwise
+            # lets garbage grow until the cgroup OOM-kills the pod.
+            - name: GOMEMLIMIT
+              value: "380MiB"
             # Unit unseen this long: the reconciler moves its partitions (P1.6). Longer than a
             # store pod restart, so kill-store does not trigger a full copy.
             - name: REREPLICATE_AFTER_SECONDS

@@ -88,3 +88,27 @@ func TestM2SourceFilters(t *testing.T) {
 		}
 	}
 }
+
+func TestSaturatedReadsGetLabelledRejection(t *testing.T) {
+	repository := storedRepository{}
+	manager := ingest.NewManager(nil, nil, repository, time.Second, nil)
+	api := NewServer(repository, manager, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	for range maxInflightReads {
+		api.reads <- struct{}{}
+	}
+	response := httptest.NewRecorder()
+	api.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/internal/v1/hazards", nil))
+	var body struct {
+		Error struct{ Code string } `json:"error"`
+	}
+	json.Unmarshal(response.Body.Bytes(), &body)
+	if response.Code != http.StatusServiceUnavailable || response.Header().Get("Retry-After") == "" || body.Error.Code != "overloaded" {
+		t.Fatalf("status=%d retry=%q code=%q", response.Code, response.Header().Get("Retry-After"), body.Error.Code)
+	}
+	<-api.reads
+	response = httptest.NewRecorder()
+	api.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/internal/v1/hazards", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("free slot: status=%d", response.Code)
+	}
+}

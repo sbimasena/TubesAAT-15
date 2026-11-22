@@ -417,6 +417,114 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 15,
+      "type": "stat",
+      "title": "Error budget alert kritis tersisa (SLO 99% ≤5 s, 1 jam)",
+      "description": "SLO jalur peringatan: 99% alert kritis Pantai di-ACK ≤5 s sejak masuk Aggregator. 100% = belum ada pelanggaran; 0% = budget habis; negatif = SLO dilanggar.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "1 - (1 - sum(increase(notification_pantai_critical_age_seconds_bucket{le=\"5\"}[1h])) / (sum(increase(notification_pantai_critical_age_seconds_count[1h])) > 0)) / 0.01",
+          "legendFormat": "budget"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Burn rate error budget alert kritis (5 m)",
+      "description": "Kecepatan budget terpakai. 1 = habis tepat di akhir jendela; >14,4 selama 5 menit = budget 1 jam habis dalam ±4 menit.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 48,
+        "w": 16,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "(1 - sum(rate(notification_pantai_critical_age_seconds_bucket{le=\"5\"}[5m])) / (sum(rate(notification_pantai_critical_age_seconds_count[5m])) > 0)) / 0.01",
+          "legendFormat": "burn rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 14.4
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {}
     }
   ],
   "templating": {

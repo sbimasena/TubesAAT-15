@@ -1,5 +1,5 @@
 # Run with promtool test rules pantai-slo.test.yaml.
-# expr entries mirror panels 12–14 in dashboards/overview.json.
+# expr entries mirror panels 12–16 in dashboards/overview.json.
 evaluation_interval: 1m
 tests:
   - name: mixed latencies and fewer timing samples than ACKs
@@ -28,6 +28,12 @@ tests:
       - expr: 'histogram_quantile(0.95, sum by (le) (rate(notification_pantai_critical_age_seconds_bucket[5m]))) and (sum(rate(notification_pantai_critical_age_seconds_count[5m])) > 0)'
         eval_time: 5m
         exp_samples: [{labels: '{}', value: 9.5}]
+      - expr: '1 - (1 - sum(increase(notification_pantai_critical_age_seconds_bucket{le="5"}[1h])) / (sum(increase(notification_pantai_critical_age_seconds_count[1h])) > 0)) / 0.01'
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: -49}]
+      - expr: '(1 - sum(rate(notification_pantai_critical_age_seconds_bucket{le="5"}[5m])) / (sum(rate(notification_pantai_critical_age_seconds_count[5m])) > 0)) / 0.01'
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 50}]
   - name: ACKs without timing observations
     interval: 1m
     input_series:

@@ -56,7 +56,10 @@ PY
   exit
 fi
 [[ -n "${TARGET_URL:-}" ]] || die 'Set TARGET_URL to the Aggregator load balancer URL (a pod port-forward cannot measure scaling)'
-confirm "Run ${VUS:-10000} VU for ${DURATION:-120s} and change Aggregator replicas 3 -> 5 -> 2 in $(kubectl config current-context)?"
+# 180 s: a pod scheduled on node-b (Wi-Fi) needs ~30 s to become Ready, so 3→5→2 plus
+# the image rollout do not fit inside 120 s of load. The spec only requires ≥120 s.
+export DURATION="${DURATION:-180s}"
+confirm "Run ${VUS:-10000} VU for $DURATION and change Aggregator replicas 3 -> 5 -> 2 in $(kubectl config current-context)?"
 mkdir -p "$ROOT/artifacts/m2/runs"
 out="$ROOT/artifacts/m2/runs/$(date -u +%Y%m%dT%H%M%SZ)-p2-load"
 exec > >(tee "$out.log") 2>&1
@@ -84,15 +87,15 @@ load=$!
   sleep 30
   kill -0 "$load" 2>/dev/null || die "load ended before scaling to five replicas"
   run kubectl -n "$NS" scale deployment aggregator --replicas=5
-  run kubectl -n "$NS" rollout status deployment/aggregator --timeout=25s
+  run kubectl -n "$NS" rollout status deployment/aggregator --timeout=60s
   sleep 15
   kill -0 "$load" 2>/dev/null || die "load ended before scaling to two replicas"
   run kubectl -n "$NS" scale deployment aggregator --replicas=2
-  run kubectl -n "$NS" rollout status deployment/aggregator --timeout=15s
+  run kubectl -n "$NS" rollout status deployment/aggregator --timeout=30s
   if [[ "$strict" == 1 ]]; then
     kill -0 "$load" 2>/dev/null || die "load ended before the image rollout"
     run kubectl -n "$NS" set image deployment/aggregator "aggregator=$ROLLOUT_IMAGE"
-    run kubectl -n "$NS" rollout status deployment/aggregator --timeout=30s
+    run kubectl -n "$NS" rollout status deployment/aggregator --timeout=60s
   fi
   kill -0 "$load" 2>/dev/null || die "load ended before the cluster changes completed"
 ) &

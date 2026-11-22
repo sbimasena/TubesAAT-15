@@ -39,6 +39,24 @@ Client API tersedia di `http://127.0.0.1:8080` (k3d) atau `http://<IP node>:3008
 
 Hanya pod `role=aggregator` yang bisa konek ke store (NetworkPolicy `store-ingress`, bukti `make p1-netpol`).
 
+### Kebijakan skema PVMBG (P3)
+
+Setiap laporan PVMBG divalidasi sendiri-sendiri (`services/aggregator/internal/source/pvmbg_batch.go`). Laporan yang gagal tidak menghentikan laporan lain dan tidak menahan cursor: pesannya disimpan utuh beserta alasan, sumber, dan waktu (`GET /internal/audit/unprocessed`), lalu cursor maju.
+
+| Perubahan dari mock (`POST /admin/schema-version`) | Keputusan | Alasan DLQ |
+|---|---|---|
+| Field baru yang tidak dikenal (versi 2, `confidence_level`) | **Diterima otomatis**, field diabaikan mapper | — |
+| Urutan field berubah, whitespace | Diterima otomatis | — |
+| Rename field wajib (`rename_field`, `alert_level` → `status`) | Ditolak, di-park | `schema_incompatible` |
+| Tipe field berubah (`change_type`, `reported_at` jadi unix seconds) | Ditolak, di-park | `schema_incompatible` |
+| Field wajib hilang (`drop_required`; wajib: `report_id`, `volcano_id`, `alert_level`, `reported_at`) | Ditolak, di-park | `schema_incompatible` |
+| Body terpotong (`broken_json`) | Ditolak, di-park | `malformed_json` |
+| Laporan >1 MiB (`oversize_json`) | Ditolak, di-park | `too_large` |
+| Nesting >10 000 (`deep_json`) | Ditolak, di-park | `too_deep` |
+| UTF-8 tidak valid (`invalid_utf8`) | Ditolak, di-park | `invalid_utf8` |
+
+Kesalahan sementara (`timeout`, `upstream_5xx`, `store_unavailable`, `internal_panic`) dicoba ulang dengan backoff eksponensial (basis 2 s, maksimal 5 percobaan), lalu di-park. Setelah mapper diperbaiki, pesan yang di-park diproses ulang lewat `POST /internal/audit/unprocessed/replay` (Client API: hanya scope Internal Ops), berurutan per `source_ref_id` dengan penjaga versi sehingga tidak menimbulkan duplikat. Alasan: data bencana yang salah tafsir lebih berbahaya daripada data yang terlambat, jadi hanya perubahan yang tidak bisa mengubah makna laporan yang diterima otomatis.
+
 **Compose setelah M2:** queue broker sekarang bertipe quorum. Volume broker Compose dari M1 masih berisi queue classic, dan consumer akan gagal dengan `PRECONDITION_FAILED`. Hapus sekali dengan `docker compose down -v`.
 
 ### Variabel konfigurasi M2

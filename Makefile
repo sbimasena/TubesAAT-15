@@ -84,7 +84,7 @@ p1-surge: ## Lonjakan gempa satu wilayah + ukur tulis per unit: make p1-surge N=
 reset: ## Kembalikan manifest (replika, image) dan mode mock PVMBG ke normal
 	@$(SH) scripts/k8s/ops.sh reset
 
-.PHONY: p2-status p2-load p2-throughput p2-failover p2-kill-leader p2-slo
+.PHONY: p2-status p2-load p2-throughput p2-failover p2-kill-leader p2-freeze p2-slo
 p2-status: ## Leader lease and Aggregator pod placement
 	kubectl -n sistem-informasi-kebencanaan-bnpb get lease aggregator-leader -o yaml
 	kubectl -n sistem-informasi-kebencanaan-bnpb get pods -l app=aggregator -o wide
@@ -99,6 +99,9 @@ p2-failover: ## Tester Agent kill-leader (asks for confirmation)
 	@$(SH) scripts/k8s/ops.sh tester kill-leader
 p2-kill-leader: ## Delete the actual leader pod by reading the Lease holder
 	@$(SH) scripts/k8s/ops.sh p2-kill-leader
+
+p2-freeze: ## Pause the leader's VM >15 s, resume it, collect fail-stop/fencing evidence (VirtualBox host only)
+	@$(SH) scripts/m2/p2-freeze.sh
 
 p2-slo: ## Event-to-durable-ack SLI from a notification journal: make p2-slo JOURNAL=path [EXPECTED=n]
 	@$(SH) scripts/m2/slo-check.sh $(if $(JOURNAL),--journal "$(JOURNAL)",) $(if $(EXPECTED),--expected "$(EXPECTED)",)

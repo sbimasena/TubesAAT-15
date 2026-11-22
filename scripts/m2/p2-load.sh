@@ -55,7 +55,7 @@ sys.exit(ratio < 2)
 PY
   exit
 fi
-[[ -n "${TARGET_URL:-}" ]] || die 'Set TARGET_URL to the Aggregator load balancer URL (a pod port-forward cannot measure scaling)'
+[[ -n "${TARGET_URL:-}" ]] || die 'Set TARGET_URL to the Aggregator NodePort URL (http://<node-ip>:30083)'
 # 180 s: a pod scheduled on node-b (Wi-Fi) needs ~30 s to become Ready, so 3→5→2 plus
 # the image rollout do not fit inside 120 s of load. The spec only requires ≥120 s.
 export DURATION="${DURATION:-180s}"

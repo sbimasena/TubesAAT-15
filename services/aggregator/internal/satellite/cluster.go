@@ -20,6 +20,10 @@ type Detection struct {
 }
 
 func (d Detection) Key() string {
+	return lookupKey(d.rawKey())
+}
+
+func (d Detection) rawKey() string {
 	return strings.Join([]string{d.Satellite, d.AcqDate, d.AcqTime, d.Latitude, d.Longitude}, "|")
 }
 

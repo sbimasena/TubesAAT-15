@@ -34,16 +34,17 @@ type Mutation struct {
 // State is the recovery checkpoint. Owners retains identity when a fire becomes
 // a singleton/disappears, and after merges/splits, without relying on process RAM.
 type State struct {
-	Offset         int64
-	Lateness       time.Duration
-	MaxEventTime   time.Time
-	LastIngested   time.Time
-	LateDetections uint64
-	Singles        int
-	Detections     map[string]Detection
-	Owners         map[string]string
-	Seen           map[string]bool
-	Events         map[string]domain.HazardEvent
+	Offset           int64
+	Lateness         time.Duration
+	MaxEventTime     time.Time
+	LastIngested     time.Time
+	LateDetections   uint64
+	Singles          int
+	FinalizedSingles int `json:",omitempty"`
+	Detections       map[string]Detection
+	Owners           map[string]string
+	Seen             map[string]bool
+	Events           map[string]domain.HazardEvent
 	// PrunedBefore is the hour-aligned horizon below which finalized fires and
 	// detections were dropped. It depends only on the offset sequence, so crash and
 	// batch boundaries cannot change what is pruned.
@@ -65,6 +66,10 @@ func NewStateWithLateness(lateness time.Duration) *State {
 	}
 	return &State{Offset: -1, Lateness: lateness, Detections: map[string]Detection{}, Owners: map[string]string{}, Seen: map[string]bool{}, Events: map[string]domain.HazardEvent{}}
 }
+func (s *State) singletonTotal() int {
+	return s.Singles + s.FinalizedSingles
+}
+
 func (s *State) Watermark() time.Time {
 	if s.MaxEventTime.IsZero() {
 		return time.Time{}
@@ -117,7 +122,8 @@ func (s *State) prune(before time.Time, grid detectionGrid, pruned map[string]do
 	for id, event := range s.Events {
 		keys, _ := eventKeys(event)
 		final := true
-		for _, key := range keys {
+		for _, rawKey := range keys {
+			key := lookupKey(rawKey)
 			inFire[key] = true
 			if p, ok := grid.points[key]; !ok || !p.at.Before(before) {
 				final = false
@@ -128,7 +134,8 @@ func (s *State) prune(before time.Time, grid detectionGrid, pruned map[string]do
 		}
 		pruned[id] = event
 		delete(s.Events, id)
-		for _, key := range keys {
+		for _, rawKey := range keys {
+			key := lookupKey(rawKey)
 			grid.remove(key, grid.points[key])
 			delete(grid.active, key)
 			delete(s.Detections, key)
@@ -153,6 +160,7 @@ func (s *State) prune(before time.Time, grid detectionGrid, pruned map[string]do
 		if inGrid {
 			grid.remove(key, p)
 			s.Singles--
+			s.FinalizedSingles++
 		}
 		delete(s.Detections, key)
 		delete(s.Owners, key)
@@ -203,7 +211,7 @@ func (next *State) applyMutation(mutation Mutation, ingested time.Time, grid det
 		if event, exists := next.Events[id]; exists {
 			oldFires[id] = event
 			for _, key := range event.Attributes["detection_keys"].([]string) {
-				affected[key] = true
+				affected[lookupKey(key)] = true
 			}
 		}
 	}
@@ -353,6 +361,10 @@ func (next *State) applyMutation(mutation Mutation, ingested time.Time, grid det
 			fire.SourceRefID += "-split-" + fmt.Sprint(next.Offset)
 		}
 		event := fire.Hazard(ingested)
+		keys := event.Attributes["detection_keys"].([]string)
+		for i, key := range keys {
+			keys[i] = next.Detections[key].rawKey()
+		}
 		previous, exists := oldFires[fire.SourceRefID]
 		if exists {
 			comparable := event
@@ -402,7 +414,7 @@ func (s *State) Next(batch []Mutation, ingested time.Time) (*State, Projection, 
 			next.Events[id] = event
 		}
 		for _, key := range keys {
-			grid.active[key] = id
+			grid.active[lookupKey(key)] = id
 		}
 	}
 	for key, detection := range next.Detections {

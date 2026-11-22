@@ -338,3 +338,43 @@ func TestCheckpointDeltaRestoresExactStateAndIgnoresForeignBase(t *testing.T) {
 		t.Fatalf("foreign delta applied: offset=%d err=%v", offset, err)
 	}
 }
+
+func TestSingletonTotalSurvivesPruningAndRestore(t *testing.T) {
+	ctx := context.Background()
+	repo := &memoryRepository{cursors: map[string]string{}, writes: map[string]int{}}
+	verify := func(context.Context) error { return nil }
+	restore := func(epoch int64) *Processor {
+		t.Helper()
+		p, err := NewProcessor(repo, epoch, verify)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Restore(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	p := restore(1)
+	now := time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC)
+	first := []Mutation{
+		mutate(0, detection("N20", "0", "110.00000")),
+		mutate(1, detection("N20", "0", "113.80000")),
+		mutate(2, detection("N21", "1", "113.80100")),
+	}
+	if err := p.Process(ctx, first, now); err != nil {
+		t.Fatal(err)
+	}
+	fresh := detection("N20", "0", "120.00000")
+	fresh.AcqDate = "2026-11-15"
+	if err := p.Process(ctx, []Mutation{mutate(3, fresh)}, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	p = restore(2)
+	if len(p.checkpoint.State.Detections) != 1 {
+		t.Fatal("expected all older detections to be pruned")
+	}
+	status := StoredStatus(ctx, repo).(map[string]any)
+	if got := status["single_detections"]; got != 2 {
+		t.Fatalf("reported single detections = %v, want one active and one finalized", got)
+	}
+}

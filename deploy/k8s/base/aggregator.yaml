@@ -91,8 +91,9 @@ kind: Service
 metadata:
   name: aggregator
 spec:
+  type: NodePort
   selector: {app: aggregator}
-  ports: [{name: http, port: 8083, targetPort: http}]
+  ports: [{name: http, port: 8083, targetPort: http, nodePort: 30083}]
 ---
 # The partition map lives in ConfigMap store-partition-map (D-COORD). The Aggregator
 # creates it itself; it is deliberately not in Kustomize so `kubectl apply -k` never

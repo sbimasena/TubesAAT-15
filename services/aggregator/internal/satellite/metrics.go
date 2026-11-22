@@ -15,7 +15,7 @@ var (
 	offsetLag        = promauto.NewGauge(prometheus.GaugeOpts{Name: "bnpb_satellite_offset_lag", Help: "Latest observed session offset minus fully materialized offset."})
 	eventLag         = promauto.NewGauge(prometheus.GaugeOpts{Name: "bnpb_satellite_event_time_lag_seconds", Help: "Session virtual time minus maximum processed event time."})
 	lateDetections   = promauto.NewGauge(prometheus.GaugeOpts{Name: "bnpb_satellite_late_detections", Help: "Retained late detection identities in the durable checkpoint."})
-	singleDetections = promauto.NewGauge(prometheus.GaugeOpts{Name: "bnpb_satellite_single_detections", Help: "Isolated eligible detections, not fires."})
+	singleDetections = promauto.NewGauge(prometheus.GaugeOpts{Name: "bnpb_satellite_single_detections", Help: "Active and finalized isolated eligible detections."})
 	commitLatency    = promauto.NewHistogram(prometheus.HistogramOpts{Name: "bnpb_satellite_ingest_duration_seconds", Help: "Per hazard effect, elapsed time from the first received frame of its batch through replicated commit and checkpoint completion.", Buckets: []float64{.01, .05, .1, .25, .5, 1, 2, 5, 10, 30, 60}})
 )
 
@@ -49,7 +49,7 @@ func (p *Processor) reportMetrics() {
 	processorReady.Set(1)
 	processedOffset.Set(float64(offset))
 	lateDetections.Set(float64(p.checkpoint.State.LateDetections))
-	singleDetections.Set(float64(p.checkpoint.State.Singles))
+	singleDetections.Set(float64(p.checkpoint.State.singletonTotal()))
 }
 
 // StoredStatus exposes persisted progress even from a follower without opening
@@ -75,5 +75,5 @@ func StoredStatus(ctx context.Context, repo cursorLoader) any {
 		value := checkpoint.State.Offset
 		processed = &value
 	}
-	return map[string]any{"state": "checkpoint_present", "processed_offset": processed, "durable_offset": checkpoint.State.Offset, "pending_effects": pending, "late_detections": checkpoint.State.LateDetections, "single_detections": checkpoint.State.Singles, "watermark": checkpoint.State.Watermark()}
+	return map[string]any{"state": "checkpoint_present", "processed_offset": processed, "durable_offset": checkpoint.State.Offset, "pending_effects": pending, "late_detections": checkpoint.State.LateDetections, "single_detections": checkpoint.State.singletonTotal(), "watermark": checkpoint.State.Watermark()}
 }

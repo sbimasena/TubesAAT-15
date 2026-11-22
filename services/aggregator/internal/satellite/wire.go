@@ -53,8 +53,8 @@ func decodeFrame(frame Frame) (Mutation, error) {
 	}
 	identity := Detection{
 		Satellite: detection.Satellite, AcqDate: detection.AcqDate,
-		AcqTime: scalarText(detection.AcqTime), Latitude: coordText(detection.Latitude),
-		Longitude: coordText(detection.Longitude),
+		AcqTime: scalarText(detection.AcqTime), Latitude: scalarText(detection.Latitude),
+		Longitude: scalarText(detection.Longitude),
 	}
 	key := wire.DetectionKey
 	if key == "" {
@@ -88,7 +88,7 @@ func decodeFrame(frame Frame) (Mutation, error) {
 			}
 			changes.FRP = &value
 		}
-		mutation.Key, mutation.Changes = key, changes
+		mutation.Key, mutation.Changes = lookupKey(key), changes
 		return mutation, nil
 	}
 	switch frame.Kind {
@@ -124,6 +124,7 @@ func decodeFrame(frame Frame) (Mutation, error) {
 	if mutation.Key != "" && !validDetectionKey(mutation.Key) {
 		return fail("invalid detection key")
 	}
+	mutation.Key = lookupKey(mutation.Key)
 	return mutation, nil
 }
 
@@ -142,16 +143,24 @@ func scalarText(raw json.RawMessage) string {
 	return string(raw)
 }
 
-// coordText keeps raw coordinate tokens, except exponent notation: the feed
-// sends latitude -2.1e-4 but names that detection "-0.00021" in update keys.
-func coordText(raw json.RawMessage) string {
-	text := scalarText(raw)
-	if strings.ContainsAny(text, "eE") {
-		if value, err := strconv.ParseFloat(text, 64); err == nil {
-			return strconv.FormatFloat(value, 'f', -1, 64)
+// The feed uses decimal notation in correction keys even when a detection
+// carries exponent notation. Only the lookup key needs that conversion.
+func lookupKey(key string) string {
+	if !strings.ContainsAny(key, "eE") {
+		return key
+	}
+	parts := strings.Split(key, "|")
+	if len(parts) != 5 {
+		return key
+	}
+	for _, i := range []int{3, 4} {
+		if strings.ContainsAny(parts[i], "eE") {
+			if value, err := strconv.ParseFloat(parts[i], 64); err == nil {
+				parts[i] = strconv.FormatFloat(value, 'f', -1, 64)
+			}
 		}
 	}
-	return text
+	return strings.Join(parts, "|")
 }
 
 func validDetectionKey(key string) bool {

@@ -173,6 +173,26 @@ SQL
     # The reconciler's placement; "adding"/"removing" mark a move in progress.
     run kubectl -n "$NS" get configmap store-partition-map -o 'jsonpath={.data.map\.json}'
     echo
+    # P1.1 (revised 20 Nov): a "unit" is a partition; report primary/replica per node and
+    # that no unit keeps both copies on one node. replicas[0] is the primary.
+    nodes="$(kubectl -n "$NS" get pods -l app=store -o 'jsonpath={range .items[*]}{.metadata.name}={.spec.nodeName} {end}')"
+    kubectl -n "$NS" get configmap store-partition-map -o 'jsonpath={.data.map\.json}' |
+      python3 -c '
+import collections, json, sys
+nodes = dict(x.split("=") for x in sys.argv[1].split())
+parts = json.load(sys.stdin)["partitions"]
+primary, replica = collections.Counter(), collections.Counter()
+same = 0
+for p in parts:
+    units = p["replicas"]
+    primary[units[0]] += 1
+    replica.update(units[1:])
+    same += len({nodes.get(u) for u in units}) < 2
+print("store | node | partisi primary | partisi replica")
+for u in sorted(nodes):
+    print(f"{u} | {nodes[u]} | {primary[u]} | {replica[u]}")
+print(f"partisi (unit) dengan primary dan replica di node yang sama: {same} dari {len(parts)}")
+' "$nodes"
     ;;
   p1-dashboard)
     forward svc/aggregator 18083:8083

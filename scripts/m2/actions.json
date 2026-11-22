@@ -32,6 +32,7 @@
     {"id": "p2-slo", "group": "P2", "label": "Event-to-durable-ack SLO from notification journal", "make": "p2-slo", "params": ["JOURNAL", "EXPECTED"], "destructive": false},
     {"id": "p3-check", "group": "P3", "label": "Isolated DLQ, replay and field-report acceptance", "make": "p3-check", "destructive": false},
     {"id": "p3-retryable", "group": "P3", "label": "Isolated transient vs permanent PVMBG DLQ check", "make": "p3-retryable", "destructive": false},
+    {"id": "p34-replay-copy", "group": "P3", "label": "Replay a copy of the parked cluster DLQ in isolation (read-only on cluster)", "make": "p34-replay-copy", "destructive": false},
     {"id": "p3-replay-cluster", "group": "P3", "label": "Inventory/replay PVMBG DLQ via Audit API", "make": "p3-replay-cluster", "params": ["AUDIT_URL", "AUDIT_TOKEN", "REPLAY", "MESSAGE_IDS", "OUTPUT_DIR"], "destructive": true},
     {"id": "p4-sample", "group": "P4", "label": "Capture authenticated satellite feed sample", "make": "p4-sample", "destructive": false},
     {"id": "p4-check", "group": "P4", "label": "Satellite replay and recovery checks", "make": "p4-check", "destructive": false},

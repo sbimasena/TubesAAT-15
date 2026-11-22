@@ -131,12 +131,15 @@ p5-resilience: ## Run isolated Sensor Pantai adapter and resilience fault tests 
 p5-ingestion: ## Verify coastal ingestion, restart and sensor outage on an isolated Compose stack
 	@$(SH) scripts/m2/pantai-ingestion.sh
 
-.PHONY: p3-retryable p3-replay-cluster p5-critical-alert p5-source-latency p5-breaker-timeline p5-slo-fetch
+.PHONY: p3-retryable p3-replay-cluster p34-replay-copy p5-critical-alert p5-source-latency p5-breaker-timeline p5-slo-fetch
 p3-retryable: ## Isolated P3 retryable vs permanent DLQ test with real PostgreSQL
 	@$(SH) scripts/m2/p3-retryable.sh
 
 p3-replay-cluster: ## Inventory/replay PVMBG DLQ via Audit API: make p3-replay-cluster AUDIT_URL=... [AUDIT_TOKEN=...] [REPLAY=1] [MESSAGE_IDS=...] [OUTPUT_DIR=...]
 	AUDIT_TOKEN="$(AUDIT_TOKEN)" python3 scripts/m2/p3-replay-cluster.py --audit-url "$(AUDIT_URL)" $(if $(REPLAY),--replay,) $(if $(MESSAGE_IDS),--message-ids "$(MESSAGE_IDS)",) $(if $(MESSAGE_ID_FILE),--message-id-file "$(MESSAGE_ID_FILE)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
+
+p34-replay-copy: ## Replay a read-only copy of the parked cluster PVMBG DLQ on a disposable PostgreSQL (cluster unchanged)
+	@$(SH) scripts/m2/p34-replay-copy.sh
 
 p5-critical-alert: ## Measure critical alert latency and zero loss: make p5-critical-alert PROMETHEUS_URL=... JOURNAL=... [EXPECTED_IDS=... [EXPECTED_KIND=source_ref_id]] [MIN_ALERTS=20] [OUTPUT_DIR=...]
 	python3 scripts/m2/p5-critical-alert.py --prometheus-url "$(PROMETHEUS_URL)" --journal-path "$(JOURNAL)" $(if $(EXPECTED_IDS),--expected-ids "$(EXPECTED_IDS)",) $(if $(EXPECTED_KIND),--expected-id-kind "$(EXPECTED_KIND)",) $(if $(MIN_ALERTS),--min-alerts "$(MIN_ALERTS)",) $(if $(CONSUMER_METRICS),--consumer-metrics-url "$(CONSUMER_METRICS)",) $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)

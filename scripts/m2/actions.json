@@ -36,6 +36,7 @@
     {"id": "p4-export", "group": "P4", "label": "Export satellite Audit events", "make": "p4-export", "destructive": false},
     {"id": "p4-compare", "group": "P4", "label": "Compare satellite fires with the reference", "make": "p4-compare", "params": ["ACTUAL", "REFERENCE"], "destructive": false},
     {"id": "p5-priority", "group": "P5", "label": "Media flood vs Field Team reads (load shedding) + HPA", "make": "p5-priority", "params": ["MEDIA_VUS", "FIELD_VUS"], "destructive": false},
+    {"id": "p5-gameday", "group": "P5", "label": "Game day: kill-store, sensor down, PVMBG outage under load (no intervention)", "make": "p5-gameday", "destructive": true},
     {"id": "p5-sample", "group": "P5", "label": "Isolated official Sensor Pantai HTTP sample", "make": "p5-sample", "destructive": false},
     {"id": "p5-resilience", "group": "P5", "label": "Isolated Pantai adapter and resilience fault tests", "make": "p5-resilience", "destructive": false},
     {"id": "p5-ingestion", "group": "P5", "label": "Isolated coastal ingestion, restart and outage checks", "make": "p5-ingestion", "destructive": false}

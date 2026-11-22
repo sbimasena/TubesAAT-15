@@ -10,7 +10,7 @@ endif
 SH = "$(BASH)"
 
 .DEFAULT_GOAL := help
-.PHONY: help dev-up dev-down deploy status prepull logs tester-list tester open console reset p1-checksum p1-distribution p1-load p1-surge p1-wipe-node p1-dashboard p1-amnesia p1-audit p1-netpol obs-open system-status broker-status broker-recover
+.PHONY: help dev-up dev-down deploy status prepull logs tester-list tester audit-run open console reset p1-checksum p1-distribution p1-load p1-surge p1-wipe-node p1-dashboard p1-amnesia p1-audit p1-netpol obs-open system-status broker-status broker-recover
 
 help: ## Daftar target
 	@$(SH) scripts/k8s/help.sh Makefile
@@ -35,6 +35,9 @@ logs: ## Ikuti log satu service: make logs S=aggregator
 
 tester-list: ## Daftar skenario Tester Agent
 	@$(SH) scripts/k8s/ops.sh tester-list
+
+audit-run: ## Auditor latihan: Audit API sebelum/sesudah skenario Tester Agent: make audit-run S=kill-store
+	@$(SH) scripts/k8s/ops.sh audit-run $(S)
 
 tester: ## Jalankan skenario latihan Tester Agent + log: make tester S=kill-store
 	@$(SH) scripts/k8s/ops.sh tester $(S)

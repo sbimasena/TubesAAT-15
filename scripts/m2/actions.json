@@ -66,6 +66,16 @@
       "destructive": true
     },
     {
+      "id": "audit-run",
+      "group": "Umum",
+      "label": "Auditor latihan (Audit API sebelum/sesudah skenario)",
+      "make": "audit-run",
+      "params": [
+        "S"
+      ],
+      "destructive": true
+    },
+    {
       "id": "open",
       "group": "Umum",
       "label": "Buka UI (port-forward)",

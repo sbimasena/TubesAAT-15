@@ -243,6 +243,15 @@ SQL
     echo "location $id: $(curl_auth "$token" -fsS "http://127.0.0.1:18083/internal/audit/location?hazard_id=$id")"
     echo "harapan: 2 lokasi (primary + replica) di node berbeda"
     ;;
+  audit-run)
+    # Practice auditor: Audit API before/after one Tester Agent scenario, then a verdict.
+    [[ -n "${2:-}" ]] || die "usage: make audit-run S=<scenario>, e.g. S=kill-store"
+    [[ "$2" != wipe-node ]] || die "wipe-node mematikan node berulang (docs/m2/temuan-tester-agent.md); pakai make p1-amnesia"
+    confirm "Run practice scenario '$2' with Audit API checks against $(kubectl config current-context)?"
+    py=python3
+    "$py" -c '' 2>/dev/null || py=python # Windows ships a python3 stub that only opens the Store
+    AUDIT_TOKEN="$(secret_value audit-token token)" "$py" -B "$ROOT/scripts/m2/audit-run.py" "$2"
+    ;;
   p1-load|p1-surge)
     # Load a catalog (P1.1) or a one-region surge (P1.2) and measure the writes each store
     # unit absorbed; with hash(hazard_id) placement the deltas stay even despite skewed data.

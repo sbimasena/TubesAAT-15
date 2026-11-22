@@ -22,6 +22,11 @@ spec:
           env:
             - name: AUTH_PORT
               value: "8084"
+            # Each login runs Argon2id with 64 MiB; without a soft limit the GC let that garbage
+            # pile up past the 256Mi limit and the pod was OOM-killed under a login burst
+            # (game day 22 Nov), which also dropped every in-memory session.
+            - name: GOMEMLIMIT
+              value: "160MiB"
             - name: JWT_SIGNING_SECRET
               valueFrom: {secretKeyRef: {name: auth-credentials, key: JWT_SIGNING_SECRET}}
             - name: AUTH_INTERNAL_SECRET

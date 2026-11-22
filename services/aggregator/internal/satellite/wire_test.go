@@ -1,7 +1,9 @@
 package satellite
 
 import (
+	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 )
@@ -56,16 +58,48 @@ func TestPracticeFeedRejectsOffsetMismatch(t *testing.T) {
 
 // Captured at practice offsets 162175 and 162263.
 func TestExponentCoordinateMatchesFeedUpdateKey(t *testing.T) {
-	detection, err := decodeFrame(Frame{Kind: "detection", Offset: 0, Data: []byte(`{"offset":0,"detection":{"satellite":"N20","acq_date":"2026-11-25","acq_time":1704,"latitude":-2.1e-4,"longitude":110.82748,"confidence":"n","frp":3.66}}`)})
+	const rawKey = "N20|2026-11-25|1704|-2.1e-4|110.82748"
+	const feedKey = "N20|2026-11-25|1704|-0.00021|110.82748"
+	now := time.Date(2026, 11, 25, 18, 0, 0, 0, time.UTC)
+	state := NewState()
+	apply := func(frame Frame) Projection {
+		t.Helper()
+		mutation, err := decodeFrame(frame)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next, projection, err := state.Next([]Mutation{mutation}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state = next
+		return projection
+	}
+	apply(Frame{Kind: "detection", Offset: 0, Data: []byte(`{"detection":{"satellite":"N20","acq_date":"2026-11-25","acq_time":1704,"latitude":-2.1e-4,"longitude":110.82748,"confidence":"n","frp":3.66}}`)})
+	fire := apply(Frame{Kind: "detection", Offset: 1, Data: []byte(`{"detection":{"satellite":"N21","acq_date":"2026-11-25","acq_time":1704,"latitude":0.00010,"longitude":110.82748,"confidence":"n","frp":4}}`)})
+	if len(fire.Upserts) != 1 {
+		t.Fatalf("expected one fire, got %+v", fire)
+	}
+	checkpoint, err := json.Marshal(state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	update, err := decodeFrame(Frame{Kind: "update", Offset: 1, Data: []byte(`{"offset":1,"key":"N20|2026-11-25|1704|-0.00021|110.82748","changes":{"frp":3.27}}`)})
-	if err != nil {
+	state = new(State)
+	if err := json.Unmarshal(checkpoint, state); err != nil {
 		t.Fatal(err)
 	}
-	state, _, err := NewState().Next([]Mutation{detection, update}, time.Date(2026, 11, 25, 18, 0, 0, 0, time.UTC))
-	if err != nil || state.Detections["N20|2026-11-25|1704|-0.00021|110.82748"].FRP != 3.27 {
-		t.Fatalf("patch did not reach the detection: %v", err)
+	revised := apply(Frame{Kind: "update", Offset: 2, Data: []byte(`{"key":"` + feedKey + `","changes":{"frp":30}}`)})
+	if len(revised.Upserts) != 1 || revised.Upserts[0].HazardID != fire.Upserts[0].HazardID || revised.Upserts[0].Severity != "SIAGA" {
+		t.Fatalf("patch did not revise the existing fire: %+v", revised)
+	}
+	withdrawn := apply(Frame{Kind: "retract", Offset: 3, Data: []byte(`{"key":"` + feedKey + `"}`)})
+	if len(withdrawn.Retracted) != 1 || withdrawn.Retracted[0].HazardID != fire.Upserts[0].HazardID {
+		t.Fatalf("retract did not withdraw the existing fire: %+v", withdrawn)
+	}
+	for _, projection := range []Projection{fire, revised} {
+		keys, err := eventKeys(projection.Upserts[0])
+		if err != nil || !slices.Equal(keys, []string{rawKey, "N21|2026-11-25|1704|0.00010|110.82748"}) {
+			t.Fatalf("projected detection keys do not preserve the raw feed: %v, %v", keys, err)
+		}
 	}
 }

@@ -98,3 +98,17 @@ func TestCheckpointKeepsOnlyRecentCorrelation(t *testing.T) {
 		t.Fatalf("warnings: %v", keptWarnings)
 	}
 }
+
+func TestPrepareTermCapsFutureCheckpointCursors(t *testing.T) {
+	ctx := context.Background()
+	future := time.Now().UTC().Add(5 * time.Minute)
+	raw, _ := json.Marshal(checkpoint{EventCursor: future, WarningCursor: future})
+	c := &checkpoints{saved: map[string]string{"BMKG": string(raw)}}
+	m := NewManager(nil, nil, &retryRepository{}, time.Second, nil)
+	if err := m.PrepareTerm(ctx, 2, func(context.Context) error { return nil }, c); err != nil {
+		t.Fatal(err)
+	}
+	if now := time.Now().UTC(); m.eventCursor.IsZero() || m.eventCursor.After(now) || m.warningCursor.After(now) {
+		t.Fatalf("restored future cursors: event=%s warning=%s", m.eventCursor, m.warningCursor)
+	}
+}

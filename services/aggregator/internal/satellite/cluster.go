@@ -145,7 +145,7 @@ func Cluster(input []Detection) ([]Fire, int, error) {
 								continue
 							}
 							dt := p.at.Sub(points[j].at)
-							if dt >= -6*time.Hour && dt <= 6*time.Hour && distance(p, points[j]) <= 1 {
+							if dt >= -clusterWindow && dt <= clusterWindow && distance(p, points[j]) <= 1 {
 								parents[root(i)] = root(j)
 							}
 						}

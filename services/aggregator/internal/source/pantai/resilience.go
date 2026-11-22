@@ -30,7 +30,7 @@ type ResilienceConfig struct {
 	// CheckPage must be a pure data-health check, not a persistence operation.
 	// A future worker supplies its virtual-time freshness policy here. A nil
 	// check does not establish freshness merely because HTTP returned 200.
-	CheckPage func(Batch) error
+	CheckPage func(cursor string, batch Batch) error
 }
 
 // DefaultResilienceConfig is provisional tuning, not measured P5 capacity.
@@ -306,7 +306,7 @@ func (r *Resilient) Observations(ctx context.Context, cursor string, limit int, 
 			return batch.Invalid
 		}
 		if r.config.CheckPage != nil {
-			if err := r.config.CheckPage(batch); err != nil {
+			if err := r.config.CheckPage(cursor, batch); err != nil {
 				return fmt.Errorf("%w: %w", ErrDataHealth, err)
 			}
 		}

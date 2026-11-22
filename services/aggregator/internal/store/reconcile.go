@@ -156,6 +156,7 @@ func (r *Router) sweep(ctx context.Context, epoch int64, l *layout, dead func(*u
 			cancel()
 			return
 		}
+		r.adoptDeadLetters(ctx, epoch, l, u, keep, dead)
 		dropped, err := u.repo.dropPartitionsExcept(ctx, epoch, keep)
 		cancel()
 		if err != nil {
@@ -163,6 +164,52 @@ func (r *Router) sweep(ctx context.Context, epoch int64, l *layout, dead func(*u
 		} else if dropped > 0 {
 			r.log(slog.LevelInfo, "moved-away partitions swept", "unit", u.name, "rows", dropped)
 		}
+	}
+}
+
+// adoptDeadLetters moves dead letters that u holds outside its own partitions (left
+// behind by moves, possibly as the only copy) to every write replica of their partition,
+// then deletes them from u. A partition with a dead or failing replica keeps its copy
+// on u until a later pass. Reads scan every unit, so the message stays visible meanwhile.
+func (r *Router) adoptDeadLetters(ctx context.Context, epoch int64, l *layout, u *unit, keep []int32, dead func(*unit) bool) {
+	rows, err := u.repo.exportUnprocessedOutside(ctx, keep)
+	if err != nil {
+		r.log(slog.LevelWarn, "dead letter adoption failed", "unit", u.name, "error", err)
+		return
+	}
+	byPartition := map[int][][]any{}
+	for _, row := range rows {
+		id, _ := row[0].(string)
+		byPartition[PartitionOf(id)] = append(byPartition[PartitionOf(id)], row)
+	}
+	var adopted []string
+	for p, group := range byPartition {
+		targets := l.writes[p]
+		complete := len(targets) > 0
+		for _, dst := range targets {
+			if dead(dst) {
+				complete = false
+				break
+			}
+			if _, err := dst.repo.importUnprocessed(ctx, epoch, group); err != nil {
+				r.log(slog.LevelWarn, "dead letter adoption failed", "partition", p, "from", u.name, "to", dst.name, "error", err)
+				complete = false
+				break
+			}
+		}
+		if complete {
+			for _, row := range group {
+				adopted = append(adopted, row[0].(string))
+			}
+		}
+	}
+	if len(adopted) == 0 {
+		return
+	}
+	if deleted, err := u.repo.deleteUnprocessed(ctx, epoch, adopted); err != nil {
+		r.log(slog.LevelWarn, "dead letter adoption failed", "unit", u.name, "error", err)
+	} else {
+		r.log(slog.LevelInfo, "orphan dead letters adopted by their replicas", "unit", u.name, "dead_letters", deleted)
 	}
 }
 
@@ -212,8 +259,9 @@ func (r *Router) syncFromAny(ctx context.Context, epoch int64, p int, sources []
 	return false
 }
 
-// antiEntropy compares (count, max ingested_at) between the replicas of every partition
-// and, when they differ, copies only the differing rows both ways: the replica that was down catches up.
+// antiEntropy compares (count, max ingested_at) of events, the report count and
+// (count, version sum) of dead letters between the replicas of every partition and,
+// when they differ, copies only the differing rows both ways: the replica that was down catches up.
 // shortcut: the digest misses an update that leaves count and max(ingested_at) equal;
 // hash the rows if that shows up.
 func (r *Router) antiEntropy(ctx context.Context, epoch int64, l *layout, dead func(*unit) bool) {
@@ -258,8 +306,9 @@ func (r *Router) syncDelta(ctx context.Context, epoch int64, p int, a, b *unit) 
 	return nil
 }
 
-// missingFrom lists what src holds that dst lacks: events absent or older on dst, and reports absent on dst.
-func missingFrom(src, dst partitionIndex) (eventIDs, reportIDs []string) {
+// missingFrom lists what src holds that dst lacks: events and dead letters absent or
+// older on dst, and reports absent on dst.
+func missingFrom(src, dst partitionIndex) (eventIDs, reportIDs, deadLetterIDs []string) {
 	for id, at := range src.events {
 		if have, ok := dst.events[id]; !ok || at > have {
 			eventIDs = append(eventIDs, id)
@@ -270,12 +319,17 @@ func missingFrom(src, dst partitionIndex) (eventIDs, reportIDs []string) {
 			reportIDs = append(reportIDs, id)
 		}
 	}
-	return eventIDs, reportIDs
+	for id, version := range src.deadLetters {
+		if have, ok := dst.deadLetters[id]; !ok || version > have {
+			deadLetterIDs = append(deadLetterIDs, id)
+		}
+	}
+	return eventIDs, reportIDs, deadLetterIDs
 }
 
 func (r *Router) copyDelta(ctx context.Context, epoch int64, p int, src, dst result[partitionIndex]) error {
-	eventIDs, reportIDs := missingFrom(src.value, dst.value)
-	if len(eventIDs) == 0 && len(reportIDs) == 0 {
+	eventIDs, reportIDs, deadLetterIDs := missingFrom(src.value, dst.value)
+	if len(eventIDs) == 0 && len(reportIDs) == 0 && len(deadLetterIDs) == 0 {
 		return nil
 	}
 	if err := verifyWrite(ctx); err != nil {
@@ -300,8 +354,18 @@ func (r *Router) copyDelta(ctx context.Context, epoch int64, p int, src, dst res
 			return fmt.Errorf("import reports into %s: %w", dst.unit.name, err)
 		}
 	}
+	var deadLettersCopied int64
+	if len(deadLetterIDs) > 0 {
+		deadLetters, err := src.unit.repo.exportUnprocessedByID(ctx, deadLetterIDs)
+		if err != nil {
+			return fmt.Errorf("export dead letters from %s: %w", src.unit.name, err)
+		}
+		if deadLettersCopied, err = dst.unit.repo.importUnprocessed(ctx, epoch, deadLetters); err != nil {
+			return fmt.Errorf("import dead letters into %s: %w", dst.unit.name, err)
+		}
+	}
 	r.log(slog.LevelInfo, "partition rows copied", "partition", p, "from", src.unit.name, "to", dst.unit.name,
-		"rows", copied, "reports", reportsCopied)
+		"rows", copied, "reports", reportsCopied, "dead_letters", deadLettersCopied)
 	return nil
 }
 

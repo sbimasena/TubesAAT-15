@@ -7,14 +7,20 @@ import (
 	"fmt"
 	"maps"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/domain"
 )
 
-// DefaultLateness is a safe virtual/event-time default until the feed
-// distribution is measured. All over-limit detections are retained and counted.
+// DefaultLateness is a safe virtual/event-time default. Measured on the first
+// 178k practice offsets: detection disorder max 4.5 h, update/retract age max 5.1 h.
+// Late detections that can still join a retained fire are kept and counted;
+// older ones are counted and ignored (see lateHorizon).
 const DefaultLateness = 24 * time.Hour
+
+// clusterWindow is the event-time adjacency limit used by Cluster and the grid.
+const clusterWindow = 6 * time.Hour
 
 // Mutation represents one ordered change to the satellite checkpoint.
 type Mutation struct {
@@ -38,6 +44,10 @@ type State struct {
 	Owners         map[string]string
 	Seen           map[string]bool
 	Events         map[string]domain.HazardEvent
+	// PrunedBefore is the hour-aligned horizon below which finalized fires and
+	// detections were dropped. It depends only on the offset sequence, so crash and
+	// batch boundaries cannot change what is pruned.
+	PrunedBefore time.Time
 }
 
 type Projection struct {
@@ -60,6 +70,110 @@ func (s *State) Watermark() time.Time {
 		return time.Time{}
 	}
 	return s.MaxEventTime.Add(-s.Lateness)
+}
+
+// lateHorizon is the oldest event time that can still change a fire: anything
+// older is beyond the lateness bound by more than one cluster window.
+func (s *State) lateHorizon() time.Time {
+	w := s.Watermark()
+	if w.IsZero() {
+		return w
+	}
+	return w.Add(-clusterWindow)
+}
+
+// pruneHorizon keeps one more cluster window, so a detection accepted at
+// lateHorizon can only link to retained detections and fire membership stays exact.
+func (s *State) pruneHorizon() time.Time {
+	h := s.lateHorizon()
+	if h.IsZero() {
+		return h
+	}
+	return h.Add(-clusterWindow).Truncate(time.Hour)
+}
+
+// keyTime recovers a detection's event time from its key (see Detection.Key).
+func keyTime(key string) (time.Time, bool) {
+	parts := strings.Split(key, "|")
+	if len(parts) != 5 {
+		return time.Time{}, false
+	}
+	p, err := parse(Detection{Satellite: parts[0], AcqDate: parts[1], AcqTime: parts[2], Latitude: parts[3], Longitude: parts[4], Confidence: "n"})
+	return p.at, err == nil
+}
+
+// tooLate reports whether an unknown key is older than anything that can still change.
+func (s *State) tooLate(key string) bool {
+	h := s.lateHorizon()
+	at, ok := keyTime(key)
+	return ok && !h.IsZero() && at.Before(h)
+}
+
+// prune drops fires whose every detection is older than before, plus older
+// singles, low-confidence detections and identity/retraction ledger entries.
+// Dropped fires are already materialized; they are frozen, not retracted.
+func (s *State) prune(before time.Time, grid detectionGrid, pruned map[string]domain.HazardEvent) {
+	inFire := map[string]bool{}
+	for id, event := range s.Events {
+		keys, _ := eventKeys(event)
+		final := true
+		for _, key := range keys {
+			inFire[key] = true
+			if p, ok := grid.points[key]; !ok || !p.at.Before(before) {
+				final = false
+			}
+		}
+		if !final {
+			continue
+		}
+		pruned[id] = event
+		delete(s.Events, id)
+		for _, key := range keys {
+			grid.remove(key, grid.points[key])
+			delete(grid.active, key)
+			delete(s.Detections, key)
+			delete(s.Owners, key)
+			delete(s.Seen, key)
+		}
+	}
+	for key, d := range s.Detections {
+		if inFire[key] {
+			continue
+		}
+		p, inGrid := grid.points[key]
+		if !inGrid {
+			var err error
+			if p, err = parse(d); err != nil {
+				continue
+			}
+		}
+		if !p.at.Before(before) {
+			continue
+		}
+		if inGrid {
+			grid.remove(key, p)
+			s.Singles--
+		}
+		delete(s.Detections, key)
+		delete(s.Owners, key)
+		delete(s.Seen, key)
+	}
+	// Retracted keys keep Seen/Owners entries; drop those that are equally old.
+	stale := func(key string) bool {
+		_, live := s.Detections[key]
+		at, ok := keyTime(key)
+		return !live && ok && at.Before(before)
+	}
+	for key := range s.Seen {
+		if stale(key) {
+			delete(s.Seen, key)
+		}
+	}
+	for key := range s.Owners {
+		if stale(key) {
+			delete(s.Owners, key)
+		}
+	}
 }
 
 // applyMutation changes only the private batch state. The grid allows an isolated
@@ -118,6 +232,10 @@ func (next *State) applyMutation(mutation Mutation, ingested time.Time, grid det
 				if next.Seen[mutation.Key] {
 					return nil // A patch cannot restore a retracted detection.
 				}
+				if next.tooLate(mutation.Key) {
+					next.LateDetections++ // its fire was finalized and pruned
+					return nil
+				}
 				return fmt.Errorf("%w: patch for unseen detection at offset %d", ErrProtocol, mutation.Offset)
 			}
 			if mutation.Changes.Confidence != nil {
@@ -139,7 +257,12 @@ func (next *State) applyMutation(mutation Mutation, ingested time.Time, grid det
 			return fmt.Errorf("%w: %v at offset %d", ErrProtocol, err, mutation.Offset)
 		}
 		key := mutation.Detection.Key()
-		if _, exists := next.Detections[key]; mutation.Kind == "detection" && exists {
+		_, exists := next.Detections[key]
+		if mutation.Kind == "detection" && exists {
+			return nil
+		}
+		if h := next.lateHorizon(); !exists && !next.Seen[key] && !h.IsZero() && p.at.Before(h) {
+			next.LateDetections++ // too old to join any retained fire; never revive pruned state
 			return nil
 		}
 		if !next.Seen[key] && !next.Watermark().IsZero() && p.at.Before(next.Watermark()) {
@@ -168,6 +291,10 @@ func (next *State) applyMutation(mutation Mutation, ingested time.Time, grid det
 	case "retract":
 		if mutation.Key == "" {
 			return errors.New("satellite: retraction key required")
+		}
+		if _, exists := next.Detections[mutation.Key]; !exists && !next.Seen[mutation.Key] && next.tooLate(mutation.Key) {
+			next.LateDetections++
+			return nil
 		}
 		remove(mutation.Key)
 	default:
@@ -287,25 +414,41 @@ func (s *State) Next(batch []Mutation, ingested time.Time) (*State, Projection, 
 			grid.add(key, p)
 		}
 	}
+	pruned := map[string]domain.HazardEvent{}
 	for _, mutation := range batch {
 		if err := next.applyMutation(mutation, ingested, grid); err != nil {
 			return nil, Projection{}, err
+		}
+		// Checked per mutation, not per batch, so the result is batch-boundary independent.
+		if h := next.pruneHorizon(); h.After(next.PrunedBefore) {
+			next.prune(h, grid, pruned)
+			next.PrunedBefore = h
 		}
 	}
 	if next.Offset == s.Offset {
 		return s, Projection{}, nil
 	}
 	projection := Projection{}
-	for id, event := range next.Events {
+	changed := func(id string, event domain.HazardEvent) bool {
 		before, exists := s.Events[id]
 		a, _ := json.Marshal(before)
 		b, _ := json.Marshal(event)
-		if !exists || !bytes.Equal(a, b) {
+		return !exists || !bytes.Equal(a, b)
+	}
+	for id, event := range next.Events {
+		if changed(id, event) {
+			projection.Upserts = append(projection.Upserts, event)
+		}
+	}
+	// A pruned fire is frozen in its last state, never withdrawn.
+	for id, event := range pruned {
+		if _, live := next.Events[id]; !live && changed(id, event) {
 			projection.Upserts = append(projection.Upserts, event)
 		}
 	}
 	for id, event := range s.Events {
-		if _, exists := next.Events[id]; !exists {
+		_, exists := next.Events[id]
+		if _, frozen := pruned[id]; !exists && !frozen {
 			projection.Retracted = append(projection.Retracted, event)
 		}
 	}

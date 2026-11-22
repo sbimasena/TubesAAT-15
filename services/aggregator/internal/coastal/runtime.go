@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -131,7 +132,12 @@ func (r *Runtime) Run(ctx context.Context, epoch int64) error {
 			if _, err = rand.Read(id[:]); err != nil {
 				return err
 			}
+			previous := p.state.GeneratedAt
 			err = p.Poll(ctx, "pantai-"+hex.EncodeToString(id[:]))
+			if err == nil && p.state.GeneratedAt.Before(previous) && r.logger != nil {
+				r.logger.Info("coastal session restarted", "source", Source, "epoch", epoch,
+					"previous_generated_at", previous, "generated_at", p.state.GeneratedAt)
+			}
 		}
 		if errors.Is(err, store.ErrFenced) || errors.Is(err, pantai.ErrLeaseVerification) || ctx.Err() != nil {
 			return err
@@ -156,7 +162,8 @@ func (r *Runtime) Run(ctx context.Context, epoch int64) error {
 				}
 			}
 			if r.logger != nil {
-				r.logger.Warn("coastal cycle deferred", "source", Source, "epoch", epoch, "failure_type", fmt.Sprintf("%T", err))
+				r.logger.Warn("coastal cycle deferred", "source", Source, "epoch", epoch,
+					"failure_type", fmt.Sprintf("%T", err), "reason", summarizeFailure(err))
 			}
 		} else {
 			r.setStatus(p.state.Status)
@@ -171,6 +178,44 @@ func (r *Runtime) Run(ctx context.Context, epoch int64) error {
 		}
 	}
 	return ctx.Err()
+}
+
+// Never log arbitrary HTTP or database error strings: they may include URLs,
+// cursor parameters, credentials or raw payloads.
+func summarizeFailure(err error) string {
+	var storage *storageError
+	var violation *pantai.Violation
+	var upstream *pantai.HTTPError
+	var gate *pantai.GateError
+	var dns *net.DNSError
+	var network net.Error
+	switch {
+	case errors.As(err, &storage):
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "storage timeout: " + storage.operation
+		}
+		return "storage unavailable: " + storage.operation
+	case errors.As(err, &violation):
+		return violation.Error()
+	case errors.As(err, &upstream):
+		return upstream.Error()
+	case errors.As(err, &gate):
+		return gate.Error()
+	case errors.Is(err, errVirtualClockStalled):
+		return errVirtualClockStalled.Error()
+	case errors.Is(err, errSessionUnconfirmed):
+		return errSessionUnconfirmed.Error()
+	case errors.Is(err, errInvalidCheckpoint):
+		return errInvalidCheckpoint.Error()
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &network) && network.Timeout():
+		return "sensor request timed out"
+	case errors.As(err, &dns):
+		return "sensor DNS lookup failed"
+	case errors.As(err, &network):
+		return "sensor transport failed"
+	default:
+		return "coastal operation failed"
+	}
 }
 
 func wait(ctx context.Context, delay time.Duration) error {

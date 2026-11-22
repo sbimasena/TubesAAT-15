@@ -57,6 +57,16 @@ type Router struct {
 // OpenRouter takes DATABASE_URL as a comma-separated list, one URL per unit; the unit
 // is named after the first DNS label of its host (store-1.store -> store-1).
 func OpenRouter(databaseURLs string, logger *slog.Logger) (*Router, error) {
+	return openRouter(databaseURLs, logger, newMapStore)
+}
+
+// OpenRouterWithMemoryMap uses a process-local partition map regardless of the
+// environment. Use it for isolated Postgres fixtures, not multi-replica clusters.
+func OpenRouterWithMemoryMap(databaseURLs string, logger *slog.Logger) (*Router, error) {
+	return openRouter(databaseURLs, logger, func() (mapStore, error) { return &memoryMaps{}, nil })
+}
+
+func openRouter(databaseURLs string, logger *slog.Logger, maps func() (mapStore, error)) (*Router, error) {
 	var names []string
 	var repos []*PostgresRepository
 	for _, raw := range strings.Split(databaseURLs, ",") {
@@ -76,7 +86,7 @@ func OpenRouter(databaseURLs string, logger *slog.Logger) (*Router, error) {
 	}
 	router, err := newRouter(names, repos, logger)
 	if err == nil {
-		router.maps, err = newMapStore()
+		router.maps, err = maps()
 	}
 	if err != nil {
 		closeAll(repos)

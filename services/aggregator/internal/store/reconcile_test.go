@@ -410,12 +410,15 @@ func TestStorageStatusCountsUnderReplicatedPartitions(t *testing.T) {
 }
 
 func TestMissingFromListsOnlyAbsentOrOlderRows(t *testing.T) {
-	src := partitionIndex{events: map[string]int64{"same": 1, "newer": 5, "absent": 1, "older": 1}, reports: map[string]bool{"r-same": true, "r-absent": true}}
-	dst := partitionIndex{events: map[string]int64{"same": 1, "newer": 4, "older": 2}, reports: map[string]bool{"r-same": true}}
-	events, reports := missingFrom(src, dst)
+	src := partitionIndex{events: map[string]int64{"same": 1, "newer": 5, "absent": 1, "older": 1}, reports: map[string]bool{"r-same": true, "r-absent": true},
+		deadLetters: map[string]int64{"d-same": 3, "d-newer": 7, "d-absent": 3, "d-older": 3}}
+	dst := partitionIndex{events: map[string]int64{"same": 1, "newer": 4, "older": 2}, reports: map[string]bool{"r-same": true},
+		deadLetters: map[string]int64{"d-same": 3, "d-newer": 6, "d-older": 4}}
+	events, reports, deadLetters := missingFrom(src, dst)
 	slices.Sort(events)
-	if !slices.Equal(events, []string{"absent", "newer"}) || !slices.Equal(reports, []string{"r-absent"}) {
-		t.Fatalf("events=%v reports=%v", events, reports)
+	slices.Sort(deadLetters)
+	if !slices.Equal(events, []string{"absent", "newer"}) || !slices.Equal(reports, []string{"r-absent"}) || !slices.Equal(deadLetters, []string{"d-absent", "d-newer"}) {
+		t.Fatalf("events=%v reports=%v deadLetters=%v", events, reports, deadLetters)
 	}
 }
 
@@ -541,5 +544,140 @@ func TestSyncPartitionCopiesDeadLettersVerbatim(t *testing.T) {
 	}
 	if !slices.Equal(gotRaw, raw) || status != "retrying" || attempts != 2 || !gotRetry.Equal(retryAt) || copies != 1 {
 		t.Fatalf("copy differs: raw=%x status=%s attempts=%d retry=%v rows=%d", gotRaw, status, attempts, gotRetry, copies)
+	}
+}
+
+func dlqRouter(t *testing.T, ctx context.Context, n int) (*Router, []*PostgresRepository) {
+	t.Helper()
+	names := []string{"store-0", "store-1", "store-2"}[:n]
+	repos := make([]*PostgresRepository, n)
+	for i := range names {
+		databaseURL, _ := testSchema(t, ctx)
+		repo, err := OpenPostgres(ctx, databaseURL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(repo.Close)
+		repos[i] = repo
+	}
+	r, err := newRouter(names, repos, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.CheckUnits(ctx)
+	if err := r.LoadMap(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return r, repos
+}
+
+func insertDeadLetter(t *testing.T, ctx context.Context, repo *PostgresRepository, id, status string, attempts int) {
+	t.Helper()
+	var retryAt *time.Time
+	if status == "retrying" {
+		at := time.Date(2026, 11, 22, 0, 0, 0, 0, time.UTC)
+		retryAt = &at
+	}
+	if _, err := repo.pool.Exec(ctx, `INSERT INTO unprocessed_messages
+		(message_id, partition_id, source, raw, reason, attempts, status, next_retry_at, received_at)
+		VALUES ($1, $2, 'PVMBG', '\x00ff', 'invalid', $3, $4, $5, '2026-11-21T00:00:00Z')`,
+		id, PartitionOf(id), attempts, status, retryAt); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func deadLetterState(t *testing.T, ctx context.Context, repo *PostgresRepository) string {
+	t.Helper()
+	var s *string
+	if err := repo.pool.QueryRow(ctx, `SELECT string_agg(message_id || '|' || status || '|' || attempts, ',' ORDER BY message_id)
+		FROM unprocessed_messages`).Scan(&s); err != nil {
+		t.Fatal(err)
+	}
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func TestAntiEntropyReconcilesDeadLetters(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	r, repos := dlqRouter(t, ctx, 2)
+	// store-1 missed a parked message; store-0 missed a later recovery; store-1 missed a re-queue.
+	insertDeadLetter(t, ctx, repos[0], "dlq-lost", "parked", 1)
+	insertDeadLetter(t, ctx, repos[0], "dlq-recovered", "parked", 2)
+	insertDeadLetter(t, ctx, repos[1], "dlq-recovered", "recovered", 2)
+	insertDeadLetter(t, ctx, repos[0], "dlq-requeued", "retrying", 2)
+	insertDeadLetter(t, ctx, repos[1], "dlq-requeued", "parked", 2)
+
+	r.antiEntropy(ctx, 0, r.current(), func(*unit) bool { return false })
+
+	want := "dlq-lost|parked|1,dlq-recovered|recovered|2,dlq-requeued|retrying|2"
+	for i, repo := range repos {
+		if got := deadLetterState(t, ctx, repo); got != want {
+			t.Fatalf("store-%d dead letters after anti-entropy:\n got %s\nwant %s", i, got, want)
+		}
+	}
+	// An older copy never rolls a newer state back.
+	if _, err := repos[0].importUnprocessed(ctx, 0, mustExport(t, ctx, repos[0], "dlq-recovered", "parked")); err != nil {
+		t.Fatal(err)
+	}
+	if got := deadLetterState(t, ctx, repos[0]); got != want {
+		t.Fatalf("older copy rolled back a newer state: %s", got)
+	}
+}
+
+// mustExport returns id's row from repo with its status forced to an older state.
+func mustExport(t *testing.T, ctx context.Context, repo *PostgresRepository, id, status string) [][]any {
+	t.Helper()
+	rows, err := repo.exportUnprocessedByID(ctx, []string{id})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("export %s: %v", id, err)
+	}
+	rows[0][8] = status // unprocessedColumns: status is the 9th column
+	return rows
+}
+
+func TestSweepAdoptsOrphanDeadLetters(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	r, repos := dlqRouter(t, ctx, 3)
+	l := r.current()
+	// orphanOn finds a message ID whose partition is not replicated on unit u.
+	orphanOn := func(u int, prefix string) (string, int) {
+		for i := 0; ; i++ {
+			id := fmt.Sprintf("%s-%d", prefix, i)
+			if !slices.Contains(l.writes[PartitionOf(id)], r.units[u]) {
+				return id, PartitionOf(id)
+			}
+		}
+	}
+	held := func(repo *PostgresRepository, id string) bool {
+		var n int
+		if err := repo.pool.QueryRow(ctx, `SELECT count(*) FROM unprocessed_messages WHERE message_id = $1`, id).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n == 1
+	}
+
+	id, p := orphanOn(0, "orphan")
+	insertDeadLetter(t, ctx, repos[0], id, "parked", 3)
+	r.sweep(ctx, 0, l, func(*unit) bool { return false })
+	if held(repos[0], id) {
+		t.Fatal("orphan copy was not removed from the non-replica unit")
+	}
+	for _, u := range l.writes[p] {
+		if !held(u.repo, id) {
+			t.Fatalf("replica %s did not adopt the orphan", u.name)
+		}
+	}
+
+	// With a replica down the only copy must stay where it is.
+	id2, p2 := orphanOn(0, "kept")
+	insertDeadLetter(t, ctx, repos[0], id2, "parked", 1)
+	down := l.writes[p2][0]
+	r.sweep(ctx, 0, l, func(u *unit) bool { return u == down })
+	if !held(repos[0], id2) {
+		t.Fatal("orphan deleted while one of its replicas was down")
 	}
 }

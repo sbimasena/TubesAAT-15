@@ -230,7 +230,7 @@ func TestResilienceDoesNotRetryPermanentOrDataFailures(t *testing.T) {
 	fake.batch = Batch{}
 	rig = newRig(t, fake, func(c *ResilienceConfig) {
 		c.FailureThreshold = 1
-		c.CheckPage = func(Batch) error { return context.DeadlineExceeded }
+		c.CheckPage = func(string, Batch) error { return context.DeadlineExceeded }
 	})
 	before := fake.calls.Load()
 	if _, err := rig.r.Observations(context.Background(), "", 10, "corr"); !errors.Is(err, ErrDataHealth) || fake.calls.Load() != before+1 {

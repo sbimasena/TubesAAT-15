@@ -35,6 +35,7 @@ var migrations = []migration{
 	{version: 4, file: "migrations/004_unprocessed_messages.sql"}, // D-DLQ
 	{version: 5, file: "migrations/005_field_reports.sql"},        // D-FR
 	{version: 6, file: "migrations/006_field_report_dlq.sql"},
+	{version: 7, file: "migrations/007_satellite_delta_cursor.sql"},
 }
 
 // migrationLockID serialises migrations when several Aggregator replicas start together.
@@ -445,15 +446,25 @@ type partitionDigest struct {
 	count       int64
 	maxIngested int64 // unix micros; time.Time values from two units do not compare with ==
 	reports     int64 // field reports are insert-only, so their count is enough
+	deadLetters int64 // count plus the sum of versions catches a missed status change
+	dlqVersions int64
+}
+
+// dlqVersion orders the states of one dead letter: attempts only grow, a parked
+// message is re-queued as retrying with the same attempts, and recovered is final.
+func dlqVersion(table string) string {
+	return table + `.attempts * 3 + CASE ` + table + `.status WHEN 'recovered' THEN 2 WHEN 'retrying' THEN 1 ELSE 0 END`
 }
 
 func (r *PostgresRepository) digest(ctx context.Context, p int) (partitionDigest, error) {
 	var d partitionDigest
 	var maxIngested *time.Time
 	err := r.pool.QueryRow(ctx, `SELECT count(*), max(ingested_at),
-		(SELECT count(*) FROM field_reports WHERE partition_id = $1)
+		(SELECT count(*) FROM field_reports WHERE partition_id = $1),
+		(SELECT count(*) FROM unprocessed_messages WHERE partition_id = $1),
+		(SELECT coalesce(sum(`+dlqVersion("u")+`), 0) FROM unprocessed_messages u WHERE partition_id = $1)
 		FROM hazard_events WHERE partition_id = $1`, p).
-		Scan(&d.count, &maxIngested, &d.reports)
+		Scan(&d.count, &maxIngested, &d.reports, &d.deadLetters, &d.dlqVersions)
 	if maxIngested != nil {
 		d.maxIngested = maxIngested.UnixMicro()
 	}
@@ -462,12 +473,13 @@ func (r *PostgresRepository) digest(ctx context.Context, p int) (partitionDigest
 
 // partitionIndex is what anti-entropy diffs, so only differing rows cross the network.
 type partitionIndex struct {
-	events  map[string]int64 // hazard_id -> ingested_at unix micros
-	reports map[string]bool
+	events      map[string]int64 // hazard_id -> ingested_at unix micros
+	reports     map[string]bool
+	deadLetters map[string]int64 // message_id -> dlqVersion
 }
 
 func (r *PostgresRepository) index(ctx context.Context, p int) (partitionIndex, error) {
-	idx := partitionIndex{events: map[string]int64{}, reports: map[string]bool{}}
+	idx := partitionIndex{events: map[string]int64{}, reports: map[string]bool{}, deadLetters: map[string]int64{}}
 	rows, err := r.pool.Query(ctx, `SELECT hazard_id, ingested_at FROM hazard_events WHERE partition_id = $1`, p)
 	if err != nil {
 		return idx, err
@@ -481,7 +493,15 @@ func (r *PostgresRepository) index(ctx context.Context, p int) (partitionIndex, 
 	if err != nil {
 		return idx, err
 	}
-	_, err = pgx.ForEachRow(rows, []any{&id}, func() error { idx.reports[id] = true; return nil })
+	if _, err = pgx.ForEachRow(rows, []any{&id}, func() error { idx.reports[id] = true; return nil }); err != nil {
+		return idx, err
+	}
+	rows, err = r.pool.Query(ctx, `SELECT message_id, `+dlqVersion("u")+` FROM unprocessed_messages u WHERE partition_id = $1`, p)
+	if err != nil {
+		return idx, err
+	}
+	var version int64
+	_, err = pgx.ForEachRow(rows, []any{&id, &version}, func() error { idx.deadLetters[id] = version; return nil })
 	return idx, err
 }
 
@@ -498,7 +518,21 @@ const unprocessedColumns = `message_id, partition_id, source, source_ref_id, pos
 
 // exportUnprocessed reads partition p's dead letters verbatim for a partition copy.
 func (r *PostgresRepository) exportUnprocessed(ctx context.Context, p int) ([][]any, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+unprocessedColumns+` FROM unprocessed_messages WHERE partition_id = $1`, p)
+	return r.queryUnprocessed(ctx, `WHERE partition_id = $1`, p)
+}
+
+// exportUnprocessedByID reads the given dead letters verbatim for an anti-entropy copy.
+func (r *PostgresRepository) exportUnprocessedByID(ctx context.Context, ids []string) ([][]any, error) {
+	return r.queryUnprocessed(ctx, `WHERE message_id = ANY($1)`, ids)
+}
+
+// exportUnprocessedOutside reads the dead letters of partitions this unit does not replicate.
+func (r *PostgresRepository) exportUnprocessedOutside(ctx context.Context, keep []int32) ([][]any, error) {
+	return r.queryUnprocessed(ctx, `WHERE NOT (partition_id = ANY($1::int[]))`, keep)
+}
+
+func (r *PostgresRepository) queryUnprocessed(ctx context.Context, where string, arg any) ([][]any, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+unprocessedColumns+` FROM unprocessed_messages `+where, arg)
 	if err != nil {
 		return nil, err
 	}
@@ -515,7 +549,8 @@ func (r *PostgresRepository) exportUnprocessed(ctx context.Context, p int) ([][]
 }
 
 // importUnprocessed adds copied dead letters under the fence. An existing message_id is
-// kept: status changes go to every unit, so a copy already there is current.
+// replaced only by a newer state (dlqVersion): a unit that was down during a status
+// change catches up, and an older copy never rolls a newer one back.
 func (r *PostgresRepository) importUnprocessed(ctx context.Context, epoch int64, rows [][]any) (int64, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -528,13 +563,33 @@ func (r *PostgresRepository) importUnprocessed(ctx context.Context, epoch int64,
 	var copied int64
 	for _, values := range rows {
 		tag, err := tx.Exec(ctx, `INSERT INTO unprocessed_messages (`+unprocessedColumns+`)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT (message_id) DO NOTHING`, values...)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT (message_id) DO UPDATE SET
+			reason = EXCLUDED.reason, attempts = EXCLUDED.attempts, status = EXCLUDED.status,
+			next_retry_at = EXCLUDED.next_retry_at, last_error_at = EXCLUDED.last_error_at
+			WHERE `+dlqVersion("unprocessed_messages")+` < `+dlqVersion("EXCLUDED"), values...)
 		if err != nil {
 			return 0, err
 		}
 		copied += tag.RowsAffected()
 	}
 	return copied, tx.Commit(ctx)
+}
+
+// deleteUnprocessed removes dead letters under the fence, once their replicas hold them.
+func (r *PostgresRepository) deleteUnprocessed(ctx context.Context, epoch int64, ids []string) (int64, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	if err := checkFence(ctx, tx, epoch); err != nil {
+		return 0, err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM unprocessed_messages WHERE message_id = ANY($1)`, ids)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), tx.Commit(ctx)
 }
 
 // exportPartition reads every row of partition p for a copy to another unit.

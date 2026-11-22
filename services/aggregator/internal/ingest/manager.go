@@ -142,11 +142,20 @@ func (m *Manager) pollBMKG(ctx context.Context, correlationID string) {
 		}
 	}
 	m.pruneBMKGCacheLocked()
+	now := time.Now().UTC()
 	canonical := make([]domain.HazardEvent, 0, len(touched))
 	unresolvedWarning := false
 	for eventID := range touched {
 		event, ok := m.eventsByID[eventID]
 		if !ok {
+			// A warning may legitimately arrive before its seismic event. Keep
+			// retrying only recent warnings; drop stale unmatched warnings
+			// instead of failing every poll forever (clock skew / lost events).
+			if warning, hasWarning := m.warningsByEvent[eventID]; hasWarning &&
+				!warning.IssuedAt.IsZero() && warning.IssuedAt.Before(now.Add(-checkpointWindow)) {
+				delete(m.warningsByEvent, eventID)
+				continue
+			}
 			// Keep unresolved warnings in the polling window until their event can be stored.
 			unresolvedWarning = true
 			warningCursor = m.warningCursor
@@ -158,6 +167,15 @@ func (m *Manager) pollBMKG(ctx context.Context, correlationID string) {
 			warningPtr = &warning
 		}
 		canonical = append(canonical, domain.MapSeismic(event, warningPtr, time.Now().UTC()))
+	}
+	// A skewed clock (upstream, or ours during a skew) must not leave cursors beyond
+	// local time, otherwise recent events fall outside the next polling window and
+	// disappear. Capped after the loop so the unresolved-warning fallback is capped too.
+	if eventCursor.After(now) {
+		eventCursor = now
+	}
+	if warningCursor.After(now) {
+		warningCursor = now
 	}
 	m.mu.Unlock()
 	if unresolvedWarning {
@@ -323,9 +341,15 @@ func recentCorrelation(events map[string]domain.SeismicEvent, warnings map[strin
 		}
 	}
 	for id, warning := range warnings {
-		if _, cached := events[id]; !cached {
-			keptWarnings[id] = warning
+		if _, cached := events[id]; cached {
+			continue
 		}
+		// Bound retries for warnings whose event never arrives: drop warnings
+		// older than the checkpoint window instead of carrying them forever.
+		if !warning.IssuedAt.IsZero() && warning.IssuedAt.Before(cutoff) {
+			continue
+		}
+		keptWarnings[id] = warning
 	}
 	return keptEvents, keptWarnings
 }
@@ -382,7 +406,17 @@ func (m *Manager) PrepareTerm(ctx context.Context, epoch int64, verify func(cont
 			m.status[source] = *c.Status
 		}
 		if source == "BMKG" {
-			m.eventCursor, m.warningCursor = c.EventCursor, c.WarningCursor
+			// A checkpoint written before cursor capping may carry a future
+			// cursor from a skewed upstream clock; never restore it verbatim.
+			eventCursor, warningCursor := c.EventCursor, c.WarningCursor
+			now := time.Now().UTC()
+			if eventCursor.After(now) {
+				eventCursor = now
+			}
+			if warningCursor.After(now) {
+				warningCursor = now
+			}
+			m.eventCursor, m.warningCursor = eventCursor, warningCursor
 			if c.Events != nil {
 				m.eventsByID = c.Events
 			}

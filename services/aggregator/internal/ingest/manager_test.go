@@ -103,3 +103,43 @@ func TestPollersRetryAfterPersistenceFailure(t *testing.T) {
 		t.Fatal("a cached late warning must be retried after the write failure")
 	}
 }
+
+// Finding 8: cursors pushed into the future during a clock skew (upstream or our
+// own node) are capped on the next poll, even while a warning has no event yet,
+// so events from the following minute are still fetched.
+func TestSkewedCursorsAreCappedAndRecentEventsRecovered(t *testing.T) {
+	ctx := context.Background()
+	real := time.Now().UTC()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/seismic-events":
+			since, _ := time.Parse(time.RFC3339Nano, r.URL.Query().Get("since"))
+			events := []domain.SeismicEvent{}
+			if normal := real.Add(-30 * time.Second); !normal.Before(since) {
+				events = append(events, domain.SeismicEvent{EventID: "normal", RegionName: "Area", Magnitude: 4, OccurredAt: normal})
+			}
+			json.NewEncoder(w).Encode(events)
+		case "/tsunami-warnings":
+			// Its seismic event never arrives, which takes the unresolved-warning path.
+			json.NewEncoder(w).Encode([]domain.TsunamiWarning{{WarningID: "w", EventID: "ghost", ThreatLevel: "AWAS", IssuedAt: real.Add(-10 * time.Second)}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	repo := &retryRepository{}
+	manager := NewManager(source.NewBMKGClient(server.URL, "bmkg-key", nil), nil, repo, time.Second, nil)
+	manager.eventCursor, manager.warningCursor = real.Add(5*time.Minute), real.Add(5*time.Minute)
+
+	manager.pollBMKG(ctx, "skewed")
+	if after := time.Now().UTC(); manager.eventCursor.After(after) || manager.warningCursor.After(after) {
+		t.Fatalf("future cursors kept: event=%s warning=%s", manager.eventCursor, manager.warningCursor)
+	}
+	manager.pollBMKG(ctx, "recovered")
+	for _, event := range repo.events {
+		if event.SourceRefID == "normal" {
+			return
+		}
+	}
+	t.Fatal("event from the minute after the skew was never fetched")
+}

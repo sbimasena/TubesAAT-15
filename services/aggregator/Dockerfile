@@ -7,5 +7,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/service ./cmd/server
 
 FROM scratch
+# The satellite feed is public HTTPS; scratch has no CA bundle to verify it.
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /out/service /service
 ENTRYPOINT ["/service"]

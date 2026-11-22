@@ -53,8 +53,8 @@ func decodeFrame(frame Frame) (Mutation, error) {
 	}
 	identity := Detection{
 		Satellite: detection.Satellite, AcqDate: detection.AcqDate,
-		AcqTime: scalarText(detection.AcqTime), Latitude: scalarText(detection.Latitude),
-		Longitude: scalarText(detection.Longitude),
+		AcqTime: scalarText(detection.AcqTime), Latitude: coordText(detection.Latitude),
+		Longitude: coordText(detection.Longitude),
 	}
 	key := wire.DetectionKey
 	if key == "" {
@@ -140,6 +140,18 @@ func scalarText(raw json.RawMessage) string {
 		return ""
 	}
 	return string(raw)
+}
+
+// coordText keeps raw coordinate tokens, except exponent notation: the feed
+// sends latitude -2.1e-4 but names that detection "-0.00021" in update keys.
+func coordText(raw json.RawMessage) string {
+	text := scalarText(raw)
+	if strings.ContainsAny(text, "eE") {
+		if value, err := strconv.ParseFloat(text, 64); err == nil {
+			return strconv.FormatFloat(value, 'f', -1, 64)
+		}
+	}
+	return text
 }
 
 func validDetectionKey(key string) bool {

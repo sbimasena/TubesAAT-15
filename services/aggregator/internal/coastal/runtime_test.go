@@ -3,14 +3,39 @@ package coastal
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/ingest"
+	"github.com/sbimasena/TubesAAT-15/services/aggregator/internal/source/pantai"
 )
+
+func TestCoastalFailureSummaryOmitsRawErrorDetails(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{errors.Join(pantai.ErrDataHealth, errVirtualClockStalled), "sensor virtual clock stopped progressing"},
+		{errSessionUnconfirmed, "sensor clock regression not confirmed from the first page"},
+		{&pantai.Violation{Detail: "cursor_not_advancing"}, "contract_violation:cursor_not_advancing"},
+		{&pantai.HTTPError{StatusCode: 503, RetryAfter: "untrusted header"}, "pantai: upstream HTTP 503"},
+		{&pantai.GateError{Reason: "circuit_open"}, "pantai: circuit_open"},
+		{&url.Error{Op: "Get", URL: "http://sensor/?cursor=private", Err: &net.DNSError{Name: "private"}},
+			"sensor DNS lookup failed"},
+		{&storageError{"save checkpoint", errors.New("private connection details")}, "storage unavailable: save checkpoint"},
+		{errors.New("unknown sensitive error"), "coastal operation failed"},
+	} {
+		if got := summarizeFailure(tc.err); got != tc.want {
+			t.Errorf("summary: got %q, want %q", got, tc.want)
+		}
+	}
+}
 
 func TestCoastalFollowerUsesCheckpointWithoutPollingAndExpiresFreshness(t *testing.T) {
 	var requests atomic.Int32

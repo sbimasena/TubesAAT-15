@@ -94,6 +94,11 @@ func (m *Manager) setIngested(sourceName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	status := m.status[sourceName]
+	// Keep freshness timestamps strictly increasing even on coarse clocks
+	// (e.g. Windows) so recovery is distinguishable from the previous commit.
+	if status.LastIngested != nil && !now.After(*status.LastIngested) {
+		now = status.LastIngested.Add(time.Nanosecond)
+	}
 	status.LastIngested, status.IngestionError = &now, ""
 	status.Stale, status.StaleSince = false, nil
 	m.status[sourceName] = status
